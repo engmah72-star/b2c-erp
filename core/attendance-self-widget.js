@@ -17,7 +17,7 @@
 
 import {
   collection, doc, getDocs, onSnapshot, query, where, limit,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { employeeActions } from '../employee-actions.js';
 import { PERMISSION_TYPES } from './attendance-core.js';
 

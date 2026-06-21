@@ -88,7 +88,7 @@ async function registerNativePush(app, platform) {
 
       try {
         const { getFunctions, httpsCallable } = await import(
-          'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js'
+          'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js'
         );
         const fns = getFunctions(app, 'us-central1');
         const reg = httpsCallable(fns, 'registerFcmToken');

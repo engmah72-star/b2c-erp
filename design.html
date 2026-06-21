@@ -481,19 +481,22 @@ window.addEventListener('unhandledrejection', e=>{
   }
   e.preventDefault();
 });
-import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, getDoc, query, where, orderBy, limit, deleteDoc, getDocs, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { addLedgerToBatch, FE, approvalFields } from "./financial-sync-engine.js";
+import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
 import { orderActions } from "./order-actions.js";
+import { publishGalleryItem } from "./core/gallery-actions.js";
 import { getMatrixPrice } from "./product-actions.js";
-import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 // God-page decomp PR-2 (design): renderPanel HTML extracted.
 import { renderPanelHTML } from "./design-render.js";
 let orders=[],clients=[],products=[],designers=[],wallets=[];
 let currentRole='admin';
 let currentUser=null,userName='',activeId=null,selClient=null;
+
+let __dsUnsubs=[];
+function stopListeners(){__dsUnsubs.forEach(u=>{try{u();}catch(_){}});__dsUnsubs=[];}
 
 const _ps=PageState.init('design',{
   fields:()=>({activeId,designFocus:window.__designFocus||null}),
@@ -665,32 +668,8 @@ window.deleteOrderFull=async function(){
   if(!confirm(`⚠️ حذف أوردر "${o.clientName}" نهائياً؟\nلا يمكن التراجع.`))return;
   if(!confirm('تأكيد الحذف النهائي؟'))return;
   try{
-    const dep=parseFloat(o.deposit)||parseFloat(o.totalPaid)||0;
-    const wId=o.depositWalletId||o.walletId||'';
-    const batch=writeBatch(db);
-    if(dep>0&&wId){
-      // استرداد العربون = خصم من المحفظة + قيد refund (direction:out)
-      batch.update(doc(db,'wallets',wId),{balance:increment(-dep)});
-      const refundTxRef=doc(collection(db,'transactions_v2'));
-      batch.set(refundTxRef,{
-        walletId:wId,walletName:wallets?.find(x=>x._id===wId)?.name||'',
-        type:'out',amount:dep,fees:0,
-        description:`استرداد عربون — حذف أوردر — ${o.clientName||''}`,
-        category:'refund',orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',
-        isReversal:true,
-        date:nowStr(),createdBy:currentUser?.uid||'',createdByName:userName||'admin',createdAt:serverTimestamp(),
-        ...approvalFields()
-      });
-      addLedgerToBatch(batch,db,FE.CUSTOMER_REFUND,{
-        orderId:activeId,clientId:o.clientId||'',clientName:o.clientName||'',amount:dep,walletId:wId,
-        walletName:wallets?.find(x=>x._id===wId)?.name||'',
-        notes:'حذف أوردر نهائي — استرداد عربون',
-        userId:currentUser?.uid||'',userName:userName||'admin'
-      });
-    }
-    // حذف الأوردر فقط — نحتفظ بـ transactions_v2 للسجل التاريخي والـ refund tx الجديدة تظهر العكس
-    batch.delete(doc(db,'orders',activeId));
-    await batch.commit();
+    const r=await orderActions.deleteOrderWithRefund({db,orderId:activeId,userId:currentUser?.uid||'',userName});
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
     closePanel();
     toast('✅ تم الحذف النهائي','ok');
   }catch(e){toast('❌ '+e.message,'err');}
@@ -795,47 +774,25 @@ window.saveToGallery=async function(){
   // ربط التصميم بأوردره المصدر (المرحلة 3) — IDs مبهمة فقط (لا أسماء/هواتف)
   // لأن gallery قراءته عامة (RULE 8). الأسماء تُحلّ داخلياً من orders/{id}.
   const _srcOrder = activeId ? (orders.find(x=>x._id===activeId) || null) : null;
-  try{
-    const storageRef=ref(storage,`gallery/mockup_${Date.now()}_${Math.random().toString(36).slice(2)}`);
-    await uploadBytes(storageRef,inp.files[0]);
-    const imageUrl=await getDownloadURL(storageRef);
-    console.log('[gallery] image uploaded:', imageUrl);
-
-    // Duplicate detection — best effort
-    let dupTitle = null;
-    try {
-      const dupSnap = await getDocs(
-        query(collection(db,'gallery'), where('imageUrl','==',imageUrl))
-      );
-      const dupDoc = dupSnap.docs.find(d => d.data().isVisible !== false);
-      if (dupDoc) dupTitle = dupDoc.data().title || 'تصميم';
-    } catch(e) {
-      console.warn('[gallery] duplicate check skipped:', e?.message || e);
-    }
-
-    // Write to `gallery` collection — same schema read by gallery.html
-    await addDoc(collection(db,'gallery'),{
-      imageUrl,
-      title,
-      description: '',
-      productType: cat,
-      tags: galSelColors || [],
-      designerName: userName,
-      publishedBy: auth.currentUser?.uid || '',
-      publishedByName: userName,
-      isVisible: true,
-      publishedAt: serverTimestamp(),
-      sourceOrderId: _srcOrder?._id || activeId || null,
-      clientId: _srcOrder?.clientId || null,
-    });
-    console.log('[gallery] gallery doc written');
-
-    closeGallery();
-    toast(dupTitle ? `✅ تم النشر (⚠️ صورة مكررة لـ "${dupTitle}")` : '✅ تم النشر في المعرض','ok');
-  }catch(e){
-    console.error('[gallery] publish failed:', e);
-    toast('❌ ' + (e?.message || 'فشل النشر'),'err');
+  const r = await publishGalleryItem({
+    db,
+    file: inp.files[0],
+    title,
+    productType: cat,
+    tags: galSelColors || [],
+    sourceOrderId: _srcOrder?._id || activeId || null,
+    clientId: _srcOrder?.clientId || null,
+    actor: { userId: auth.currentUser?.uid || '', userName },
+  });
+  if(!r.ok){
+    console.error('[gallery] publish failed:', r.errors);
+    toast('❌ ' + (r.errors||[]).join(' · '),'err');
+    return;
   }
+  console.log('[gallery] gallery doc written, id:', r.id);
+  closeGallery();
+  const dupWarn = (r.warnings||[]).find(w=>w.includes('مكررة'));
+  toast(dupWarn ? `✅ تم النشر (${dupWarn})` : '✅ تم النشر في المعرض','ok');
 };
 
 let __designStateRestored=false;
@@ -850,6 +807,7 @@ function _restoreDesignState(){
   _ps.restoreUI(()=>{if(orders.find(o=>o._id===_restored.activeId))window.openOrder&&window.openOrder(_restored.activeId);});
 }
 function startListeners(){
+  stopListeners();
   // Deep-link: open specific order if ?orderId= in URL
   window.__urlOrderId = window.__urlOrderId || (new URLSearchParams(window.location.search).get('orderId') || '');
   window.__urlOpened = window.__urlOpened || false;
@@ -867,23 +825,23 @@ function startListeners(){
   if(isAdmin2){
     // Admin — كل أوردرات التصميم (RULE G3: cap design queue at 500;
     // a healthy design pipeline rarely exceeds 100 active orders).
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
+    __dsUnsubs.push(onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
       orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       scheduleRender();
-    });
+    }));
   } else if(isCS){
     // CS — الأوردرات اللي هي عملتها (limit 500 — same cap as admin view)
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
+    __dsUnsubs.push(onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
       window.markSynced&&window.markSynced();_ps.markFresh();
       const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
       orders=all.filter(o=>o.createdBy===currentUid||!o.designerId)
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       scheduleRender();
-    });
+    }));
   } else {
     // المصمم — أوردراته المكلّف بيها (limit 200 — per-designer cap)
-    onSnapshot(query(collection(db,'orders'),where('designerId','==',currentUid),where('stage','==','design'),limit(200)),snap=>{
+    __dsUnsubs.push(onSnapshot(query(collection(db,'orders'),where('designerId','==',currentUid),where('stage','==','design'),limit(200)),snap=>{
       const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
       window.__assignedDesign=assigned;
       const unassigned=(window.__unassignedDesign||[]);
@@ -891,9 +849,9 @@ function startListeners(){
       orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       scheduleRender();
-    });
+    }));
     // أوردرات التصميم بدون مصمم (للسحب) — cap matches admin/CS view
-    onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
+    __dsUnsubs.push(onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
       window.__unassignedDesign=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(o=>!o.designerId);
       const assigned=(window.__assignedDesign||[]);
       const unassigned=window.__unassignedDesign;
@@ -901,43 +859,44 @@ function startListeners(){
       orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       scheduleRender();
-    });
+    }));
   }
 
   // clients — bounded to recent 1500 by createdAt. Used for the "new order"
   // client picker. Older clients can be linked manually via search.
-  onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc'),limit(1500)),
+  __dsUnsubs.push(onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc'),limit(1500)),
     snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));},
     err=>console.warn('[design] clients snapshot failed:',err)
-  );
-  onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
+  ));
+  __dsUnsubs.push(onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
     products=snap.docs.map(d=>({...d.data(),_id:d.id}));refreshProdSelects();
-  });
+  }));
   // جيب المصممين من employees — مصدر وحيد + dedup مركزي (orders.js)
-  onSnapshot(query(collection(db,'employees'),where('role','in',['graphic_designer','design_operator']),limit(100)),snap=>{
+  __dsUnsubs.push(onSnapshot(query(collection(db,'employees'),where('role','in',['graphic_designer','design_operator']),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     designers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('np-des');if(!s)return;
     s.innerHTML='<option value="">— بدون مصمم —</option>'+designers.map(d=>`<option value="${d.authUid||d._id}">${d.name}</option>`).join('');
-  });
+  }));
   // مرحلة الطباعة = تجهيز الأوردر قبل التنفيذ → مسؤوليتها للـ operation_manager
   // (مسؤول التشغيل)، وليس production_agent (التنفيذ).
   // production_agent مسؤوليته تبدأ من مرحلة التنفيذ، مش الطباعة.
   // Note: window.__printers اسم محتفظ به عشان compat مع الـ confirmApproveWithPrinter
   // — هو dropdown مسؤولي التشغيل دلوقتي.
-  onSnapshot(query(collection(db,'employees'),where('role','==','operation_manager'),limit(100)),snap=>{
+  __dsUnsubs.push(onSnapshot(query(collection(db,'employees'),where('role','==','operation_manager'),limit(100)),snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     window.__printers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('pick-printer-sel');if(!s)return;
     const cur=s.value;
     s.innerHTML='<option value="">— أول مسؤول تشغيل متاح —</option>'+(window.__printers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
     if(cur)s.value=cur;
-  });
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
+  }));
+  __dsUnsubs.push(onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
     const s=document.getElementById('np-dep-wallet');if(!s)return;
     s.innerHTML='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'} ${w.name}</option>`).join('');
-  });
+  }));
+  window.addEventListener('beforeunload',stopListeners,{once:true});
 }
 
 // ── KANBAN ──
@@ -1497,7 +1456,7 @@ window.saveOrder=async function(){
     fn2.textContent=window.__refFile.name||'جاري الرفع...';
     ov.style.display='flex';
     try{
-      const {getStorage,ref:sRef,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
+      const {getStorage,ref:sRef,uploadBytesResumable,getDownloadURL}=await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js");
       const storage2=getStorage();
       const sRefPath=sRef(storage2,`design-refs/${r.orderDocId}_${Date.now()}`);
       const task=uploadBytesResumable(sRefPath,window.__refFile);

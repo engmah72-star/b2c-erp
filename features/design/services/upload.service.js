@@ -8,7 +8,7 @@
 import { storage } from '../../../core/firebase-init.js';
 import {
   ref, uploadBytesResumable, getDownloadURL,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 
 /**
  * Infer slot kind من MIME/extension.

@@ -24,7 +24,7 @@
 import { storage } from './firebase-init.js';
 import {
   ref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js';
 
 // ══════════════════════════════════════════
 // CONSTANTS — kinds معتمدة لكل module

@@ -25,6 +25,16 @@ export const STAGE_AR = {
   cancelled: 'ملغي',
 };
 
+/** Arabic labels WITH emoji prefix — canonical source for UI badges across pages. */
+export const STAGE_AR_EMOJI = {
+  design:    '✏️ تصميم',
+  printing:  '🖨️ طباعة',
+  production:'🏭 تنفيذ',
+  shipping:  '🚚 شحن',
+  archived:  '📁 مؤرشف',
+  cancelled: '✕ ملغي',
+};
+
 /** Stage badge colors (CSS values) — used in approvals.html order cards. */
 export const STAGE_COL = {
   design:    'var(--p)',

@@ -219,8 +219,8 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 <script type="module">
 
 import { app, auth, db } from "./core/firebase-init.js";
-import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit, startAt, endAt, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit, startAt, endAt, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // ══ Global Error Handler ══
 window.addEventListener('unhandledrejection', e=>{
@@ -296,6 +296,12 @@ const _restored=_ps.data;
 if(_ps.hasSnapshots)_ps.restoreSnapshots();
 
 let currentUser=null, currentRole='customer_service', userName='', userPerms={};
+// ── Listener lifecycle (memory-leak fix) ──
+let __clUnsubs = [];
+function stopClientListeners() {
+  __clUnsubs.forEach(u => { try { u(); } catch (_) {} });
+  __clUnsubs = [];
+}
 // God-page decomp PR-23: COLORS extracted to clients-constants.js
 
 // ── Field-level visibility ──
@@ -458,11 +464,12 @@ onAuthStateChanged(auth, async u=>{
   //   T2 (defer 500ms): products, designers (employees), master_lists/egypt_admin
   //   T3 (defer 1500ms): followups, segments, transactions_v2 — only used in panel/cgrid
   // Limits reduced — old docs still readable on-demand via direct getDoc.
+  stopClientListeners();
   const CLIENTS_LIMIT = 1000;    // تحميل كل العملاء (بدون قيد تاريخي)
   const ORDERS_LIMIT  = 1500;    // was 3000
   const TX_LIMIT      = 1500;    // was 3000
   const FU_LIMIT      = 800;     // was 1500
-  onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc'),limit(CLIENTS_LIMIT)),snap=>{
+  __clUnsubs.push(onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc'),limit(CLIENTS_LIMIT)),snap=>{
     __clientsListenerFired = true;_ps.markFresh();
     clearTimeout(__loadWatchdog);
     const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
@@ -534,31 +541,31 @@ onAuthStateChanged(auth, async u=>{
         }
       }
     }
-  }, err=>__reportListenerError('العملاء', err));
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(ORDERS_LIMIT)),snap=>{
+  }, err=>__reportListenerError('العملاء', err)));
+  __clUnsubs.push(onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(ORDERS_LIMIT)),snap=>{
     __ordersListenerFired = true;
     clearTimeout(__loadWatchdog);
     allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
     scheduleStatsAndGrid();
     if(activeId) renderPanel(activeId);
-  }, err=>__reportListenerError('الأوردرات', err));
+  }, err=>__reportListenerError('الأوردرات', err)));
   // T1: wallets — needed for new-order modal (which can open early)
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
+  __clUnsubs.push(onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
     wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
-  });
+  }));
   // T1: settings — affects fillGovSelect (governorate dropdown)
-  onSnapshot(doc(db,'settings','main'),snap=>{
+  __clUnsubs.push(onSnapshot(doc(db,'settings','main'),snap=>{
     if(snap.exists()) settings=snap.data();
     fillGovSelect();
-  });
+  }));
 
   // T2: secondary data (products + designers + master_lists) — defer 500ms
   setTimeout(()=>{
-    onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
+    __clUnsubs.push(onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
       products=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    });
+    }));
     // ── المصممون: المصدر الوحيد هو `employees` ──
-    onSnapshot(query(collection(db,'employees'),limit(500)),snap=>{
+    __clUnsubs.push(onSnapshot(query(collection(db,'employees'),limit(500)),snap=>{
       const raw = snap.docs
         .map(d=>({...d.data(),_id:d.id}))
         .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
@@ -583,9 +590,9 @@ onAuthStateChanged(auth, async u=>{
         if(phone){ byPhone.set(phone,idx); byName.set(nameKey,idx); }
       });
       designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    });
+    }));
     // Admin override للتقسيم الإداري — لو الوثيقة موجودة في master_lists/egypt_admin
-    onSnapshot(doc(db,'master_lists','egypt_admin'),snap=>{
+    __clUnsubs.push(onSnapshot(doc(db,'master_lists','egypt_admin'),snap=>{
       if(snap.exists()){
         const data=snap.data();
         const items=data?.items;
@@ -599,13 +606,13 @@ onAuthStateChanged(auth, async u=>{
       }
       fillGovSelect();
       fillFilters();
-    },err=>{ console.warn('egypt_admin listener:',err?.message||err); });
+    },err=>{ console.warn('egypt_admin listener:',err?.message||err); }));
   }, 500);
 
   // T3: tertiary data (followups + segments + transactions_v2) — defer 1500ms
   // These only show in panel/cgrid; main grid render doesn't need them.
   setTimeout(()=>{
-    onSnapshot(query(collection(db,'client_followups'),orderBy('createdAt','desc'),limit(FU_LIMIT)),snap=>{
+    __clUnsubs.push(onSnapshot(query(collection(db,'client_followups'),orderBy('createdAt','desc'),limit(FU_LIMIT)),snap=>{
       allFollowups=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(f=>!f.isDeleted);
       followupsByClient.clear();
       allFollowups.forEach(f=>{
@@ -626,19 +633,19 @@ onAuthStateChanged(auth, async u=>{
         const list=document.getElementById('panel-followups-list');
         if(list)list.innerHTML=renderClientFollowups(activeId);
       }
-    });
+    }));
 
     // RFM segments — written weekly by Cloud Function. Permission errors are
     // silenced because non-CRM roles don't get read access.
-    onSnapshot(query(collection(db,'client_segments'),limit(CLIENTS_LIMIT)),snap=>{
+    __clUnsubs.push(onSnapshot(query(collection(db,'client_segments'),limit(CLIENTS_LIMIT)),snap=>{
       clientSegments.clear();
       snap.forEach(d=>clientSegments.set(d.id,d.data()));
       scheduleStatsAndGrid();
       if(!isClientModalOpen()) renderSegmentStrip();
       if(activeId) renderPanel(activeId);
-    },err=>console.warn('client_segments listener:',err?.message||err));
+    },err=>console.warn('client_segments listener:',err?.message||err)));
 
-    onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(TX_LIMIT)),snap=>{
+    __clUnsubs.push(onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(TX_LIMIT)),snap=>{
       allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
       txByOrder.clear();
       allTx.forEach(tx=>{
@@ -647,8 +654,9 @@ onAuthStateChanged(auth, async u=>{
         txByOrder.get(tx.orderId).push(tx);
       });
       if(window.__statusTab==='cgrid') renderControlGrid();
-    });
+    }));
   }, 1500);
+  window.addEventListener('beforeunload', stopClientListeners, { once: true });
 });
 
 // ══ STATS ══

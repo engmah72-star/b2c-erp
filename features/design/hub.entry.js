@@ -8,7 +8,7 @@
  */
 
 import { auth } from '../../core/firebase-init.js';
-import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { getUserDoc } from './repository.js';
 import { canAccessDesignerHub } from './permissions.js';
 import { buildSidebar } from './components/sidebar.js';

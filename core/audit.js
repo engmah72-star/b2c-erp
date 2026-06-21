@@ -44,7 +44,7 @@ import {
   collection,
   doc,
   serverTimestamp,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { db as defaultDb } from './firebase-init.js';
 
 // ── Audit kinds enum ──────────────────────────────────────────────

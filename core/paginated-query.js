@@ -21,7 +21,7 @@ import { db } from './firebase-init.js';
 import {
   collection, getDocs, onSnapshot,
   query, where, orderBy, limit, startAfter,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGES_IN_MEMORY = 20;

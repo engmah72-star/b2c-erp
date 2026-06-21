@@ -23,7 +23,7 @@
 import { db } from '../firebase-init.js';
 import {
   collection, doc, getDocs, onSnapshot, query, where, limit,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { employeeActions } from '../../employee-actions.js';
 
 const GRACE_MIN = 15;  // matches the employee-profile central path

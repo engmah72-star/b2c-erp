@@ -24,7 +24,7 @@ import { db } from '../../core/firebase-init.js';
 import {
   collection, doc, getDoc, getDocs,
   onSnapshot, query, where, orderBy, limit,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 // ══ Defaults — يخدمون G3 (bounded listeners) ════════════
 export const LIMITS = Object.freeze({

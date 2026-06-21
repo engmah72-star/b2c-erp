@@ -8,8 +8,8 @@
 // في أي صفحة تستخدم Firebase auth.
 
 import { app, auth, db } from "./core/firebase-init.js";
-import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { collection, query, where, onSnapshot, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { collection, query, where, onSnapshot, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // RULE G3: cap the conversations subscription. The FAB only renders an
 // unread badge — a user with 200+ active threads is a corner case the

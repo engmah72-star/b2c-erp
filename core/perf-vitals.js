@@ -24,7 +24,7 @@
 
 import { db, auth } from './firebase-init.js';
 import { collection, addDoc, serverTimestamp }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // نسبة أخذ العينات — ERP داخلي بعدد مستخدمين محدود، فنجمع الكل (قابل للضبط).
 const SAMPLE_RATE = 1.0;

@@ -23,7 +23,7 @@
 import {
   doc, getDoc, addDoc, updateDoc, deleteDoc, collection,
   query, where, getDocs, limit, serverTimestamp, increment,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { canDo } from './core/permissions-matrix.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';

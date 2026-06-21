@@ -30,7 +30,7 @@ import {
   runTransaction,
   serverTimestamp,
   arrayUnion,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
@@ -53,7 +53,7 @@ async function _logAudit(db, { action, details, userId, userName }) {
 async function _maybeEscalateIncident(db, { employeeId, employeeName, reasonCode, reasonLabel, userId, userName }) {
   if (!reasonCode || !employeeId) return false;
   try {
-    const { getDocs, query, where, limit } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const { getDocs, query, where, limit } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
     const snap = await getDocs(query(collection(db, 'employee_incidents'), where('employeeId', '==', employeeId), limit(500)));
     const total = snap.docs
       .map(d => d.data())
@@ -298,7 +298,7 @@ export async function createSelfEmployeeFile({
     return { ok: false, errors: ['⚠️ employeeData مطلوب'], warnings: [] };
   }
   try {
-    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
     // حارس تكرار: لو فيه ملف موظف مرتبط بنفس الحساب، أوقف بدل إنشاء نسخة ثانية.
     const existing = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid)));
     if (!existing.empty) {
@@ -962,7 +962,7 @@ export async function changeUserRole({
       permissions: newPermissions || {},
     });
     // find matching employee doc (if any)
-    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
     const empSnap = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid)));
     if (!empSnap.empty) {
       batch.update(empSnap.docs[0].ref, { role: newRole, updatedAt: serverTimestamp() });
@@ -1167,6 +1167,62 @@ export async function reverseSalaryPayment({
 }
 
 /**
+ * Payroll — مسير رواتب جماعي (H1.1 fix: كان dispatchFinancialEvent مباشر من
+ * employees.html). يلفّ dispatchFinancialEvent(FE.PAYROLL) بـ withIdempotency
+ * ويُرجع { ok, errors[], warnings[] } حسب H1.5.
+ */
+export async function processPayroll({
+  db = defaultDb,
+  employees: empList,
+  totalAmount,
+  walletId, walletName = '',
+  note = '', month,
+  date = '',
+  userId, userName = '',
+}) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!walletId) return { ok: false, errors: ['⚠️ اختر المحفظة'], warnings: [] };
+  if (!Array.isArray(empList) || !empList.length) {
+    return { ok: false, errors: ['⚠️ لا يوجد موظفون مختارون'], warnings: [] };
+  }
+  if (!month) return { ok: false, errors: ['⚠️ month مطلوب'], warnings: [] };
+  const total = parseFloat(totalAmount) || empList.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+  return withIdempotency(db, {
+    actionType: 'payroll',
+    entityId: `payroll|${month}`,
+    actorId: userId,
+    actorName: userName,
+    payload: { totalAmount: total, walletId, count: empList.length },
+  }, async () => {
+    try {
+      const eventResult = await dispatchFinancialEvent(db, FE.PAYROLL, {
+        employees: empList,
+        totalAmount: total,
+        walletId, walletName,
+        note, month,
+        date: date || new Date().toLocaleDateString('ar-EG'),
+        userId, userName,
+      });
+      return {
+        ok: true,
+        errors: [],
+        warnings: [],
+        eventType: FE.PAYROLL,
+        action: 'payroll',
+        count: eventResult?.count || empList.length,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.message || 'فشل صرف الرواتب'],
+        warnings: [],
+      };
+    }
+  });
+}
+
+/**
  * يحفظ إيميل الاسترداد للموظف في users/{authUid}.recoveryEmail (حقل غير محمي —
  * القواعد تسمح للموظف يحدّث مستنده). يُستخدم في الريست الذاتي عبر الإيميل.
  * email='' يمسح التسجيل.
@@ -1206,7 +1262,7 @@ export const employeeActions = {
   startAttendanceOvertime, approveAttendanceOvertime,
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
-  recordSalaryPayment, reverseSalaryPayment,
+  recordSalaryPayment, reverseSalaryPayment, processPayroll,
   setRecoveryEmail,
 };
 
