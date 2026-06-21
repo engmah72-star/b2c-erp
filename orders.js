@@ -1175,13 +1175,10 @@ export function validateStageRequirements(order, fromStage) {
     }
   }
   else if (stage === 'production') {
-    // 🛡 Phase 4 Operational Guard: cost items إلزامية قبل التحويل للشحن.
-    // كان warning قابل للتجاوز — الموظف تحت ضغط يضغط "نعم" → أوردر يطلع للشحن
-    // بدون أي تكلفة مسجَّلة → خسارة فينانس + audit ناقص.
-    // الـ admin override يمر عبر adminOverrideToShipping (مع reason إلزامي).
+    // 🛡 Phase 4: cost items — تحذير قابل للتجاوز (التكاليف تُسجَّل لاحقاً من مركز التكاليف).
     const costItems = order.costItems || [];
     if (!costItems.length) {
-      errors.push('⛔ يجب تسجيل بند تكلفة واحد على الأقل قبل التحويل للشحن');
+      warnings.push('⚠️ لم تُسجَّل تكاليف بعد — يمكن تسجيلها لاحقاً من مركز التكاليف');
     }
 
     // 🚚 بيانات الشحن يُفترض إدخالها في مرحلة الطباعة (prepareForShipping).
