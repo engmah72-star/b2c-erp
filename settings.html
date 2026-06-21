@@ -1001,7 +1001,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 import { createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
-import { getRoleDefaultPermissions } from "./core/permissions-matrix.js";
+import { getRoleDefaultPermissions, canDo } from "./core/permissions-matrix.js";
 import { walletActions } from "./wallet-actions.js";
 import { employeeActions } from "./employee-actions.js";
 import { masterListsActions } from "./master-lists-actions.js";
@@ -1083,12 +1083,12 @@ onAuthStateChanged(auth, async u => {
   if(snap.exists()) {
 
     const d = snap.data();
-    if(!['admin','operation_manager'].includes(d.role)) {
+    if(!canDo('system_settings', d.role, d.permissions) && !canDo('manage_employees', d.role, d.permissions)) {
       toast('⚠️ هذه الصفحة للمسؤول فقط','err');
       setTimeout(()=>(typeof navigatePage==='function'?navigatePage:url=>location.href=url)('accounts.html'),2000);
       return;
     }
-    isAdminUser = d.role === 'admin';
+    isAdminUser = canDo('system_settings', d.role, d.permissions);
     renderFinancialPolicy(); // re-apply edit-gate now that role is known
     const r = ROLES[d.role]||ROLES.admin;
     /* sidebar: central mount */
@@ -1096,7 +1096,7 @@ onAuthStateChanged(auth, async u => {
     {const _av=document.getElementById('nav-av'); if(_av)_av.textContent = (d.name||'A')[0].toUpperCase();}
     {const _rb=document.getElementById('role-badge'); if(_rb)_rb.textContent = r.label;}
     // Migration + load (admin only):
-    if (d.role === 'admin') {
+    if (canDo('system_settings', d.role, d.permissions)) {
       const mig = await masterListsActions.migrateProductionServices({ db });
       if (mig.migrated) toast(`✅ تم دمج ${mig.counts.total} خدمة في القائمة الموحدة`, 'ok');
       else if (!mig.ok) console.warn('migration:', mig.errors);
