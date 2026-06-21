@@ -2,7 +2,7 @@
 // يراقب المهام والأوردرات المعيّنة للموظف ويعرض إشعارات
 
 import { getFirestore, collection, query, where, onSnapshot, doc, getDoc, updateDoc, writeBatch, serverTimestamp, limit }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { initFcm } from "./fcm-init.js";
 
 const STORAGE_KEY = 'b2c_notif_seen';

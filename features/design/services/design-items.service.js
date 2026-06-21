@@ -10,7 +10,7 @@
 import { db } from '../../../core/firebase-init.js';
 import {
   collection, doc, addDoc, updateDoc, arrayUnion, serverTimestamp,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 /**
  * إنشاء بند تصميم جديد لأوردر (order-level upload — Phase 1).

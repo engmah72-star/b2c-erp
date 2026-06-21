@@ -19,9 +19,9 @@
 //   certificates → Generate key pair → paste the value below.
 
 import { getMessaging, getToken, onMessage, isSupported }
-  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js';
+  from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging.js';
 import { getFunctions, httpsCallable }
-  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js';
+  from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js';
 
 // PUBLIC VAPID key — safe to expose in client code.
 // Generated from Firebase Console → Cloud Messaging → Web Push certificates.

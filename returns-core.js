@@ -23,7 +23,7 @@
  */
 import {
   writeBatch, doc, collection, getDoc, serverTimestamp, increment,
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { addLedgerToBatch, FE } from "./financial-sync-engine.js";
 import { addAuditToBatch as _centralAudit } from './core/audit.js';
 

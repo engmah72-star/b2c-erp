@@ -10,12 +10,12 @@ import './theme.js';
 
 import {
   onAuthStateChanged, signOut
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   collection, doc,
   onSnapshot, addDoc, updateDoc, deleteDoc, getDoc,
   query, orderBy, serverTimestamp, getDocs, where, limit
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // ═══════════════════════════════════════
 // FIREBASE — Single Source via core/firebase-init.js (RULE G2)

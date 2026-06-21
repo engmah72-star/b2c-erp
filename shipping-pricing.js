@@ -64,7 +64,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — rules don't change often
 export async function loadPricingRules(db) {
   if (!db) return 0;
   // Lazy-import firestore lib so this module can be unit-tested without it
-  const { collection, getDocs, query, limit } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const { collection, getDocs, query, limit } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
   const snap = await getDocs(query(collection(db, 'shipping_pricing'), limit(100)));
   _rulesCache = new Map();
   snap.forEach(d => {

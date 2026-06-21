@@ -12,8 +12,8 @@
 //   <script type="module" src="core/sidebar-mount.js?v=1"></script>
 // ════════════════════════════════════════════════════════════════════
 import { auth, db } from './firebase-init.js';
-import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { ROLE_PAGES } from './permissions-matrix.js';
 
 // ── Expose canonical role→pages defaults to the plain-script world ──

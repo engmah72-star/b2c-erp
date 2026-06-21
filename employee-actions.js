@@ -30,7 +30,7 @@ import {
   runTransaction,
   serverTimestamp,
   arrayUnion,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { db as defaultDb } from './core/firebase-init.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
@@ -53,7 +53,7 @@ async function _logAudit(db, { action, details, userId, userName }) {
 async function _maybeEscalateIncident(db, { employeeId, employeeName, reasonCode, reasonLabel, userId, userName }) {
   if (!reasonCode || !employeeId) return false;
   try {
-    const { getDocs, query, where, limit } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const { getDocs, query, where, limit } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
     const snap = await getDocs(query(collection(db, 'employee_incidents'), where('employeeId', '==', employeeId), limit(500)));
     const total = snap.docs
       .map(d => d.data())
@@ -298,7 +298,7 @@ export async function createSelfEmployeeFile({
     return { ok: false, errors: ['⚠️ employeeData مطلوب'], warnings: [] };
   }
   try {
-    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
     // حارس تكرار: لو فيه ملف موظف مرتبط بنفس الحساب، أوقف بدل إنشاء نسخة ثانية.
     const existing = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid)));
     if (!existing.empty) {
@@ -962,7 +962,7 @@ export async function changeUserRole({
       permissions: newPermissions || {},
     });
     // find matching employee doc (if any)
-    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
     const empSnap = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid)));
     if (!empSnap.empty) {
       batch.update(empSnap.docs[0].ref, { role: newRole, updatedAt: serverTimestamp() });
