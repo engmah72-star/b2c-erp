@@ -14,6 +14,14 @@
  *      — semantically equal but byte-different, left for a future sweep.
  */
 
+/** HTML-escape a string (prevents XSS in innerHTML assignments). */
+const _escMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+export const esc = (s) => s == null ? '' : String(s).replace(/[&<>"']/g, c => _escMap[c]);
+export { esc as escHtml, esc as escapeHtml };
+
+/** Escape for use inside HTML attribute values. */
+export const escAttr = (s) => s == null ? '' : String(s).replace(/[&<>"']/g, c => _escMap[c]);
+
 /** Set element textContent by id; no-op if missing. */
 export const setText = (id, v) => {
   const e = document.getElementById(id);

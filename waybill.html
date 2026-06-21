@@ -74,8 +74,9 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { doc, getDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getDeliveryAddress } from "./core/shipping-utils.js";
+import { shippingActions } from "./shipping-actions.js";
 let orders=[],currentUser=null,userName='',userRole='',userPerms={};
 const _qp=new URLSearchParams(location.search);
 const orderIdsParam=(_qp.get('ids')||_qp.get('id')||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -97,10 +98,9 @@ window.printNow=()=>{
   // stamp printed metadata on every order in this batch (silently)
   if(currentUser&&orders.length){
     orders.forEach(o=>{
-      updateDoc(doc(db,'orders',o._id),{
-        'waybill.printedAt':nowStr(),
-        'waybill.printedBy':userName,
-        'waybill.printCount':((o.waybill?.printCount)||0)+1,
+      shippingActions.markWaybillPrinted({
+        db, orderId: o._id, printedAt: nowStr(),
+        userName, currentPrintCount: (o.waybill?.printCount)||0,
       }).catch(()=>{/* silent */});
     });
   }
@@ -291,10 +291,7 @@ window.closeEdit=()=>$('ov-edit').classList.remove('open');
 window.saveEdit=async()=>{
   if(isBulk||!orders.length) return;
   const o=orders[0];
-  if(o.stage==='archived') return toast('⛔ الأوردر مؤرشف','err');
-  if(o.shipStage==='returned') return toast('⛔ الأوردر مرتجع','err');
   const reason=gv('ed-reason').trim();
-  if(reason.length<10) return toast('⚠️ سبب التعديل لا بد ≥ 10 أحرف','err');
   const newName=gv('ed-name').trim();
   const newPhone=gv('ed-phone').trim();
   const newGov=gv('ed-gov').trim();
@@ -314,33 +311,19 @@ window.saveEdit=async()=>{
   if(!changes.length) return toast('لا توجد تغييرات','');
   const btn=$('btn-save-edit');btn.disabled=true;btn.textContent='...';
   try{
-    const auditEntry={
-      type:'waybill_edit',
-      changedBy:userName, changedById:currentUser.uid,
-      date:nowStr(), reason, changes,
-      requiresReview:true,
-    };
-    const updates={
-      'waybill.recipientName': newName,
-      'waybill.recipientPhone': newPhone,
-      'waybill.recipientGov': newGov,
-      'waybill.recipientAddress': newAddress,
-      'waybill.cargoDescription': newCargo,
-      'waybill.notes': newNotes,
-      'waybill.lastEditedAt': nowStr(),
-      'waybill.lastEditedBy': userName,
-      // Sync with top-level shipping fields so openShipSetup pre-fills correctly
-      shipGov: newGov,
-      shipAddress: newAddress,
-      auditLog: [...(o.auditLog||[]), auditEntry],
-      hasUnreviewedAudit: true,
-      timeline: [...(o.timeline||[]), {date:nowStr(),action:`✏️ تعديل البوليصة — ${changes.map(c=>c.label).join(', ')} · ${reason}`,by:userName}],
-      updatedAt: serverTimestamp(),
-    };
-    await updateDoc(doc(db,'orders',o._id), updates);
+    const result=await shippingActions.updateWaybillFields({
+      db, orderId: o._id, order: o,
+      newName, newPhone, newGov, newAddress, newCargo, newNotes,
+      reason, changes,
+      userId: currentUser.uid, userName,
+    });
+    if(!result.ok){
+      toast('❌ '+(result.errors[0]||'فشل التعديل'),'err');
+      return;
+    }
     // Update local state
-    orders[0]={...o, ...updates,
-      waybill:{...(o.waybill||{}),recipientName:newName,recipientPhone:newPhone,recipientGov:newGov,recipientAddress:newAddress,cargoDescription:newCargo,notes:newNotes,lastEditedAt:nowStr(),lastEditedBy:userName},
+    orders[0]={...o, ...result.updates,
+      waybill:{...(o.waybill||{}),recipientName:newName,recipientPhone:newPhone,recipientGov:newGov,recipientAddress:newAddress,cargoDescription:newCargo,notes:newNotes,lastEditedAt:result.ts,lastEditedBy:userName},
     };
     closeEdit();
     toast('✅ تم التعديل · تنبيه أُرسل للأدمن','ok');

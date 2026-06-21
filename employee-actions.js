@@ -1167,6 +1167,62 @@ export async function reverseSalaryPayment({
 }
 
 /**
+ * Payroll — مسير رواتب جماعي (H1.1 fix: كان dispatchFinancialEvent مباشر من
+ * employees.html). يلفّ dispatchFinancialEvent(FE.PAYROLL) بـ withIdempotency
+ * ويُرجع { ok, errors[], warnings[] } حسب H1.5.
+ */
+export async function processPayroll({
+  db = defaultDb,
+  employees: empList,
+  totalAmount,
+  walletId, walletName = '',
+  note = '', month,
+  date = '',
+  userId, userName = '',
+}) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+  if (!walletId) return { ok: false, errors: ['⚠️ اختر المحفظة'], warnings: [] };
+  if (!Array.isArray(empList) || !empList.length) {
+    return { ok: false, errors: ['⚠️ لا يوجد موظفون مختارون'], warnings: [] };
+  }
+  if (!month) return { ok: false, errors: ['⚠️ month مطلوب'], warnings: [] };
+  const total = parseFloat(totalAmount) || empList.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+  return withIdempotency(db, {
+    actionType: 'payroll',
+    entityId: `payroll|${month}`,
+    actorId: userId,
+    actorName: userName,
+    payload: { totalAmount: total, walletId, count: empList.length },
+  }, async () => {
+    try {
+      const eventResult = await dispatchFinancialEvent(db, FE.PAYROLL, {
+        employees: empList,
+        totalAmount: total,
+        walletId, walletName,
+        note, month,
+        date: date || new Date().toLocaleDateString('ar-EG'),
+        userId, userName,
+      });
+      return {
+        ok: true,
+        errors: [],
+        warnings: [],
+        eventType: FE.PAYROLL,
+        action: 'payroll',
+        count: eventResult?.count || empList.length,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        errors: [e.message || 'فشل صرف الرواتب'],
+        warnings: [],
+      };
+    }
+  });
+}
+
+/**
  * يحفظ إيميل الاسترداد للموظف في users/{authUid}.recoveryEmail (حقل غير محمي —
  * القواعد تسمح للموظف يحدّث مستنده). يُستخدم في الريست الذاتي عبر الإيميل.
  * email='' يمسح التسجيل.
@@ -1206,7 +1262,7 @@ export const employeeActions = {
   startAttendanceOvertime, approveAttendanceOvertime,
   requestAttendancePermission, decideAttendancePermission, cancelAttendancePermission,
   upsertEmployeeGoal, upsertEmployeeEvaluation,
-  recordSalaryPayment, reverseSalaryPayment,
+  recordSalaryPayment, reverseSalaryPayment, processPayroll,
   setRecoveryEmail,
 };
 

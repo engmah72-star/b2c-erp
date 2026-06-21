@@ -268,6 +268,12 @@ import { buildDesignersTabHTML, buildSalesTabHTML, buildStagePerformanceTabHTML 
 import { renderOverviewDetailedView } from "./features/reports/views/render-overview-detailed.js";
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[],paymentRequests=[];
 let appSettings={}; // settings/main — monthly targets (الأهداف الشهرية)
+// ══ Listener lifecycle (memory-leak fix) ══
+let __rptUnsubs = [];
+function stopListeners() {
+  __rptUnsubs.forEach(u => { try { u(); } catch (_) {} });
+  __rptUnsubs = [];
+}
 let currentDomain='home',currentDataView='collection';
 let dateFrom=null,dateTo=null,filterMode='month';
 
@@ -349,12 +355,12 @@ const __lazyStarted={};
 function _ensureCollection(name){
   if(__lazyStarted[name])return;
   __lazyStarted[name]=true;
-  if(name==='employees') onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();});
-  else if(name==='suppliers_v2') onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();});
-  else if(name==='shippers_v2') onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();});
-  else if(name==='supplier_payments') onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();});
-  else if(name==='returns_tickets') onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;});
-  else if(name==='payment_requests') onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(5000)),s=>{paymentRequests=s.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();},err=>{console.warn('[reports] payment_requests listener:',err.message);});
+  if(name==='employees') __rptUnsubs.push(onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();}));
+  else if(name==='suppliers_v2') __rptUnsubs.push(onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();}));
+  else if(name==='shippers_v2') __rptUnsubs.push(onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();}));
+  else if(name==='supplier_payments') __rptUnsubs.push(onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();}));
+  else if(name==='returns_tickets') __rptUnsubs.push(onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;}));
+  else if(name==='payment_requests') __rptUnsubs.push(onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(5000)),s=>{paymentRequests=s.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();},err=>{console.warn('[reports] payment_requests listener:',err.message);}));
 }
 function _ensureDomainDeps(domain){(__DOMAIN_DEPS[domain]||[]).forEach(c=>_ensureCollection(c));}
 const fn=fmtNum;
@@ -615,11 +621,13 @@ onAuthStateChanged(auth,async u=>{
   // history of every collection. Caps reflect "operational analytics" depth;
   // deeper historical analysis uses one-shot getDocs() with date filters.
   // T3: Core listeners — reduced from 10K → 5K (orders + transactions)
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(5000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__ordersVer++;__loaded.orders=true;scheduleRender();});
-  onSnapshot(query(collection(db,'clients'),limit(5000)),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();});
-  onSnapshot(query(collection(db,'wallets'),limit(100)),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));});
-  onSnapshot(doc(db,'settings','main'),s=>{appSettings=s.exists()?s.data():{};scheduleRender();});
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(5000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();});
+  stopListeners();
+  __rptUnsubs.push(onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(5000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__ordersVer++;__loaded.orders=true;scheduleRender();}));
+  __rptUnsubs.push(onSnapshot(query(collection(db,'clients'),limit(5000)),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();}));
+  __rptUnsubs.push(onSnapshot(query(collection(db,'wallets'),limit(100)),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));}));
+  __rptUnsubs.push(onSnapshot(doc(db,'settings','main'),s=>{appSettings=s.exists()?s.data():{};scheduleRender();}));
+  __rptUnsubs.push(onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(5000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();}));
+  window.addEventListener('beforeunload', stopListeners, { once: true });
   // ابدأ بقراءة الـ URL state بعد ما الـ auth ينجح
   readUrlState();
   // T8: secondary collections lazy-loaded per domain (employees, suppliers, shippers, payments, returns, paymentRequests)

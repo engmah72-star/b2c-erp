@@ -64,7 +64,11 @@ export function renderOverviewDetailedView(f, prev, ctx) {
   // المصروفات الفعلية = كل transactions type='out' في الفترة (موردين + شحن + مرتجعات + غيرها)
   const inRange2=(t,r)=>t.createdAt?.seconds&&new Date(t.createdAt.seconds*1000)>=r.from&&new Date(t.createdAt.seconds*1000)<=r.to;
   const costs=transactions.filter(t=>t.type==='out'&&inRange2(t,range)).reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-  const supDue=suppliers.reduce((s,sup)=>{const p=payments.filter(x=>x.supplierId===sup._id).reduce((ps,x)=>ps+(parseFloat(x.amount)||0),0);const pur=orders.reduce((os,o)=>os+(o.costItems||[]).filter(c2=>c2.supplierId===sup._id).reduce((cs,c2)=>cs+(parseFloat(c2.total)||0),0),0);return s+Math.max(0,pur-p);},0);
+  // pre-compute supplier totals in O(payments + orders·costItems) instead of O(suppliers × (payments + orders·costItems))
+  const _supPaid={},_supPur={};
+  payments.forEach(x=>{if(x.supplierId)_supPaid[x.supplierId]=(_supPaid[x.supplierId]||0)+(parseFloat(x.amount)||0);});
+  orders.forEach(o=>(o.costItems||[]).forEach(c2=>{if(c2.supplierId)_supPur[c2.supplierId]=(_supPur[c2.supplierId]||0)+(parseFloat(c2.total)||0);}));
+  const supDue=suppliers.reduce((s,sup)=>s+Math.max(0,(_supPur[sup._id]||0)-(_supPaid[sup._id]||0)),0);
 
   // الربح = الكاش الفعلي - المصروفات الفعلية
   const profit=tot-costs;
