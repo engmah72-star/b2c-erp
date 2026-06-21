@@ -3493,6 +3493,52 @@ export const orderActions = {
       return { ok: false, errors: [e.message || 'فشل الحفظ'], warnings: [], orderId };
     }
   },
+  // ─── Cancel Order ─────────────────────────────────────────────────
+  /**
+   * إلغاء أوردر من أي مرحلة. يسجّل السبب في timeline + audit.
+   * لا يمس الحسابات المالية (المدفوعات تبقى — المرتجعات عبر returns flow).
+   */
+  async cancelOrder({
+    db = defaultDb, orderId,
+    reason = '', note = '',
+    userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
+    if (!reason) return { ok: false, errors: ['⛔ سبب الإلغاء مطلوب'], warnings: [], orderId };
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+    if (order.stage === 'cancelled') {
+      return { ok: false, errors: ['الأوردر ملغي بالفعل'], warnings: [], orderId };
+    }
+    if (order.stage === 'archived') {
+      return { ok: false, errors: ['لا يمكن إلغاء أوردر مؤرشف'], warnings: [], orderId };
+    }
+    try {
+      const entry = auditEntry({
+        action: `❌ إلغاء الأوردر — ${reason}${note ? ' · ' + note : ''}`,
+        userId, userName, kind: 'op',
+        meta: { cancelReason: reason, cancelNote: note || '', previousStage: order.stage },
+      });
+      entry.stage = 'cancelled';
+      const stageEnteredAt = order.stageEnteredAt || {};
+      stageEnteredAt.cancelled = new Date().toISOString();
+      await updateDoc(order._ref, {
+        stage: 'cancelled',
+        cancelledAt: new Date().toISOString(),
+        cancelReason: reason,
+        cancelNote: note || '',
+        cancelledBy: userId,
+        cancelledByName: userName || '',
+        previousStage: order.stage,
+        stageEnteredAt,
+        timeline: [...(order.timeline || []), entry],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], orderId, action: 'cancel_order' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الإلغاء'], warnings: [], orderId };
+    }
+  },
 };
 
 // ══════════════════════════════════════════
