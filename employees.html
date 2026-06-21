@@ -130,6 +130,7 @@
     <div id="emp-alerts" class="emp2-alerts-wrap"></div>
     <!-- لوحة الحضور اليومية المصغّرة (Phase-6) -->
     <div id="att-strip" class="emp2-att-strip"></div>
+    <div id="dept-overview"></div>
     <div id="list"></div>
   </div>
 </div>
@@ -274,6 +275,8 @@ import { computeScore } from "./core/employee-scoring.js";
 import { filterEmployeeOrders } from "./core/employee-orders.js";
 import { buildBoardSummaryHTML } from "./features/attendance-board/render.js";
 import { buildAllEmployeeModalsHTML } from "./features/employees/views/render-employees-modals.js";
+import { openQuickAction } from "./features/employee-control/quick-actions.js";
+import { buildDeptOverviewHTML } from "./features/employees/views/render-employees-team.js";
 
 // ══ Sidebar — موحَّد عبر sidebar.js ══
 const SIDEBAR_PAGES = window.SIDEBAR_PAGES;
@@ -296,7 +299,7 @@ const ROLES={
 const MONTHS_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 
 // ══ STATE ══
-let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[],attPermsToday=[],empLeavesAll=[],empIncidentsAll=[];
+let employees=[],allOrders=[],transactions=[],wallets=[],attendanceRecords=[],empGoals=[],empEvaluations=[],attPermsToday=[],empLeavesAll=[],empIncidentsAll=[],incidentReasons=[];
 let currentUser=null,userName='',currentRole='',editingId=null,salFilterUnpaid=false,attFilterToday=false;
 let __selfMode=false,__myUserDoc=null,__empSnapLoaded=false; // __selfMode: نمط "إنشاء ملف موظف لي" · __myUserDoc: users doc للمستخدم الحالي · __empSnapLoaded: هل وصل snapshot الموظفين
 let sortBy='name', statFilter='', __dismissedAlerts=new Set(), __alertsCollapsed=false;
@@ -396,6 +399,7 @@ window.setPeriod=function(p){
 window.resetPageAndRender=function(){currentPage=1;syncURL();renderList();};
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
+window.toast=toast;
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
@@ -657,6 +661,10 @@ onAuthStateChanged(auth,async u=>{
     }
   }
 
+  // Incident reasons (master list) — for the incident modal's reason selector
+  onSnapshot(doc(db,'master_lists','incident_reasons'),snap=>{
+    incidentReasons=snap.exists()?(snap.data().items||[]):[];
+  });
   dataCache.subscribe(cachedQuery('employee_goals').limit(QL.EMPLOYEE_GOALS).build(),(docs)=>{
     empGoals=docs||[];
     __hrVer++;scheduleStats();scheduleList();
@@ -943,6 +951,8 @@ window.renderList=function(){
   });
   const _strip=document.getElementById('att-strip');
   if(_strip)_strip.innerHTML=buildBoardSummaryHTML(attCounts);
+  const _deptEl=document.getElementById('dept-overview');
+  if(_deptEl)_deptEl.innerHTML=buildDeptOverviewHTML({employees,calcKpi,attStatusMap,activeOrders:activeOrdsAll,escAttr});
   const cardCtx={paidEmpIds,attendedToday,todayAttMap,attendedInPeriod,activeOrdsAll,periodOrders,allOrders,lastActivityMap,periodFilter,pLbl,ROLES,calcKpi,getEmpStatus,nameToColor,fn,escAttr,attStatusMap,pendingPermMap,canManage:(currentRole==='admin'||currentRole==='operation_manager')};
   el.innerHTML='<div class="emp2-cards-grid">'+pageData.map(e=>buildEmployeeCardHTML(e,cardCtx)).join('')+'</div>'+buildEmployeesPagerHTML({currentPage,totalPages,pageStart,PAGE_SIZE,dataLength:data.length});
 };
@@ -1067,39 +1077,13 @@ function nameToColor(name){
   return `hsl(${hue},58%,52%)`;
 }
 
-// ══ Inline quick actions (reduce navigation — PC3 integration) ══
-window.quickAddTask=async function(empId,empUid,empName){
-  const title=prompt('عنوان المهمة:','');
-  if(!title||!title.trim())return;
-  const priorityStr=prompt('الأولوية:\n1 = عادية\n2 = عاجلة','1');
-  const priority=(priorityStr?.trim()==='2')?'urgent':'normal';
-  const r=await employeeActions.addEmployeeTask({
-    db,assignedToUid:empUid,assignedToName:empName,
-    title:title.trim(),description:'',priority,
-    userId:currentUser?.uid||'',userName
-  });
-  if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر إسناد المهمة'));return;}
-  alert('✅ تم إسناد المهمة لـ '+empName);
-};
-
-window.quickAddIncident=async function(empId,empUid,empName){
-  const typeStr=prompt('نوع الملاحظة:\n1 = تصميم مرفوض\n2 = أوردر متأخر\n3 = شكوى عميل\n4 = مخالفة حضور\n5 = مشكلة جودة\n6 = أخرى','6');
-  if(typeStr===null)return;
-  const types={1:'design_rejected',2:'order_late',3:'customer_complaint',4:'attendance',5:'quality',6:'other'};
-  const type=types[typeStr?.trim()]||'other';
-  const title=prompt('وصف الملاحظة:','');
-  if(!title||!title.trim())return;
-  const severity=prompt('مستوى الخطورة:\n1 = منخفض\n2 = متوسط\n3 = مرتفع','1');
-  const sevMap={1:'low',2:'medium',3:'high'};
-  const r=await employeeActions.addIncident({
-    db,employeeId:empId,employeeName:empName,authUid:empUid,
-    date:new Date().toISOString().slice(0,10),
-    type,title:title.trim(),severity:sevMap[severity?.trim()]||'low',
-    reasonLabel:title.trim(),
-    userId:currentUser?.uid||'',userName
-  });
-  if(!r.ok){alert('❌ '+((r.errors||[]).join(' · ')||'تعذّر تسجيل الملاحظة'));return;}
-  alert('✅ تم تسجيل الملاحظة على '+empName);
+// ══ Inline quick actions — proper modals via employee-control/quick-actions.js ══
+function _quickActionCtx(){
+  return {db,me:{uid:currentUser?.uid||'',name:userName},wallets,incidentReasons,monthKey:curMonthKey()};
+}
+window.quickAction=function(act,empId,empUid,empName){
+  const emp=employees.find(x=>x._id===empId)||{_id:empId,authUid:empUid,name:empName,role:''};
+  openQuickAction(act,emp,_quickActionCtx());
 };
 
 // ══ Animated counter ══
@@ -1775,6 +1759,21 @@ document.getElementById('pay-one-history-list')?.addEventListener('click',e=>{
   reverseSalaryTx(b.dataset.txid,b.dataset.eid,b.dataset.ename,+b.dataset.amount,b.dataset.isded==='true',b.dataset.walletid,b.dataset.epid);
 });
 
+// Department overview cards (rendered into #dept-overview) — delegated
+document.getElementById('dept-overview')?.addEventListener('click',e=>{
+  const card=e.target.closest('[data-act="dept-filter"]');
+  if(!card)return;
+  const roles=(card.dataset.roles||'').split(',').filter(Boolean);
+  if(!roles.length)return;
+  // If only one role in dept, set role filter directly. Otherwise, cycle through or set first.
+  const roleEl=document.getElementById('f-role');
+  if(roleEl){
+    if(roles.length===1){roleEl.value=roles[0];}
+    else{const cur=roleEl.value;const idx=roles.indexOf(cur);roleEl.value=roles[(idx+1)%roles.length];}
+  }
+  currentPage=1;syncURL();renderList();
+});
+
 // Filter chips (rendered into #filter-chips) — delegated
 document.getElementById('filter-chips')?.addEventListener('click',e=>{
   if(e.target.closest('[data-act="remove-chip"]')){ removeChip(e.target.closest('[data-act="remove-chip"]').dataset.key); return; }
@@ -1804,11 +1803,11 @@ document.getElementById('list')?.addEventListener('click',e=>{
     const me=e.target.closest('[data-act="menu-edit"]');
     if(me){ closeActMenu(); openEditEmp(me.dataset.eid); return; }
     const mt=e.target.closest('[data-act="menu-add-task"]');
-    if(mt){ closeActMenu(); quickAddTask(mt.dataset.eid,mt.dataset.uid,mt.dataset.ename); return; }
+    if(mt){ closeActMenu(); quickAction('task',mt.dataset.eid,mt.dataset.uid,mt.dataset.ename); return; }
     const mi=e.target.closest('[data-act="menu-add-incident"]');
-    if(mi){ closeActMenu(); quickAddIncident(mi.dataset.eid,mi.dataset.uid,mi.dataset.ename); return; }
+    if(mi){ closeActMenu(); quickAction('incident',mi.dataset.eid,mi.dataset.uid,mi.dataset.ename); return; }
     const msch=e.target.closest('[data-act="menu-schedule"]');
-    if(msch){ closeActMenu(); location.href='employee-profile.html?id='+msch.dataset.eid+'&tab=attendance'; return; }
+    if(msch){ closeActMenu(); quickAction('schedule',msch.dataset.eid,msch.dataset.uid||'',msch.dataset.ename); return; }
     const ms=e.target.closest('[data-act="menu-toggle-status"]');
     if(ms){ closeActMenu(); toggleEmpStatus(ms.dataset.eid,ms.dataset.newstatus); return; }
     if(e.target.closest('[data-act="menu-close"]')){ closeActMenu(); return; } // tel:/wa links navigate naturally

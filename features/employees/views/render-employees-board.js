@@ -195,7 +195,7 @@ export function buildEmployeeCardHTML(e, ctx) {
           <div class="act-sep"></div>
           <button type="button" data-act="menu-add-task" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">📋 إسناد مهمة</button>
           <button type="button" data-act="menu-add-incident" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">⚠️ تسجيل ملاحظة</button>
-          <button type="button" data-act="menu-schedule" data-eid="${escAttr(e._id)}" data-ename="${escAttr(eSafe)}">🕐 جدول العمل</button>
+          <button type="button" data-act="menu-schedule" data-eid="${escAttr(e._id)}" data-uid="${escAttr(uid)}" data-ename="${escAttr(eSafe)}">🕐 جدول العمل</button>
           <div class="act-sep"></div>
           ${phone?`<a href="tel:${phone}" class="emp2-act-link" data-act="menu-close">📞 اتصال</a>`:''}
           ${waHref?`<a href="${waHref}" target="_blank" class="emp2-act-link" data-act="menu-close">💬 واتساب</a>`:''}
