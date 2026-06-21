@@ -260,9 +260,15 @@ export function panelOrdersHTML({
     const paid2 = parseFloat(o.totalPaid) || parseFloat(o.paid) || parseFloat(o.deposit) || 0;
     const nm    = o.product || (o.products || []).map(p => p.name + '×' + p.qty).join(' + ') || '—';
     const isLate = o.stage !== 'archived' && o.deadline && new Date(o.deadline) < new Date();
+    const ordCost = (o.costItems || []).reduce((s, c) => s + (parseFloat(c.total) || 0), 0) || (parseFloat(o.totalCost) || 0);
+    const sale = parseFloat(o.salePrice) || 0;
+    const ordProfit = sale - ordCost;
+    const thumb = (o.products || []).reduce((u, p) => u || p.designImageUrl || p.imageUrl, null)
+      || o.designImageUrl || o.printFinalUrl || o.designFileUrl || null;
     return `<div class="ord-row" style="margin-bottom:8px;border-radius:var(--rad);overflow:hidden">
       <div onclick="location.href='${href}'" style="cursor:pointer">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad)">
+          ${thumb ? `<img src="${thumb}" alt="" style="width:44px;height:44px;border-radius:8px;object-fit:cover;margin-left:10px;flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
               <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);padding:2px 7px;border-radius:20px;background:${sc}15;color:${sc}">${STAGE_AR[o.stage] || o.stage}</span>
@@ -273,18 +279,21 @@ export function panelOrdersHTML({
             ${o.deadline ? `<div style="font-size:var(--fs-xs);color:${isLate ? 'var(--r)' : 'var(--dim2)'};margin-top:1px">📅 ${o.deadline}</div>` : ''}
           </div>
           <div style="text-align:left;margin-right:8px;flex-shrink:0">
-            ${canSee('price_sale') && parseFloat(o.salePrice) > 0 ? `<div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--b)">${fn(parseFloat(o.salePrice))} ج</div>` : ''}
+            ${canSee('price_sale') && sale > 0 ? `<div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--b)">${fn(sale)} ج</div>` : ''}
             ${canSee('price_paid') && paid2 > 0 ? `<div style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-bold)">محصّل: ${fn(paid2)} ج</div>` : ''}
             ${canSee('price_remaining') && rem2 > 0 ? `<div style="font-size:var(--fs-base);color:var(--r);font-weight:var(--fw-heavy)">باقي: ${fn(rem2)} ج</div>` : ''}
             ${canSee('price_remaining') && rem2 <= 0 && paid2 > 0 ? `<div style="font-size:var(--fs-sm);color:var(--g);font-weight:var(--fw-extra)">✅ مكتمل</div>` : ''}
+            ${canSee('price_cost') && ordCost > 0 ? `<div style="font-size:var(--fs-sm);color:var(--y);font-weight:var(--fw-bold);margin-top:2px">تكلفة: ${fn(ordCost)} ج</div>` : ''}
+            ${canSee('price_margin') && ordCost > 0 ? `<div style="font-size:var(--fs-sm);color:${ordProfit >= 0 ? 'var(--g)' : 'var(--r)'};font-weight:var(--fw-extra)">ربح: ${fn(ordProfit)} ج</div>` : ''}
           </div>
         </div>
-        ${canSee('price_sale') && parseFloat(o.salePrice) > 0 ? `<div style="height:4px;background:var(--bg3);margin-top:-1px"><div style="height:100%;width:${Math.min(100, paid2 / parseFloat(o.salePrice) * 100)}%;background:${rem2 <= 0 ? 'var(--g)' : paid2 > 0 ? 'var(--b)' : 'var(--line)'}"></div></div>` : ''}
+        ${canSee('price_sale') && sale > 0 ? `<div style="height:4px;background:var(--bg3);margin-top:-1px"><div style="height:100%;width:${Math.min(100, paid2 / sale * 100)}%;background:${rem2 <= 0 ? 'var(--g)' : paid2 > 0 ? 'var(--b)' : 'var(--line)'}"></div></div>` : ''}
       </div>
       <div style="display:flex;gap:6px;padding:6px 8px;background:var(--bg2);border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px;flex-wrap:wrap">
         <a href="waybill.html?id=${o._id}" target="_blank" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(59,158,255,.3);background:rgba(59,158,255,.08);color:var(--b);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">🧾 البوليصة</a>
         <button type="button" onclick="event.stopPropagation();shareOrderToInbox('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(0,168,132,.3);background:rgba(0,168,132,.08);color:var(--g-mint);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">📤 إرسال</button>
         <button type="button" onclick="event.stopPropagation();openOrderCommentsFromHere('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(167,139,250,.3);background:rgba(167,139,250,.08);color:var(--p);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">💬 تعليقات</button>
+        ${canSee('design_data') && (Array.isArray(o.designFiles) && o.designFiles.length > 0 || o.designFileUrl || o.designImageUrl) ? `<a href="${href}" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(6,182,212,.3);background:rgba(6,182,212,.08);color:var(--cyan,#06b6d4);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">📁 ملفات${Array.isArray(o.designFiles) && o.designFiles.length > 1 ? ' (' + o.designFiles.length + ')' : ''}</a>` : ''}
         ${['shipping', 'archived'].includes(o.stage) && !o.hasReturn ? `<a href="returns.html?newTicket=${o._id}" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.3);background:rgba(255,170,0,.08);color:var(--y);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">↩️ مرتجع</a>` : ''}
         ${o.hasReturn ? `<a href="returns.html" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">↩️ له مرتجع</a>` : ''}
       </div>
