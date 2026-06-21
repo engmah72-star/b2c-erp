@@ -124,6 +124,7 @@
 .bdg-wip{background:rgba(59,158,255,.1);color:var(--b)}
 .bdg-done{background:rgba(0,217,126,.1);color:var(--g)}
 .bdg-problem{background:rgba(255,61,110,.1);color:var(--r)}
+.bdg-cancelled{background:rgba(255,61,110,.06);color:var(--dim3);text-decoration:line-through}
 .bdg-warn{background:rgba(255,193,7,.08);color:var(--y);border:1px solid rgba(255,193,7,.2)}
 .bdg-danger{background:rgba(255,61,110,.08);color:var(--r);border:1px solid rgba(255,61,110,.2)}
 .bdg-blue{background:rgba(59,158,255,.1);color:var(--b);border:1px solid rgba(59,158,255,.2)}
@@ -171,6 +172,7 @@
 /* منتجات — بطاقات */
 .prd-item{padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin-bottom:6px}
 .prd-item:last-child{margin-bottom:0}
+.prd-item.prd-cancelled{opacity:.45;border-style:dashed}
 .prd-name{font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:var(--snow);margin-bottom:7px;display:flex;align-items:baseline;gap:5px}
 .prd-status-row{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px}
 .psb{font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--dim2);cursor:pointer;font-family:inherit;transition:all .15s}
@@ -506,6 +508,7 @@ const EXEC=[
   {k:'wip',    ico:'🔄',lbl:'جاري',  bc:'bdg-wip'},
   {k:'done',   ico:'✅',lbl:'تم',    bc:'bdg-done'},
   {k:'problem',ico:'⚠️',lbl:'مشكلة',bc:'bdg-problem'},
+  {k:'cancelled',ico:'❌',lbl:'ملغي',bc:'bdg-cancelled'},
 ];
 const TABS=[
   {k:'all',    lbl:'الكل'},
@@ -533,7 +536,7 @@ let prodChecks={};
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG',{maximumFractionDigits:0});
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const oCode=o=>o.orderNumber||o.orderCode||o.code||('#'+String(o._id||'').slice(-5));
-const deriveSt=o=>{const ps=o.products||[];if(!ps.length)return o.prodStatus||'pending';if(ps.every(p=>p.execStatus==='done'))return 'done';if(ps.some(p=>p.execStatus==='problem'))return 'problem';return ps.some(p=>(p.execStatus||'pending')!=='pending')?'wip':'pending';};
+const deriveSt=o=>{const ps=o.products||[];if(!ps.length)return o.prodStatus||'pending';const active=ps.filter(p=>p.execStatus!=='cancelled');if(!active.length)return 'cancelled';if(active.every(p=>p.execStatus==='done'))return 'done';if(active.some(p=>p.execStatus==='problem'))return 'problem';return active.some(p=>(p.execStatus||'pending')!=='pending')?'wip':'pending';};
 const orderCost=o=>(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
 const hasNoSup=o=>(o.products||[]).some(p=>!p.supplierId);
 const hasNoCost=o=>!(o.costItems||[]).length;
@@ -785,7 +788,7 @@ function renderList(){
   if(!list.length){document.getElementById('wl-body').innerHTML=`<div style="padding:36px;text-align:center;color:var(--dim2)">لا توجد طلبات</div>`;return;}
   document.getElementById('wl-body').innerHTML=list.map(o=>{
     const st=deriveSt(o),ex=EXEC.find(e=>e.k===st)||EXEC[0];
-    const np=(o.products||[]).length,nd=(o.products||[]).filter(p=>p.execStatus==='done').length;
+    const _ap=(o.products||[]).filter(p=>p.execStatus!=='cancelled');const np=_ap.length,nd=_ap.filter(p=>p.execStatus==='done').length;
     const pct=np?Math.round(nd/np*100):0;
     const late=o.deadline&&new Date(o.deadline)<new Date();
     const ismine=o.productionAgent===me.uid;
@@ -795,7 +798,7 @@ function renderList(){
     const prods=o.products||[];
     const firstP=prods[0]||null;
     const restP=prods.slice(1);
-    const execIcoMap={pending:'⏳',wip:'🔄',done:'✅',problem:'⚠️'};
+    const execIcoMap={pending:'⏳',wip:'🔄',done:'✅',problem:'⚠️',cancelled:'❌'};
     // Hero: اسم المنتج الأول + الكمية
     const heroName=firstP?esc(firstP.name||'منتج'):'—';
     const heroQty=firstP?.qty?`<span class="wl-order-qty">× ${esc(firstP.qty)}</span>`:'';
@@ -1016,7 +1019,8 @@ function renderDetail(){
   }
   const st=deriveSt(o), ex=EXEC.find(e=>e.k===st)||EXEC[0];
   const products=o.products||[], costs=o.costItems||[];
-  const np=products.length, nd=products.filter(p=>p.execStatus==='done').length;
+  const activeProds=products.filter(p=>p.execStatus!=='cancelled');
+  const np=activeProds.length, nd=activeProds.filter(p=>p.execStatus==='done').length;
   const imgSrc=designUrl(o);
 
   // ── header (compact) ──
@@ -1273,9 +1277,9 @@ function renderDetail(){
     if(!prodChecks[checkKey])prodChecks[checkKey]=new Set();
     const supSt=p.supplierId?getSupStats(p.supplierId):null;
     const photos=(o.productionPhotos||[]).filter(ph=>ph.prodIdx===i||ph.prodIdx==null);
-    return `<div class="prd-item">
+    return `<div class="prd-item${cur==='cancelled'?' prd-cancelled':''}">
       <div class="prd-name">${esc(p.name||('منتج '+(i+1)))} ${p.qty?`<span style="color:var(--b);font-weight:var(--fw-extra);font-size:12px">×${esc(p.qty)}</span>`:''}</div>
-      <div class="prd-status-row">${EXEC.map(e=>`<button type="button" class="psb${cur===e.k?' on-'+e.k:''}" data-act="setexec" data-pidx="${i}" data-status="${e.k}">${e.ico} ${e.lbl}</button>`).join('')}</div>
+      ${cur==='cancelled'?`<div style="color:var(--r);font-size:var(--fs-xs);margin:4px 0">❌ هذا المنتج ملغي${p.execDoneBy?' — بواسطة '+esc(p.execDoneBy):''}</div>`:`<div class="prd-status-row">${EXEC.filter(e=>e.k!=='cancelled').map(e=>`<button type="button" class="psb${cur===e.k?' on-'+e.k:''}" data-act="setexec" data-pidx="${i}" data-status="${e.k}">${e.ico} ${e.lbl}</button>`).join('')}</div>`}
       <div class="prd-sup-row">
         <span class="prd-sup-lbl">🏭</span>
         <select class="prd-sup-sel" data-act="setsup" data-pidx="${i}">
@@ -1290,6 +1294,7 @@ function renderDetail(){
         <label class="photo-add" title="رفع صورة إنتاج"><input type="file" accept="image/*" style="display:none" data-act="uploadphoto" data-pidx="${i}">📷</label>
       </div>
       ${cur==='done'&&products.length>1&&st!=='done'?`<button type="button" class="prd-ship-btn" data-act="shipproduct" data-pidx="${i}">📦 شحن هذا المنتج فقط</button>`:''}
+      ${cur!=='cancelled'&&products.length>1?`<button type="button" class="prd-ship-btn" style="background:rgba(255,61,110,.06);border-color:rgba(255,61,110,.2);color:var(--r)" data-act="cancelproduct" data-pidx="${i}">❌ إلغاء هذا المنتج</button>`:''}
     </div>`;
   }).join(''):'<div style="color:var(--dim2);font-size:var(--fs-sm);padding:8px 0">لا توجد منتجات</div>';
 
@@ -1420,6 +1425,18 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
       r=await orderActions.submitToShipping(base).catch(err=>({ok:false,errors:[err.message]}));
       if(r&&!r.ok&&(r.warnings||[]).length&&!(r.errors||[]).length){
         r=await orderActions.submitToShipping({...base,bypassWarnings:true}).catch(err=>({ok:false,errors:[err.message]}));
+      }
+    } else if(act==='cancelproduct'){
+      const pidx=parseInt(btn.dataset.pidx,10);
+      const o=orders.find(x=>x._id===orderId);if(!o){btn.disabled=false;return;}
+      const pName=(o.products||[])[pidx]?.name||('منتج '+(pidx+1));
+      if(!confirm(`❌ إلغاء "${pName}" — هل أنت متأكد؟`)){btn.disabled=false;return;}
+      const np=(o.products||[]).map((p,i)=>i===pidx?{...p,execStatus:'cancelled'}:p);
+      const newDerived=deriveSt({...o,products:np});
+      r=await orderActions.setProductExecStatus({db,orderId,prodIdx:pidx,execStatus:'cancelled',derivedProdStatus:newDerived,statusLabel:'ملغي',userId:me.uid,userName:me.name});
+      if(r?.ok&&newDerived==='cancelled'){
+        r=await orderActions.cancelOrder({db,orderId,reason:'كل المنتجات ملغية',note:'إلغاء تلقائي — كل المنتجات ألغيت فردياً',userId:me.uid,userName:me.name}).catch(err=>({ok:false,errors:[err.message]}));
+        if(r?.ok){toast('❌ تم إلغاء الأوردر بالكامل (كل المنتجات ملغية)','ok');selectedId=null;document.body.classList.remove('detail-open');renderList();btn.disabled=false;return;}
       }
     } else if(act==='delcost'){
       const cidx=parseInt(btn.dataset.cidx,10);

@@ -1995,6 +1995,7 @@ export const orderActions = {
       ...prevProduct,
       execStatus,
       ...(execStatus === 'done' ? { execDoneAt: nowStr(), execDoneBy: userName } : {}),
+      ...(execStatus === 'cancelled' ? { cancelledAt: nowStr(), cancelledBy: userId, cancelledByName: userName } : {}),
       ...productStatusUpdate,
     };
     try {
