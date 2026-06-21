@@ -45,7 +45,7 @@
 <script type="module">
 import { auth, db } from './core/firebase-init.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { collection, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { collection, getDocs, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { employeeActions } from './employee-actions.js';
 import { resolveDayStatus } from './core/attendance-core.js';
 import { buildAttendanceBoardHTML, buildBoardSummaryHTML } from './features/attendance-board/render.js';
@@ -59,7 +59,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const addDays = (iso, n) => { const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 function toast(msg, type) { if (typeof window.toast === 'function' && window.toast !== toast) return window.toast(msg, type); alert(msg); }
 
-let me = { uid: '', name: '' }, canManage = false;
+let me = { uid: '', name: '' }, canManage = false, selfMode = false;
 let selDate = todayIso();
 let employees = [], attRecords = [], leaves = [], permissions = [];
 let _unsubDay = null;
@@ -95,7 +95,7 @@ function render() {
     })
     .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   document.getElementById('ab-summary').innerHTML = buildBoardSummaryHTML(counts);
-  document.getElementById('ab-board').innerHTML = buildAttendanceBoardHTML({ rows, canManage });
+  document.getElementById('ab-board').innerHTML = buildAttendanceBoardHTML({ rows, canManage, selfUid: selfMode ? me.uid : '' });
 }
 
 function subscribeDay() {
@@ -110,9 +110,28 @@ function subscribeDay() {
 document.querySelector('.ab-wrap').addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]'); if (!el) return;
   const act = el.dataset.act;
-  if (act === 'day-prev') { selDate = addDays(selDate, -1); subscribeDay(); render(); return; }
-  if (act === 'day-next') { if (selDate < todayIso()) { selDate = addDays(selDate, 1); subscribeDay(); render(); } return; }
-  if (act === 'day-today') { selDate = todayIso(); subscribeDay(); render(); return; }
+  if (act === 'day-prev') { selDate = addDays(selDate, -1); if (!selfMode) subscribeDay(); render(); return; }
+  if (act === 'day-next') { if (selDate < todayIso()) { selDate = addDays(selDate, 1); if (!selfMode) subscribeDay(); render(); } return; }
+  if (act === 'day-today') { selDate = todayIso(); if (!selfMode) subscribeDay(); render(); return; }
+  if (act === 'board-self-checkin') {
+    el.disabled = true;
+    const r = await employeeActions.recordAttendanceCheckIn({
+      db, employeeId: el.dataset.emp, employeeUid: me.uid, employeeName: el.dataset.name,
+      date: selDate, monthKey: selDate.slice(0, 7),
+      expectedStart: el.dataset.start || '', graceMinutes: 15, source: 'self',
+      recordedBy: me.uid, recordedByName: me.name,
+    });
+    toast(r.ok ? (r.lateMinutes > 0 ? `⚠️ حضور متأخر ${r.lateMinutes}د` : '✅ تم تسجيل الحضور') : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+    return;
+  }
+  if (act === 'board-self-checkout') {
+    el.disabled = true;
+    const r = await employeeActions.recordAttendanceCheckOut({
+      db, employeeUid: me.uid, employeeId: el.dataset.emp, date: selDate,
+    });
+    toast(r.ok ? '✅ تم تسجيل انصرافك' : ('❌ ' + (r.errors || []).join(' · ')), r.ok ? 'ok' : 'err');
+    return;
+  }
   if (!canManage) return;
   if (act === 'board-checkin') {
     el.disabled = true;
@@ -157,16 +176,29 @@ onAuthStateChanged(auth, async (user) => {
   const role = userData.role || '';
   const caps = userData.permissions?.capabilities || {};
   canManage = role === 'admin' || role === 'operation_manager' || caps.manage_attendance === true;
-  if (!canManage) {
-    document.querySelector('.ab-wrap').innerHTML =
-      '<div class="ab-deny"><div style="font-size:40px">🔒</div><div>لوحة الحضور متاحة للإدارة فقط.</div></div>';
-    return;
+  if (canManage) {
+    onSnapshot(query(collection(db, 'employees'), limit(500)),
+      s => { employees = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+    onSnapshot(query(collection(db, 'employee_leaves'), limit(1000)),
+      s => { leaves = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+    subscribeDay();
+  } else {
+    selfMode = true;
+    document.querySelector('.ab-title').textContent = '🕐 حضوري';
+    const empSnap = await getDocs(query(collection(db, 'employees'), where('authUid', '==', user.uid), limit(1)));
+    if (empSnap.empty) {
+      document.querySelector('.ab-wrap').innerHTML =
+        '<div class="ab-deny"><div style="font-size:40px">⚠️</div><div>لم يُعثر على ملف موظف لحسابك<br><small>تواصل مع مديرك لربط حسابك بسجل موظف</small></div></div>';
+      return;
+    }
+    employees = empSnap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    onSnapshot(query(collection(db, 'employee_leaves'), where('employeeUid', '==', user.uid), limit(500)),
+      s => { leaves = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+    onSnapshot(query(collection(db, 'attendance'), where('employeeUid', '==', user.uid), limit(500)),
+      s => { attRecords = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+    onSnapshot(query(collection(db, 'attendance_permissions'), where('employeeUid', '==', user.uid), limit(500)),
+      s => { permissions = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
   }
-  onSnapshot(query(collection(db, 'employees'), limit(500)),
-    s => { employees = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
-  onSnapshot(query(collection(db, 'employee_leaves'), limit(1000)),
-    s => { leaves = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
-  subscribeDay();
   render();
 });
 
