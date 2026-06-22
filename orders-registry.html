@@ -111,6 +111,22 @@
 .reg-empty-hint{font-size:12px;color:var(--dim);margin-top:8px;font-weight:600;}
 .reg-loading{display:flex;flex-direction:column;gap:10px;}
 
+/* Section boxes (costed / no-cost split) */
+.reg-section-box{border:1px solid var(--line);border-radius:var(--rad2);margin-bottom:10px;overflow:hidden;}
+.reg-section-box .reg-summary{margin-bottom:0;border:0;border-radius:0;}
+.reg-section-hdr{display:flex;align-items:center;gap:6px;padding:10px 16px;font-size:13px;font-weight:800;color:var(--snow);border-bottom:1px solid var(--line);}
+.reg-section-box.costed{border-color:rgba(46,204,113,.2);}
+.reg-section-box.costed .reg-section-hdr{background:rgba(46,204,113,.06);color:var(--g);}
+.reg-section-box.nocosted{border-color:rgba(255,170,0,.2);}
+.reg-section-box.nocosted .reg-section-hdr{background:rgba(255,170,0,.06);color:var(--y);}
+.reg-section-count{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 7px;border-radius:99px;background:rgba(255,255,255,.1);font-size:11px;font-weight:800;}
+
+/* List section divider */
+.reg-list-divider{display:flex;align-items:center;gap:10px;padding:14px 0 8px;font-size:13px;font-weight:800;}
+.reg-list-divider::after{content:'';flex:1;height:1px;background:var(--line);}
+.reg-list-divider.costed{color:var(--g);}
+.reg-list-divider.nocost{color:var(--y);}
+
 /* Cost row in card */
 .rc-cost-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:6px 10px;background:rgba(139,92,246,.05);border:1px dashed rgba(139,92,246,.2);border-radius:var(--rad);font-size:11px;font-weight:700;color:var(--dim2);}
 .rc-cost-row b{color:var(--snow);font-weight:800;}
@@ -206,18 +222,32 @@
       <button type="button" class="reg-chip" data-stage="nocost" onclick="setStageFilter('nocost',this)">💸 بدون تكلفة <span class="chip-count" id="fc-nocost">0</span></button>
     </div>
 
-    <!-- Summary bar -->
+    <!-- Summary: orders WITH cost items -->
+    <div class="reg-section-box costed" id="sec-costed" style="display:none">
+      <div class="reg-section-hdr">✅ أوردرات ببنود تكلفة <span class="reg-section-count" id="sec-costed-count">0</span></div>
+      <div class="reg-summary">
+        <div class="reg-summary-item">💰 مبيعات: <b id="sum-c-sales">0</b></div>
+        <div class="reg-summary-item">🏭 تكلفة: <b id="sum-c-cost">0</b></div>
+        <div class="reg-summary-item g">📈 ربح: <b id="sum-c-profit">0</b></div>
+        <div class="reg-summary-item" style="font-size:10px;color:var(--dim)">📊 هامش: <b id="sum-c-margin" style="color:var(--snow)">0%</b></div>
+        <div class="reg-summary-item g">✅ مدفوع: <b id="sum-c-paid">0</b></div>
+        <div class="reg-summary-item r">⏳ متبقي: <b id="sum-c-rem">0</b></div>
+      </div>
+    </div>
+    <!-- Summary: orders WITHOUT cost items -->
+    <div class="reg-section-box nocosted" id="sec-nocost" style="display:none">
+      <div class="reg-section-hdr">💸 أوردرات بدون بنود تكلفة <span class="reg-section-count" id="sec-nocost-count">0</span></div>
+      <div class="reg-summary">
+        <div class="reg-summary-item">💰 مبيعات: <b id="sum-nc-sales">0</b></div>
+        <div class="reg-summary-item g">✅ مدفوع: <b id="sum-nc-paid">0</b></div>
+        <div class="reg-summary-item r">⏳ متبقي: <b id="sum-nc-rem">0</b></div>
+      </div>
+    </div>
+    <!-- Combined totals (always visible) -->
     <div class="reg-summary" id="reg-summary">
-      <div class="reg-summary-item">💰 مبيعات: <b id="sum-total">0</b></div>
+      <div class="reg-summary-item">💰 إجمالي مبيعات: <b id="sum-total">0</b></div>
       <div class="reg-summary-item g">✅ مدفوع: <b id="sum-paid">0</b></div>
       <div class="reg-summary-item r">⏳ متبقي: <b id="sum-rem">0</b></div>
-    </div>
-    <!-- Cost summary (visible only to cost-authorized roles) -->
-    <div class="reg-summary" id="reg-cost-summary" style="display:none">
-      <div class="reg-summary-item">🏭 تكلفة: <b id="sum-cost">0</b></div>
-      <div class="reg-summary-item g">📈 ربح: <b id="sum-profit">0</b></div>
-      <div class="reg-summary-item y">💸 بدون تكلفة: <b id="sum-nocost">0</b></div>
-      <div class="reg-summary-item" style="font-size:10px;color:var(--dim)">📊 هامش: <b id="sum-margin" style="color:var(--snow)">0%</b></div>
     </div>
 
     <!-- Sort + count -->
@@ -365,7 +395,24 @@ function renderList() {
     return;
   }
 
-  el.innerHTML = filteredOrders.map(o => renderCard(o)).join('');
+  if (!ROLE_CAN_SEE_COST.has(currentRole)) {
+    el.innerHTML = filteredOrders.map(o => renderCard(o)).join('');
+    return;
+  }
+
+  const costed = filteredOrders.filter(o => Array.isArray(o.costItems) && o.costItems.length > 0);
+  const nocost = filteredOrders.filter(o => !(Array.isArray(o.costItems) && o.costItems.length > 0));
+
+  let html = '';
+  if (costed.length) {
+    html += '<div class="reg-list-divider costed">✅ ببنود تكلفة (' + costed.length + ')</div>';
+    html += costed.map(o => renderCard(o)).join('');
+  }
+  if (nocost.length) {
+    html += '<div class="reg-list-divider nocost">💸 بدون بنود تكلفة (' + nocost.length + ')</div>';
+    html += nocost.map(o => renderCard(o)).join('');
+  }
+  el.innerHTML = html;
 }
 
 function renderCard(o) {
@@ -457,31 +504,45 @@ function renderCard(o) {
 
 // ── Summary ──
 function renderSummary() {
-  let totalSum = 0, paidSum = 0, remSum = 0, costSum = 0, nocostCount = 0;
+  let totalSum = 0, paidSum = 0, remSum = 0;
+  let cSales = 0, cCost = 0, cPaid = 0, cRem = 0, cCount = 0;
+  let ncSales = 0, ncPaid = 0, ncRem = 0, ncCount = 0;
+
   for (const o of filteredOrders) {
     const t = Number(o.salePrice || o.total || 0) + Number(o.customerShippingFee || 0) - Number(o.discount || 0);
     const p = Number(o.paidAmount || o.paid || 0);
-    totalSum += t;
-    paidSum += p;
-    remSum += Math.max(0, t - p);
+    const r = Math.max(0, t - p);
+    totalSum += t; paidSum += p; remSum += r;
+
     const costItems = Array.isArray(o.costItems) ? o.costItems : [];
     if (costItems.length > 0) {
-      costSum += costItems.reduce((s, ci) => s + (Number(ci.total) || 0), 0);
+      cCount++; cSales += t; cPaid += p; cRem += r;
+      cCost += costItems.reduce((s, ci) => s + (Number(ci.total) || 0), 0);
     } else {
-      nocostCount++;
+      ncCount++; ncSales += t; ncPaid += p; ncRem += r;
     }
   }
+
   $('sum-total').textContent = fmtMoney(totalSum);
   $('sum-paid').textContent = fmtMoney(paidSum);
   $('sum-rem').textContent = fmtMoney(remSum);
 
   if (ROLE_CAN_SEE_COST.has(currentRole)) {
-    const profit = totalSum - costSum;
-    const margin = totalSum > 0 ? ((profit / totalSum) * 100).toFixed(1) : '0.0';
-    $('sum-cost').textContent = fmtMoney(costSum);
-    $('sum-profit').textContent = fmtMoney(profit);
-    $('sum-nocost').textContent = nocostCount;
-    $('sum-margin').textContent = margin + '%';
+    const profit = cSales - cCost;
+    const margin = cSales > 0 ? ((profit / cSales) * 100).toFixed(1) : '0.0';
+
+    $('sec-costed-count').textContent = cCount;
+    $('sum-c-sales').textContent = fmtMoney(cSales);
+    $('sum-c-cost').textContent = fmtMoney(cCost);
+    $('sum-c-profit').textContent = fmtMoney(profit);
+    $('sum-c-margin').textContent = margin + '%';
+    $('sum-c-paid').textContent = fmtMoney(cPaid);
+    $('sum-c-rem').textContent = fmtMoney(cRem);
+
+    $('sec-nocost-count').textContent = ncCount;
+    $('sum-nc-sales').textContent = fmtMoney(ncSales);
+    $('sum-nc-paid').textContent = fmtMoney(ncPaid);
+    $('sum-nc-rem').textContent = fmtMoney(ncRem);
   }
 }
 
@@ -580,7 +641,10 @@ onAuthStateChanged(auth, async u => {
     $('nav-av').textContent = (ud.name || u.email || 'U')[0].toUpperCase();
     if (typeof window.initSidebar === 'function') window.initSidebar(currentRole, 'orders-registry.html');
     buildMobNav(currentRole);
-    if (ROLE_CAN_SEE_COST.has(currentRole)) $('reg-cost-summary').style.display = '';
+    if (ROLE_CAN_SEE_COST.has(currentRole)) {
+      $('sec-costed').style.display = '';
+      $('sec-nocost').style.display = '';
+    }
   } catch (e) {
     console.error('[init] user doc failed:', e);
   }
