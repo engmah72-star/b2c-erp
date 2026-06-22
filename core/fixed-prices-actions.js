@@ -34,7 +34,7 @@ export function lookupFixedPrice(prices, type, printType) {
   return exact || generic || null;
 }
 
-export async function saveFixedPrice(db, { id, type, amount, printType, supplierId, supplierName, note }, userName) {
+export async function saveFixedPrice(db, { id, type, amount, printType, supplierId, supplierName, note, size }, userName) {
   if (!type?.trim()) return { ok: false, errors: ['نوع البند مطلوب'] };
   const amt = parseFloat(amount);
   if (!(amt > 0)) return { ok: false, errors: ['المبلغ مطلوب'] };
@@ -51,6 +51,7 @@ export async function saveFixedPrice(db, { id, type, amount, printType, supplier
     supplierId: supplierId || null,
     supplierName: (supplierName || '').trim() || null,
     note: (note || '').trim() || null,
+    size: (size || '').trim() || null,
     updatedAt: new Date().toISOString().slice(0, 10),
     updatedBy: userName || '',
   };
