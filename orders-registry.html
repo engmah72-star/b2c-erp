@@ -219,6 +219,22 @@
 .rc-quick-advance{padding:4px 12px;border-radius:99px;border:1px solid rgba(74,142,245,.3);background:rgba(74,142,245,.1);color:var(--b);font-size:11px;font-weight:800;cursor:pointer;font-family:inherit;transition:var(--trans);white-space:nowrap;display:inline-flex;align-items:center;gap:3px;}
 .rc-quick-advance:hover{background:rgba(74,142,245,.2);border-color:var(--b);}
 
+/* Quick modal overlay */
+.reg-modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;display:flex;align-items:center;justify-content:center;padding:16px;}
+.reg-modal{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);width:100%;max-width:420px;max-height:80vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,.5);}
+.reg-modal-hdr{padding:14px 16px;border-bottom:1px solid var(--line);font-size:14px;font-weight:800;color:var(--snow);display:flex;justify-content:space-between;align-items:center;}
+.reg-modal-close{background:none;border:0;color:var(--dim2);font-size:18px;cursor:pointer;padding:0 4px;}
+.reg-modal-body{padding:16px;}
+.reg-modal-body label{display:block;font-size:11px;font-weight:800;color:var(--dim2);margin-bottom:4px;}
+.reg-modal-body select,.reg-modal-body textarea,.reg-modal-body input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:var(--rad);background:var(--bg3);color:var(--snow);font-size:13px;font-family:inherit;font-weight:600;margin-bottom:12px;resize:vertical;}
+.reg-modal-body select:focus,.reg-modal-body textarea:focus,.reg-modal-body input:focus{outline:0;border-color:var(--b);box-shadow:0 0 0 2px var(--ring-b);}
+.reg-modal-foot{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;}
+.reg-modal-btn{padding:8px 20px;border-radius:var(--rad);border:1px solid var(--line);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:var(--trans);}
+.reg-modal-btn.primary{background:var(--b);color:#fff;border-color:var(--b);}
+.reg-modal-btn.primary:hover{opacity:.9;}
+.reg-modal-btn.ghost{background:none;color:var(--dim2);}
+.reg-modal-btn.ghost:hover{color:var(--snow);}
+
 /* Responsive */
 @media(max-width:768px){
   .rc-finance{gap:6px;}
@@ -412,6 +428,32 @@
 <nav class="mob-nav"><div class="mob-nav-items" id="mob-nav-items"></div></nav>
 <!-- Overlay -->
 <div class="nav-overlay" id="nav-ov" onclick="closeNav()"></div>
+<!-- Incident Modal -->
+<div class="reg-modal-ov" id="incident-modal" style="display:none" onclick="if(event.target===this)closeIncidentModal()">
+  <div class="reg-modal">
+    <div class="reg-modal-hdr">⚠️ تسجيل إخفاق<button type="button" class="reg-modal-close" onclick="closeIncidentModal()">✕</button></div>
+    <div class="reg-modal-body">
+      <div style="display:flex;gap:12px;margin-bottom:14px;padding:10px;background:var(--bg3);border-radius:var(--rad);border:1px solid var(--line)">
+        <div style="font-size:12px;font-weight:700;color:var(--dim2)">👤 الموظف: <b style="color:var(--snow)" id="inc-emp-name">—</b></div>
+        <div style="font-size:12px;font-weight:700;color:var(--dim2)">📋 أوردر: <b style="color:var(--snow);direction:ltr;font-family:monospace" id="inc-order-id">—</b></div>
+      </div>
+      <label>سبب الإخفاق *</label>
+      <select id="inc-reason"></select>
+      <label>درجة الخطورة</label>
+      <select id="inc-severity">
+        <option value="low">منخفضة</option>
+        <option value="medium">متوسطة</option>
+        <option value="high">مرتفعة</option>
+      </select>
+      <label>وصف / ملاحظات</label>
+      <textarea id="inc-desc" rows="3" placeholder="تفاصيل إضافية..."></textarea>
+    </div>
+    <div class="reg-modal-foot">
+      <button type="button" class="reg-modal-btn ghost" onclick="closeIncidentModal()">إلغاء</button>
+      <button type="button" class="reg-modal-btn primary" onclick="submitIncident()">تسجيل الإخفاق</button>
+    </div>
+  </div>
+</div>
 <!-- Toasts -->
 <div class="toasts" id="toasts"></div>
 
@@ -419,9 +461,12 @@
 import { db, auth } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, getDoc, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { STAGES, ORDER_DESIGN_STAGES, stageProgressBar, getOrderAlerts, getStageDurations } from "./orders.js";
+import { STAGES, ORDER_DESIGN_STAGES, stageProgressBar, getOrderAlerts, getStageDurations, STAGE_OWNERSHIP } from "./orders.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
 import { orderActions } from "./order-actions.js";
+import { ensureOrderThread } from "./inbox-actions.js";
+import { addIncident } from "./employee-actions.js";
+import { DEFAULT_INCIDENT_REASONS, REASON_TYPE_META } from "./core/incident-reasons.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -550,6 +595,104 @@ window.quickCancel = async function(id, ev) {
     });
     if (!r.ok) return toast((r.errors || []).join(' · ') || 'فشل الإلغاء', 'err');
     toast('تم إلغاء الأوردر', 'ok');
+  } catch (e) {
+    toast('خطأ: ' + (e.message || ''), 'err');
+  }
+};
+
+// ── Quick Conversation ──
+window.quickConversation = async function(id, ev) {
+  ev.stopPropagation();
+  document.querySelectorAll('.rc-actions.open').forEach(el => el.classList.remove('open'));
+  const order = allOrders.find(o => o._id === id);
+  if (!order) return toast('لم يتم العثور على الأوردر', 'err');
+  try {
+    toast('جاري فتح المحادثة...', '');
+    await ensureOrderThread({ db, order, currentUserId: currentUser?.uid || '', extraParticipants: [] });
+    const convId = 'order_' + id;
+    if (typeof window.navigatePage === 'function') window.navigatePage('inbox.html?conv=' + encodeURIComponent(convId));
+    else location.href = 'inbox.html?conv=' + encodeURIComponent(convId);
+  } catch (e) {
+    toast('خطأ: ' + (e.message || ''), 'err');
+  }
+};
+
+// ── Quick Note ──
+window.quickNote = async function(id, ev) {
+  ev.stopPropagation();
+  document.querySelectorAll('.rc-actions.open').forEach(el => el.classList.remove('open'));
+  const note = prompt('أضف ملاحظة على الأوردر:', '');
+  if (note === null) return;
+  if (!note.trim()) return toast('الملاحظة فارغة', 'err');
+  try {
+    const r = await orderActions.updateOrderNotes({
+      db, orderId: id,
+      notes: note.trim(),
+      userId: currentUser?.uid || '',
+      userName: currentUserName,
+    });
+    if (!r.ok) return toast((r.errors || []).join(' · ') || 'فشل الحفظ', 'err');
+    toast('تم حفظ الملاحظة', 'ok');
+  } catch (e) {
+    toast('خطأ: ' + (e.message || ''), 'err');
+  }
+};
+
+// ── Quick Incident ──
+let _incidentCtx = null;
+
+window.quickIncident = function(orderId, empId, empName, clientName, ev) {
+  ev.stopPropagation();
+  document.querySelectorAll('.rc-actions.open').forEach(el => el.classList.remove('open'));
+  _incidentCtx = { orderId, empId, empName, clientName };
+  const modal = $('incident-modal');
+  if (!modal) return;
+  $('inc-emp-name').textContent = empName || '—';
+  $('inc-order-id').textContent = orderId?.slice(-8) || '';
+  $('inc-reason').value = '';
+  $('inc-severity').value = 'low';
+  $('inc-desc').value = '';
+  modal.style.display = '';
+};
+
+window.closeIncidentModal = function() {
+  const modal = $('incident-modal');
+  if (modal) modal.style.display = 'none';
+  _incidentCtx = null;
+};
+
+window.submitIncident = async function() {
+  if (!_incidentCtx) return;
+  const reasonCode = $('inc-reason')?.value || '';
+  const severity = $('inc-severity')?.value || 'low';
+  const desc = $('inc-desc')?.value?.trim() || '';
+
+  if (!reasonCode) return toast('اختر سبب الإخفاق', 'err');
+
+  const reason = DEFAULT_INCIDENT_REASONS.find(r => r.code === reasonCode);
+  const typeMeta = reason ? REASON_TYPE_META[reason.type] : null;
+
+  try {
+    const r = await addIncident({
+      db,
+      employeeId: _incidentCtx.empId,
+      employeeName: _incidentCtx.empName,
+      authUid: currentUser?.uid || '',
+      date: new Date().toISOString().slice(0, 10),
+      type: reason?.type || 'other',
+      severity,
+      reasonCode,
+      reasonLabel: reason?.label || reasonCode,
+      title: (typeMeta?.lbl || 'إخفاق') + ' — أوردر ' + (_incidentCtx.orderId?.slice(-8) || ''),
+      description: desc,
+      orderId: _incidentCtx.orderId,
+      clientName: _incidentCtx.clientName || '',
+      userId: currentUser?.uid || '',
+      userName: currentUserName,
+    });
+    if (!r.ok) return toast((r.errors || []).join(' · ') || 'فشل التسجيل', 'err');
+    toast('تم تسجيل الإخفاق' + (r.escalated ? ' ⚠️ تصعيد' : ''), 'ok');
+    closeIncidentModal();
   } catch (e) {
     toast('خطأ: ' + (e.message || ''), 'err');
   }
@@ -988,6 +1131,14 @@ function renderCard(o) {
       + '<button type="button" class="rc-actions-btn" onclick="toggleCardMenu(\'' + esc(o._id) + '\',event)" title="إجراءات">⋮</button>'
       + '<div class="rc-actions-menu">';
     actionsHtml += '<button type="button" class="rc-action-item" onclick="openOrder(\'' + esc(o._id) + '\')">📄 فتح الأوردر</button>';
+    actionsHtml += '<button type="button" class="rc-action-item" onclick="quickConversation(\'' + esc(o._id) + '\',event)">💬 محادثة</button>';
+    actionsHtml += '<button type="button" class="rc-action-item" onclick="quickNote(\'' + esc(o._id) + '\',event)">📝 ملاحظة</button>';
+    const own = STAGE_OWNERSHIP[stage];
+    const empId = own ? (o[own.idField] || '') : '';
+    const empName = own ? (o[own.nameField] || '') : '';
+    if (empId) {
+      actionsHtml += '<button type="button" class="rc-action-item" onclick="quickIncident(\'' + esc(o._id) + '\',\'' + esc(empId) + '\',\'' + esc(empName) + '\',\'' + esc(o.clientName || '') + '\',event)">⚠️ إخفاق</button>';
+    }
     actionsHtml += '<div class="rc-action-divider"></div>';
     actionsHtml += '<button type="button" class="rc-action-item danger" onclick="quickCancel(\'' + esc(o._id) + '\',event)">❌ إلغاء</button>';
     actionsHtml += '</div></div>';
@@ -1130,6 +1281,22 @@ function applyUrlParams() {
   }
   applyFilters();
 }
+
+// ── Populate incident reasons dropdown ──
+(function() {
+  const sel = $('inc-reason');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— اختر السبب —</option>';
+  let lastType = '';
+  for (const r of DEFAULT_INCIDENT_REASONS) {
+    if (r.type !== lastType) {
+      const meta = REASON_TYPE_META[r.type] || {};
+      sel.innerHTML += '<option disabled style="font-weight:800;color:var(--dim2)">── ' + (meta.ico || '') + ' ' + (meta.lbl || r.type) + ' ──</option>';
+      lastType = r.type;
+    }
+    sel.innerHTML += '<option value="' + esc(r.code) + '">' + esc(r.label) + '</option>';
+  }
+})();
 
 // ── Init ──
 showLoading();
