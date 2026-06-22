@@ -111,6 +111,13 @@
 .reg-empty-hint{font-size:12px;color:var(--dim);margin-top:8px;font-weight:600;}
 .reg-loading{display:flex;flex-direction:column;gap:10px;}
 
+/* Cost row in card */
+.rc-cost-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:6px 10px;background:rgba(139,92,246,.05);border:1px dashed rgba(139,92,246,.2);border-radius:var(--rad);font-size:11px;font-weight:700;color:var(--dim2);}
+.rc-cost-row b{color:var(--snow);font-weight:800;}
+.rc-cost-row .rc-cost-profit{color:var(--g);}
+.rc-cost-row .rc-cost-loss{color:var(--r);}
+.rc-nocost-tag{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:99px;font-size:10px;font-weight:800;background:rgba(255,170,0,.1);color:var(--y);border:1px solid rgba(255,170,0,.25);}
+
 /* Responsive */
 @media(max-width:768px){
   .rc-finance{gap:6px;}
@@ -196,13 +203,21 @@
       <button type="button" class="reg-chip" data-stage="cancelled" onclick="setStageFilter('cancelled',this)">❌ ملغي <span class="chip-count" id="fc-cancelled">0</span></button>
       <button type="button" class="reg-chip" data-stage="rejected" onclick="setStageFilter('rejected',this)">✕ مرفوض <span class="chip-count" id="fc-rejected">0</span></button>
       <button type="button" class="reg-chip" data-stage="overdue" onclick="setStageFilter('overdue',this)">⚠️ متأخر <span class="chip-count" id="fc-overdue">0</span></button>
+      <button type="button" class="reg-chip" data-stage="nocost" onclick="setStageFilter('nocost',this)">💸 بدون تكلفة <span class="chip-count" id="fc-nocost">0</span></button>
     </div>
 
     <!-- Summary bar -->
     <div class="reg-summary" id="reg-summary">
-      <div class="reg-summary-item">💰 إجمالي: <b id="sum-total">0</b></div>
+      <div class="reg-summary-item">💰 مبيعات: <b id="sum-total">0</b></div>
       <div class="reg-summary-item g">✅ مدفوع: <b id="sum-paid">0</b></div>
       <div class="reg-summary-item r">⏳ متبقي: <b id="sum-rem">0</b></div>
+    </div>
+    <!-- Cost summary (visible only to cost-authorized roles) -->
+    <div class="reg-summary" id="reg-cost-summary" style="display:none">
+      <div class="reg-summary-item">🏭 تكلفة: <b id="sum-cost">0</b></div>
+      <div class="reg-summary-item g">📈 ربح: <b id="sum-profit">0</b></div>
+      <div class="reg-summary-item y">💸 بدون تكلفة: <b id="sum-nocost">0</b></div>
+      <div class="reg-summary-item" style="font-size:10px;color:var(--dim)">📊 هامش: <b id="sum-margin" style="color:var(--snow)">0%</b></div>
     </div>
 
     <!-- Sort + count -->
@@ -234,7 +249,7 @@ import { db, auth } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, getDoc, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { STAGES, ORDER_DESIGN_STAGES, stageProgressBar, getOrderAlerts } from "./orders.js";
-import { canSeeField, maskPhone as _centralMaskPhone } from "./core/permissions-matrix.js";
+import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -309,6 +324,7 @@ window.applyFilters = function() {
     if (stageFilter === 'all') { /* pass */ }
     else if (stageFilter === 'rejected') { if (o.designStage !== 'rejected') return false; }
     else if (stageFilter === 'overdue') { if (!isOverdue(o)) return false; }
+    else if (stageFilter === 'nocost') { if ((o.costItems || []).length > 0) return false; }
     else { if (o.stage !== stageFilter) return false; }
 
     if (searchQ) {
@@ -414,11 +430,25 @@ function renderCard(o) {
     financeHtml += '</div>';
   }
 
+  let costHtml = '';
+  if (ROLE_CAN_SEE_COST.has(currentRole)) {
+    const costItems = Array.isArray(o.costItems) ? o.costItems : [];
+    if (costItems.length > 0) {
+      const costTotal = costItems.reduce((s, ci) => s + (Number(ci.total) || 0), 0);
+      const profit = gross - costTotal;
+      const profitCls = profit >= 0 ? 'rc-cost-profit' : 'rc-cost-loss';
+      costHtml = '<div class="rc-cost-row">🏭 تكلفة: <b>' + fmtMoney(costTotal) + '</b> · ' + costItems.length + ' بند · ربح: <b class="' + profitCls + '">' + fmtMoney(profit) + '</b></div>';
+    } else {
+      costHtml = '<div class="rc-cost-row"><span class="rc-nocost-tag">💸 بدون بنود تكلفة</span></div>';
+    }
+  }
+
   return '<div class="' + cardCls + '" onclick="openOrder(\'' + esc(o._id) + '\')">'
     + '<div class="rc-head"><div class="rc-badges">' + badges + '</div><span class="rc-id">' + esc(o.orderId || o._id?.slice(-6) || '') + '</span></div>'
     + '<div class="rc-client">' + esc(o.clientName || '—') + (phone ? ' <span style="font-size:11px;color:var(--dim2);font-weight:600">' + esc(phone) + '</span>' : '') + '</div>'
     + '<div class="rc-products">📦 ' + prodText + '</div>'
     + financeHtml
+    + costHtml
     + '<div class="rc-progress">' + progressHtml + '</div>'
     + '<div class="rc-foot"><span>' + footLeft + '</span><span class="rc-foot-right">' + footRight + '</span></div>'
     + cancelInfo
@@ -427,26 +457,42 @@ function renderCard(o) {
 
 // ── Summary ──
 function renderSummary() {
-  let totalSum = 0, paidSum = 0, remSum = 0;
+  let totalSum = 0, paidSum = 0, remSum = 0, costSum = 0, nocostCount = 0;
   for (const o of filteredOrders) {
     const t = Number(o.salePrice || o.total || 0) + Number(o.customerShippingFee || 0) - Number(o.discount || 0);
     const p = Number(o.paidAmount || o.paid || 0);
     totalSum += t;
     paidSum += p;
     remSum += Math.max(0, t - p);
+    const costItems = Array.isArray(o.costItems) ? o.costItems : [];
+    if (costItems.length > 0) {
+      costSum += costItems.reduce((s, ci) => s + (Number(ci.total) || 0), 0);
+    } else {
+      nocostCount++;
+    }
   }
   $('sum-total').textContent = fmtMoney(totalSum);
   $('sum-paid').textContent = fmtMoney(paidSum);
   $('sum-rem').textContent = fmtMoney(remSum);
+
+  if (ROLE_CAN_SEE_COST.has(currentRole)) {
+    const profit = totalSum - costSum;
+    const margin = totalSum > 0 ? ((profit / totalSum) * 100).toFixed(1) : '0.0';
+    $('sum-cost').textContent = fmtMoney(costSum);
+    $('sum-profit').textContent = fmtMoney(profit);
+    $('sum-nocost').textContent = nocostCount;
+    $('sum-margin').textContent = margin + '%';
+  }
 }
 
 // ── Update stat counts ──
 function updateStats() {
-  const counts = { total: allOrders.length, design: 0, printing: 0, production: 0, shipping: 0, archived: 0, cancelled: 0, rejected: 0, overdue: 0 };
+  const counts = { total: allOrders.length, design: 0, printing: 0, production: 0, shipping: 0, archived: 0, cancelled: 0, rejected: 0, overdue: 0, nocost: 0 };
   for (const o of allOrders) {
     if (counts[o.stage] !== undefined) counts[o.stage]++;
     if (o.designStage === 'rejected') counts.rejected++;
     if (isOverdue(o)) counts.overdue++;
+    if (!(Array.isArray(o.costItems) && o.costItems.length > 0)) counts.nocost++;
   }
   $('s-total').textContent = counts.total;
   $('s-design').textContent = counts.design;
@@ -464,6 +510,7 @@ function updateStats() {
   $('fc-cancelled').textContent = counts.cancelled;
   $('fc-rejected').textContent = counts.rejected;
   $('fc-overdue').textContent = counts.overdue;
+  $('fc-nocost').textContent = counts.nocost;
 
   $('sub').textContent = counts.total + ' أوردر';
 }
@@ -533,6 +580,7 @@ onAuthStateChanged(auth, async u => {
     $('nav-av').textContent = (ud.name || u.email || 'U')[0].toUpperCase();
     if (typeof window.initSidebar === 'function') window.initSidebar(currentRole, 'orders-registry.html');
     buildMobNav(currentRole);
+    if (ROLE_CAN_SEE_COST.has(currentRole)) $('reg-cost-summary').style.display = '';
   } catch (e) {
     console.error('[init] user doc failed:', e);
   }
