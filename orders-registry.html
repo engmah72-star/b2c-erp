@@ -127,6 +127,26 @@
 .reg-list-divider.costed{color:var(--g);}
 .reg-list-divider.nocost{color:var(--y);}
 
+/* Advanced filters bar */
+.reg-adv-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end;}
+.reg-adv-group{display:flex;flex-direction:column;gap:3px;}
+.reg-adv-group label{font-size:10px;font-weight:800;color:var(--dim2);}
+.reg-adv-group input,.reg-adv-group select{padding:8px 10px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;min-width:0;}
+.reg-adv-group input:focus,.reg-adv-group select:focus{outline:0;border-color:var(--b);box-shadow:0 0 0 2px var(--ring-b);}
+.reg-adv-group input[type="date"]{width:140px;}
+.reg-adv-group input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.7);cursor:pointer;}
+
+/* Date presets */
+.reg-date-presets{display:flex;gap:4px;flex-wrap:wrap;}
+.reg-date-preset{padding:5px 10px;border-radius:99px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;transition:var(--trans);white-space:nowrap;}
+.reg-date-preset:hover{background:var(--bg3);border-color:var(--line2);}
+.reg-date-preset.active{background:var(--b);color:#fff;border-color:var(--b);}
+
+/* Export buttons */
+.reg-export-bar{display:flex;gap:6px;flex-wrap:wrap;}
+.reg-export-btn{padding:7px 14px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:var(--trans);display:flex;align-items:center;gap:4px;}
+.reg-export-btn:hover{background:var(--bg3);border-color:var(--b);color:var(--snow);}
+
 /* Cost row in card */
 .rc-cost-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:6px 10px;background:rgba(139,92,246,.05);border:1px dashed rgba(139,92,246,.2);border-radius:var(--rad);font-size:11px;font-weight:700;color:var(--dim2);}
 .rc-cost-row b{color:var(--snow);font-weight:800;}
@@ -206,6 +226,42 @@
     <div class="reg-search-wrap">
       <input id="reg-search" class="reg-search" placeholder="بحث باسم العميل أو رقم الأوردر أو التليفون..." oninput="applyFilters()">
       <span class="reg-search-ico">🔍</span>
+    </div>
+
+    <!-- Date filter -->
+    <div class="reg-date-presets" id="date-presets" style="margin-bottom:10px">
+      <button type="button" class="reg-date-preset active" data-range="all" onclick="setDatePreset('all',this)">الكل</button>
+      <button type="button" class="reg-date-preset" data-range="today" onclick="setDatePreset('today',this)">اليوم</button>
+      <button type="button" class="reg-date-preset" data-range="7d" onclick="setDatePreset('7d',this)">آخر 7 أيام</button>
+      <button type="button" class="reg-date-preset" data-range="30d" onclick="setDatePreset('30d',this)">آخر 30 يوم</button>
+      <button type="button" class="reg-date-preset" data-range="month" onclick="setDatePreset('month',this)">الشهر الحالي</button>
+      <button type="button" class="reg-date-preset" data-range="custom" onclick="setDatePreset('custom',this)">فترة محددة</button>
+    </div>
+    <div class="reg-adv-filters" id="custom-date-row" style="display:none">
+      <div class="reg-adv-group"><label>من</label><input type="date" id="date-from" onchange="applyFilters()"></div>
+      <div class="reg-adv-group"><label>إلى</label><input type="date" id="date-to" onchange="applyFilters()"></div>
+    </div>
+
+    <!-- Employee filter + Export -->
+    <div class="reg-adv-filters">
+      <div class="reg-adv-group">
+        <label>👤 المسؤول</label>
+        <select id="emp-filter" onchange="applyFilters()">
+          <option value="">الكل</option>
+        </select>
+      </div>
+      <div class="reg-adv-group">
+        <label>👤 العميل</label>
+        <select id="client-filter" onchange="applyFilters()">
+          <option value="">الكل</option>
+        </select>
+      </div>
+      <div class="reg-adv-group" style="align-self:flex-end">
+        <div class="reg-export-bar">
+          <button type="button" class="reg-export-btn" onclick="exportCSV()">📥 تصدير Excel</button>
+          <button type="button" class="reg-export-btn" onclick="printView()">🖨️ طباعة</button>
+        </div>
+      </div>
     </div>
 
     <!-- Filter chips -->
@@ -291,6 +347,7 @@ let currentRole = 'admin';
 let currentUser = null;
 let currentUserPerms = {};
 let stageFilter = 'all';
+let dateRange = 'all';
 let stageSlaTable = {};
 let unsubs = [];
 
@@ -337,6 +394,130 @@ function isOverdue(o) {
   } catch (_) { return false; }
 }
 
+// ── Date preset ──
+function getDateRange(preset) {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (preset === 'today') return { from: todayStart.getTime(), to: Date.now() };
+  if (preset === '7d') return { from: todayStart.getTime() - 6 * 86400000, to: Date.now() };
+  if (preset === '30d') return { from: todayStart.getTime() - 29 * 86400000, to: Date.now() };
+  if (preset === 'month') return { from: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), to: Date.now() };
+  return null;
+}
+
+window.setDatePreset = function(range, el) {
+  dateRange = range;
+  document.querySelectorAll('.reg-date-preset').forEach(c => c.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const customRow = $('custom-date-row');
+  if (customRow) customRow.style.display = range === 'custom' ? '' : 'none';
+  applyFilters();
+};
+
+function getOwnerName(o) {
+  return o.designerName || o.printerName || o.productionAgentName || o.shippingOfficerName || o.assignedToName || '';
+}
+
+function rebuildDropdowns() {
+  const empSet = new Map();
+  const clientSet = new Map();
+  for (const o of allOrders) {
+    const owner = getOwnerName(o);
+    if (owner) empSet.set(owner, (empSet.get(owner) || 0) + 1);
+    const cn = o.clientName || '';
+    if (cn) clientSet.set(cn, (clientSet.get(cn) || 0) + 1);
+  }
+  const empSel = $('emp-filter');
+  const curEmp = empSel?.value || '';
+  if (empSel) {
+    empSel.innerHTML = '<option value="">الكل</option>'
+      + Array.from(empSet.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([n, c]) => '<option value="' + esc(n) + '">' + esc(n) + ' (' + c + ')</option>')
+          .join('');
+    empSel.value = curEmp;
+  }
+  const cliSel = $('client-filter');
+  const curCli = cliSel?.value || '';
+  if (cliSel) {
+    cliSel.innerHTML = '<option value="">الكل</option>'
+      + Array.from(clientSet.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([n, c]) => '<option value="' + esc(n) + '">' + esc(n) + ' (' + c + ')</option>')
+          .join('');
+    cliSel.value = curCli;
+  }
+}
+
+// ── Export CSV ──
+window.exportCSV = function() {
+  if (!filteredOrders.length) return toast('لا توجد أوردرات للتصدير', 'err');
+  const showCost = ROLE_CAN_SEE_COST.has(currentRole);
+  const headers = ['رقم الأوردر', 'العميل', 'المرحلة', 'المبلغ', 'المدفوع', 'المتبقي', 'المسؤول', 'تاريخ الإنشاء'];
+  if (showCost) headers.push('التكلفة', 'الربح', 'بنود التكلفة');
+
+  const rows = filteredOrders.map(o => {
+    const t = Number(o.salePrice || o.total || 0) + Number(o.customerShippingFee || 0) - Number(o.discount || 0);
+    const p = Number(o.paidAmount || o.paid || 0);
+    const r = Math.max(0, t - p);
+    const stg = (STAGES[o.stage] || {}).label || o.stage || '';
+    const d = tsToMs(o.createdAt) ? new Date(tsToMs(o.createdAt)).toLocaleDateString('ar-EG') : '';
+    const row = [o.orderId || o._id || '', o.clientName || '', stg, t, p, r, getOwnerName(o), d];
+    if (showCost) {
+      const ci = Array.isArray(o.costItems) ? o.costItems : [];
+      const cost = ci.reduce((s, c) => s + (Number(c.total) || 0), 0);
+      row.push(cost, t - cost, ci.length);
+    }
+    return row;
+  });
+
+  const BOM = '﻿';
+  const csv = BOM + [headers, ...rows].map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'orders-registry-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('تم تصدير ' + filteredOrders.length + ' أوردر', 'ok');
+};
+
+// ── Print view ──
+window.printView = function() {
+  if (!filteredOrders.length) return toast('لا توجد أوردرات للطباعة', 'err');
+  const showCost = ROLE_CAN_SEE_COST.has(currentRole);
+  let html = '<html dir="rtl"><head><meta charset="UTF-8"><title>سجل الأوردرات</title>';
+  html += '<style>body{font-family:Tajawal,sans-serif;padding:20px;font-size:12px;}table{width:100%;border-collapse:collapse;margin-top:16px;}th,td{border:1px solid #ddd;padding:6px 8px;text-align:right;}th{background:#f5f5f5;font-weight:800;}h2{margin:0 0 4px;}p{margin:0 0 10px;color:#666;font-size:11px;}.g{color:green;}.r{color:red;}@media print{button{display:none!important;}}</style></head><body>';
+  html += '<h2>سجل الأوردرات — Business2Card</h2>';
+  html += '<p>' + filteredOrders.length + ' أوردر · ' + new Date().toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + '</p>';
+  html += '<button onclick="window.print()" style="padding:8px 20px;font-size:14px;cursor:pointer;margin-bottom:12px;">🖨️ طباعة</button>';
+  html += '<table><thead><tr><th>الرقم</th><th>العميل</th><th>المرحلة</th><th>المبلغ</th><th>مدفوع</th><th>متبقي</th><th>المسؤول</th><th>التاريخ</th>';
+  if (showCost) html += '<th>تكلفة</th><th>ربح</th>';
+  html += '</tr></thead><tbody>';
+  for (const o of filteredOrders) {
+    const t = Number(o.salePrice || o.total || 0) + Number(o.customerShippingFee || 0) - Number(o.discount || 0);
+    const p = Number(o.paidAmount || o.paid || 0);
+    const r = Math.max(0, t - p);
+    const stg = (STAGES[o.stage] || {}).label || o.stage || '';
+    const d = tsToMs(o.createdAt) ? new Date(tsToMs(o.createdAt)).toLocaleDateString('ar-EG') : '';
+    html += '<tr><td>' + esc(o.orderId || '') + '</td><td>' + esc(o.clientName || '') + '</td><td>' + esc(stg) + '</td>';
+    html += '<td>' + fmtMoney(t) + '</td><td class="g">' + fmtMoney(p) + '</td><td class="r">' + fmtMoney(r) + '</td>';
+    html += '<td>' + esc(getOwnerName(o)) + '</td><td>' + esc(d) + '</td>';
+    if (showCost) {
+      const ci = Array.isArray(o.costItems) ? o.costItems : [];
+      const cost = ci.reduce((s, c) => s + (Number(c.total) || 0), 0);
+      const profit = t - cost;
+      html += '<td>' + fmtMoney(cost) + '</td><td class="' + (profit >= 0 ? 'g' : 'r') + '">' + fmtMoney(profit) + '</td>';
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table></body></html>';
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
+};
+
 // ── Stage filter ──
 window.setStageFilter = function(stage, el) {
   stageFilter = stage;
@@ -349,6 +530,19 @@ window.setStageFilter = function(stage, el) {
 window.applyFilters = function() {
   const searchQ = ($('reg-search')?.value || '').toLowerCase().trim();
   const sort = $('reg-sort-sel')?.value || 'newest';
+  const empVal = $('emp-filter')?.value || '';
+  const cliVal = $('client-filter')?.value || '';
+
+  let dateFrom = 0, dateTo = Infinity;
+  if (dateRange === 'custom') {
+    const f = $('date-from')?.value;
+    const t = $('date-to')?.value;
+    if (f) dateFrom = new Date(f).getTime();
+    if (t) dateTo = new Date(t).getTime() + 86400000 - 1;
+  } else if (dateRange !== 'all') {
+    const dr = getDateRange(dateRange);
+    if (dr) { dateFrom = dr.from; dateTo = dr.to; }
+  }
 
   filteredOrders = allOrders.filter(o => {
     if (stageFilter === 'all') { /* pass */ }
@@ -356,6 +550,14 @@ window.applyFilters = function() {
     else if (stageFilter === 'overdue') { if (!isOverdue(o)) return false; }
     else if (stageFilter === 'nocost') { if ((o.costItems || []).length > 0) return false; }
     else { if (o.stage !== stageFilter) return false; }
+
+    if (dateFrom || dateTo < Infinity) {
+      const ts = tsToMs(o.createdAt);
+      if (ts < dateFrom || ts > dateTo) return false;
+    }
+
+    if (empVal && getOwnerName(o) !== empVal) return false;
+    if (cliVal && (o.clientName || '') !== cliVal) return false;
 
     if (searchQ) {
       const haystack = [
@@ -695,6 +897,7 @@ function mergeOrders(bucket, orders) {
   }
   allOrders = Array.from(merged.values())
     .sort((a, b) => tsToMs(b.createdAt) - tsToMs(a.createdAt));
+  rebuildDropdowns();
   updateStats();
   applyUrlParams();
 }
