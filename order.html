@@ -36,10 +36,14 @@
   .order-stage-badge.shipping{background:rgba(74,142,245,.12);color:var(--b);border:1px solid rgba(74,142,245,.3);}
   .order-stage-badge.archived{background:rgba(100,114,152,.12);color:var(--dim2);border:1px solid rgba(100,114,152,.3);}
   .order-stage-badge.cancelled{background:rgba(255,61,110,.12);color:var(--r);border:1px solid rgba(255,61,110,.3);}
-  .order-cancelled-banner{background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.25);border-radius:var(--rad2);padding:14px 18px;margin-bottom:16px;display:flex;flex-direction:column;gap:6px;}
+  .order-cancelled-banner,.order-rejected-banner{border-radius:var(--rad2);padding:14px 18px;margin-bottom:16px;display:flex;flex-direction:column;gap:6px;}
+  .order-cancelled-banner{background:rgba(255,61,110,.08);border:1px solid rgba(255,61,110,.25);}
+  .order-rejected-banner{background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.25);}
   .order-cancelled-banner .cb-title{font-size:14px;font-weight:800;color:var(--r);display:flex;align-items:center;gap:6px;}
-  .order-cancelled-banner .cb-reason{font-size:13px;color:var(--snow);font-weight:600;}
-  .order-cancelled-banner .cb-meta{font-size:11px;color:var(--dim2);}
+  .order-rejected-banner .cb-title{font-size:14px;font-weight:800;color:var(--y);display:flex;align-items:center;gap:6px;}
+  .order-cancelled-banner .cb-reason,.order-rejected-banner .cb-reason{font-size:13px;color:var(--snow);font-weight:600;}
+  .order-cancelled-banner .cb-meta,.order-rejected-banner .cb-meta{font-size:11px;color:var(--dim2);}
+  .order-stage-badge.design-rejected{background:rgba(255,61,110,.12);color:var(--r);border:1px solid rgba(255,61,110,.3);}
   .order-actions-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
   .order-actions-row .btn{flex:1;min-width:130px;padding:11px 14px;border-radius:var(--rad);border:1px solid var(--line);background:var(--bg2);color:var(--snow);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:var(--trans);touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
   .order-actions-row .btn:hover{background:var(--bg3);border-color:var(--line2);}
@@ -386,7 +390,7 @@ import { doc, onSnapshot, getDoc, getDocs, collection, query, limit, where } fro
 import { orderActions } from "./order-actions.js";
 import { inboxActions } from "./inbox-actions.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
-import { PRODUCT_STATUS, STAGES, STAGE_PERMISSIONS, getStageDurations, getStageResponsibilities, getOrderDates, getOrderAlerts } from "./orders.js";
+import { PRODUCT_STATUS, STAGES, STAGE_PERMISSIONS, ORDER_DESIGN_STAGES, getStageDurations, getStageResponsibilities, getOrderDates, getOrderAlerts } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 
 // ── State ──
@@ -562,6 +566,13 @@ function renderOrder(o) {
   html += '<div class="order-id tap-select" title="اضغط للنسخ">' + esc(o.orderId || o._id || '—') + '</div>';
   if (phone) html += '<div class="order-id tap-select" style="direction:ltr" title="اضغط للنسخ">' + esc(phone) + '</div>';
   html += '<div class="order-meta"><span class="order-stage-badge ' + stage.cls + '">' + esc(stage.label) + '</span>';
+  // designStage sub-status badge (rejected / awaiting_payment / wip)
+  const _ds = o.designStage;
+  if (_ds === ORDER_DESIGN_STAGES.REJECTED) {
+    html += ' <span class="order-stage-badge design-rejected">✕ التصميم مرفوض</span>';
+  } else if (_ds === ORDER_DESIGN_STAGES.AWAITING_PAYMENT) {
+    html += ' <span class="order-stage-badge" style="background:rgba(255,170,0,.12);color:var(--y);border:1px solid rgba(255,170,0,.3)">⏳ انتظار التحويل</span>';
+  }
   // تنبيه التأخير — مشتق من المرجع الواحد (getOrderAlerts)
   const _alerts = getOrderAlerts(o, stageSlaTable);
   if (_alerts.count > 0) {
@@ -582,6 +593,15 @@ function renderOrder(o) {
     if (o.cancelledAt) cancelMeta.push(fmtDate(o.cancelledAt));
     if (o.previousStage) cancelMeta.push('كان في: ' + (STAGES[o.previousStage]?.label || o.previousStage));
     if (cancelMeta.length) html += '<div class="cb-meta">' + esc(cancelMeta.join(' · ')) + '</div>';
+    html += '</div>';
+  }
+
+  // ── Design rejected banner ──
+  if (o.designStage === ORDER_DESIGN_STAGES.REJECTED && o.stage !== 'cancelled') {
+    html += '<div class="order-rejected-banner">';
+    html += '<div class="cb-title">✕ التصميم مرفوض</div>';
+    if (o.printRejectNote) html += '<div class="cb-reason">السبب: ' + esc(o.printRejectNote) + '</div>';
+    html += '<div class="cb-meta">الأوردر يحتاج مراجعة ومعالجة من خدمة العملاء</div>';
     html += '</div>';
   }
 
