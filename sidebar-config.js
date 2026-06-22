@@ -203,6 +203,16 @@ import('./error-reporter-init.js').catch(function(){});
     document.head.appendChild(s);
   }
 
+  // ── Auto-load Order Search (Ctrl+Shift+K / 📦 button) ──
+  // بحث عام عن الأوردرات من أي صفحة — يظهر المرحلة الحالية مباشرةً.
+  if (!document.getElementById('os-loader')) {
+    const s = document.createElement('script');
+    s.id = 'os-loader';
+    s.type = 'module';
+    s.src = 'order-search.js?v=1';
+    document.head.appendChild(s);
+  }
+
   // ── Auto-load UX Globals (Esc / Enter / backdrop close / auto-focus) ──
   // Self-contained IIFE — يضمن أن كل صفحة admin تحصل على نفس الـ keyboard
   // ergonomics بدون الاعتماد على استيراد shared.js كـ module.

@@ -250,6 +250,41 @@ export async function getCostLibraryItems({ db, typeFilter, supplierFilter, text
 }
 
 /**
+ * getPriceTrend
+ * ─────────────
+ * يحسب اتجاه السعر من priceHistory — يُرجع { direction, pctChange, lastPrice, prevPrice }
+ * direction: 'up' | 'down' | 'stable' | 'new'
+ */
+export function getPriceTrend(priceHistory) {
+  const valid = (priceHistory || []).filter(h => h.unitCost > 0);
+  if (valid.length < 2) return { direction: 'new', pctChange: 0, lastPrice: valid[0]?.unitCost || 0, prevPrice: 0 };
+  const last = valid[valid.length - 1].unitCost;
+  const prev = valid[valid.length - 2].unitCost;
+  if (prev === 0) return { direction: 'new', pctChange: 0, lastPrice: last, prevPrice: prev };
+  const pct = Math.round(((last - prev) / prev) * 100);
+  const direction = pct > 3 ? 'up' : pct < -3 ? 'down' : 'stable';
+  return { direction, pctChange: pct, lastPrice: last, prevPrice: prev };
+}
+
+/**
+ * getSupplierRanking
+ * ──────────────────
+ * يُرجع ترتيب الموردين لنوع + منتج معين، مع trend لكل مورد.
+ */
+export async function getSupplierRanking({ db, type, productName, limitN = 10 }) {
+  const comps = await getSupplierComparisons({ db, type, productName });
+  return comps.slice(0, limitN).map((item, idx) => {
+    const trend = getPriceTrend(item.priceHistory);
+    return {
+      ...item,
+      rank: idx + 1,
+      trend,
+      isCheapest: idx === 0,
+    };
+  });
+}
+
+/**
  * deleteCostLibraryItem — Admin only: soft delete (isActive = false)
  */
 export async function deleteCostLibraryItem({ db, itemId }) {

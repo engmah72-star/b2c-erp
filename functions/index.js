@@ -311,7 +311,7 @@ exports.onPaymentLogged = onDocumentCreated(
     // الرصيد المتبقي عبر تجميع طلبات العميل
     let balance = 0;
     try {
-      const ords = await db.collection('orders').where('clientId', '==', entry.clientId).get();
+      const ords = await db.collection('orders').where('clientId', '==', entry.clientId).limit(500).get();
       ords.forEach(o => {
         const d = o.data();
         balance += (Number(d.totalPrice || d.salePrice || 0) - Number(d.totalPaid || 0));
@@ -717,7 +717,7 @@ async function getUserTokens(uid) {
 
 async function getRoleTokens(roles) {
   // Fetch all uids in the given roles, then their tokens.
-  const usersSnap = await db.collection('users').where('role', 'in', roles).get();
+  const usersSnap = await db.collection('users').where('role', 'in', roles).limit(200).get();
   const uids = usersSnap.docs.map(d => d.id);
   if (uids.length === 0) return [];
   // Firestore `in` cap is 30 — chunk just in case.
@@ -906,7 +906,7 @@ exports.onOrderReadyForShipping = onDocumentUpdated('orders/{orderId}', async (e
   });
 
   // In-app bell for each shipping officer.
-  const usersSnap = await db.collection('users').where('role', '==', ROLES.SHIPPING_OFFICER).get();
+  const usersSnap = await db.collection('users').where('role', '==', ROLES.SHIPPING_OFFICER).limit(200).get();
   const wb = db.batch();
   usersSnap.docs.forEach(u => {
     const ref = db.collection('notifications').doc();
@@ -972,7 +972,7 @@ async function notifyAdminsOfPendingApproval({ entityType, entityId, title, body
     link,
   });
   // In-app for each admin/ops user
-  const usersSnap = await db.collection('users').where('role', 'in', ADMIN_OR_OPS).get();
+  const usersSnap = await db.collection('users').where('role', 'in', ADMIN_OR_OPS).limit(200).get();
   const wb = db.batch();
   usersSnap.docs.forEach(u => {
     const ref = db.collection('notifications').doc();
@@ -1124,7 +1124,7 @@ exports.dailyFollowupReminders = onSchedule(
   { schedule: '0 8 * * *', timeZone: 'Africa/Cairo' },
   async () => {
     const now = Date.now();
-    const snap = await db.collection('client_followups').get();
+    const snap = await db.collection('client_followups').limit(2000).get();
     const byUid = new Map();
     snap.forEach(d => {
       const f = d.data();
@@ -3065,7 +3065,7 @@ exports.backfillAuthClaims = onCall({ ...CALL_OPTS, timeoutSeconds: 540 }, async
     throw new HttpsError('permission-denied', 'admin only');
   }
 
-  const snap = await db.collection('users').get();
+  const snap = await db.collection('users').limit(500).get();
   let success = 0, failed = 0;
 
   for (const userDoc of snap.docs) {
@@ -4016,3 +4016,64 @@ exports.dailyFinancialReconciliation = onSchedule(
     });
   }
 );
+
+// ════════════════════════════════════════════════════════════
+// IMAGE PROXY — serves Storage images with CORS headers
+// ════════════════════════════════════════════════════════════
+const { getStorage: getAdminStorage } = require('firebase-admin/storage');
+const STORAGE_BUCKET = 'business2card-c041b.firebasestorage.app';
+
+exports.imgProxy = onRequest(
+  { cors: true, maxInstances: 20, memory: '256MiB', timeoutSeconds: 30 },
+  async (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (!token) { res.status(401).send('Unauthorized'); return; }
+    try { await getAuth().verifyIdToken(token); } catch { res.status(401).send('Invalid token'); return; }
+
+    const filePath = req.query.path;
+    if (!filePath || filePath.includes('..')) { res.status(400).send('Bad path'); return; }
+
+    try {
+      const bucket = getAdminStorage().bucket(STORAGE_BUCKET);
+      const file = bucket.file(filePath);
+      const [exists] = await file.exists();
+      if (!exists) { res.status(404).send('Not found'); return; }
+
+      const [metadata] = await file.getMetadata();
+      res.set('Content-Type', metadata.contentType || 'application/octet-stream');
+      res.set('Cache-Control', 'public, max-age=3600');
+      file.createReadStream().pipe(res);
+    } catch (e) {
+      console.error('[imgProxy]', e.message);
+      res.status(500).send('Error');
+    }
+  }
+);
+
+// ════════════════════════════════════════════════════════════
+// SETUP STORAGE CORS — one-time callable to configure CORS
+// ════════════════════════════════════════════════════════════
+exports.setupStorageCors = onCall(CALL_OPTS, async (req) => {
+  if (!req.auth) throw new HttpsError('unauthenticated', 'Login required');
+  const db = getFirestore();
+  const userDoc = await db.collection('users').doc(req.auth.uid).get();
+  const role = userDoc.exists ? userDoc.data().role : '';
+  if (role !== 'admin') throw new HttpsError('permission-denied', 'Admin only');
+
+  const bucket = getAdminStorage().bucket(STORAGE_BUCKET);
+  await bucket.setCorsConfiguration([{
+    origin: [
+      'https://business2card-c041b.web.app',
+      'https://business2card-c041b.firebaseapp.com',
+      'https://engmah72-star.github.io',
+      'http://localhost:5000',
+      'http://localhost:5173',
+      'http://127.0.0.1:5000',
+    ],
+    method: ['GET', 'HEAD'],
+    maxAgeSeconds: 3600,
+    responseHeader: ['Content-Type', 'Content-Length'],
+  }]);
+  return { ok: true, message: 'CORS configured on storage bucket' };
+});

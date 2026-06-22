@@ -60,8 +60,8 @@ async function buildClientContext(db, clientId) {
     db.doc(`clients/${clientId}`).get(),
     db.doc(`client_segments/${clientId}`).get(),
     db.doc(`product_recommendations/${clientId}`).get(),
-    db.collection('orders').where('clientId', '==', clientId).get(),
-    db.collection('client_followups').where('clientId', '==', clientId).get(),
+    db.collection('orders').where('clientId', '==', clientId).limit(500).get(),
+    db.collection('client_followups').where('clientId', '==', clientId).limit(500).get(),
   ]);
 
   const client = clientSnap.exists ? clientSnap.data() : null;

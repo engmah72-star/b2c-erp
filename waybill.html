@@ -10,6 +10,7 @@
 <link rel="dns-prefetch" href="https://firestore.googleapis.com">
 <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared.css">
 <link rel="stylesheet" href="waybill.css?v=1">
 </head>
 <body>
@@ -28,6 +29,7 @@
       </select>
     </div>
     <button type="button" class="btn btn-yellow hide" id="btn-edit" onclick="openEdit()">✏️ تعديل البوليصة</button>
+    <button type="button" class="btn btn-screenshot hide" id="btn-screenshot" onclick="captureWaybillScreenshot()">📸 تصوير</button>
     <button type="button" class="btn btn-primary hide" id="btn-print" onclick="printNow()">🖨️ طباعة</button>
   </div>
 </div>
@@ -71,6 +73,23 @@
 
 <div class="toasts" id="toasts"></div>
 
+<script>
+let _h2cLoaded=false,_h2cPromise=null;
+function _loadH2C(){
+  if(_h2cLoaded) return Promise.resolve();
+  if(_h2cPromise) return _h2cPromise;
+  _h2cPromise=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    s.onload=()=>{_h2cLoaded=true;res();};
+    s.onerror=()=>{_h2cPromise=null;rej(new Error('فشل تحميل مكتبة التصوير'));};
+    document.head.appendChild(s);
+  });
+  return _h2cPromise;
+}
+_loadH2C().catch(()=>{});
+// captureWaybillScreenshot is defined in the module script below
+</script>
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
@@ -176,6 +195,7 @@ function getWaybillView(o){
 function buildWaybillHtml(o,idx){
   const v=getWaybillView(o);
   const orderRef=escHtml(o.orderId||(o._id||'').slice(-6));
+  const amountZero=v.amount<=0;
   return `<div class="waybill" data-id="${escHtml(o._id)}">
     <div class="wb-head">
       <div class="wb-logo-block">
@@ -198,14 +218,14 @@ function buildWaybillHtml(o,idx){
         <div class="wb-label">المحتويات — CONTENTS</div>
         <div class="wb-cargo">${escHtml(v.cargo)}</div>
       </div>
-      <div class="wb-amount">
-        <div class="wb-amount-lbl">المطلوب تحصيله — TO COLLECT</div>
-        <div class="wb-amount-val">${fn(v.amount)} <span style="font-size:var(--fs-lg)">ج</span></div>
-        <div class="wb-amount-tag">شامل رسوم الشحن — Includes shipping</div>
+      <div class="wb-amount"${amountZero?' style="border-color:#22c55e;background:linear-gradient(135deg,#f0fdf4,#dcfce7)"':''}>
+        <div class="wb-amount-lbl"${amountZero?' style="color:#166534"':''}>${amountZero?'حالة التحصيل — STATUS':'المطلوب تحصيله — TO COLLECT'}</div>
+        <div class="wb-amount-val"${amountZero?' style="color:#16a34a;font-size:28px"':''}>${amountZero?'✅ مكتمل':`${fn(v.amount)} <span style="font-size:var(--fs-lg)">ج</span>`}</div>
+        ${amountZero?'':'<div class="wb-amount-tag">شامل رسوم الشحن — Includes shipping</div>'}
       </div>
     </div>
     ${v.notes?`<div class="wb-notes-box">
-      <div style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);color:#a06600;margin-bottom:3px">ملاحظات للمندوب — COURIER NOTES</div>
+      <div style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);color:#92400e;margin-bottom:4px;letter-spacing:.3px">ملاحظات للمندوب — COURIER NOTES</div>
       <div>${escHtml(v.notes)}</div>
     </div>`:''}
     <div class="wb-foot">
@@ -236,7 +256,7 @@ window.changeLayout=function(){
 function render(){
   $('loading-box').style.display='none';
   $('btn-print').style.display='inline-block';
-  // Edit only available for single-order mode (1-up; doesn't make sense in compact layouts to edit a tiny preview)
+  $('btn-screenshot').style.display='inline-block';
   if(!isBulk && canEdit()) $('btn-edit').style.display='inline-block';
   // Layout selector available always (works for single-order too)
   const perPage=getStoredLayout();
@@ -337,6 +357,70 @@ window.saveEdit=async()=>{
 
 // Allow closing modal by clicking outside
 $('ov-edit').addEventListener('click',e=>{if(e.target.id==='ov-edit')closeEdit();});
+
+// ── Screenshot: capture-optimized waybill share card ─────────────────
+function _buildWaybillShareCard(o){
+  const v=getWaybillView(o);
+  const orderRef=o.orderId||(o._id||'').slice(-6);
+  const az=v.amount<=0;
+  const addrText=(v.gov!=='—'?v.gov+' — ':'')+v.address;
+  return `<div style="width:420px;font-family:Tajawal,sans-serif;direction:rtl;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+    <div style="background:#1e293b;padding:10px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:13px;font-weight:900;color:#fff">Business2Card · بوليصة شحن</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:10px;color:rgba(255,255,255,0.5);font-weight:700">${escHtml(orderRef)}</span>
+        ${v.tracking&&v.tracking!=='—'?`<span style="font-family:Courier New,monospace;font-size:10px;padding:3px 8px;background:rgba(255,255,255,0.15);color:#fff;border-radius:5px;font-weight:700">${escHtml(v.tracking)}</span>`:''}
+      </div>
+    </div>
+    <div style="padding:14px 16px;border-bottom:1px solid #e2e8f0">
+      <div style="font-size:22px;font-weight:900;color:#0f172a;margin-bottom:6px">${escHtml(v.name)}</div>
+      <div style="font-size:15px;color:#334155;font-weight:700;margin-bottom:4px">📞 ${escHtml(v.phone)}</div>
+      ${addrText?`<div style="font-size:14px;color:#334155;font-weight:600;line-height:1.6">📍 ${escHtml(addrText)}</div>`:''}
+    </div>
+    <div style="padding:12px 16px;border-bottom:1px solid #e2e8f0">
+      <div style="font-size:10px;font-weight:800;color:#94a3b8;margin-bottom:6px">المحتويات</div>
+      <div style="font-size:15px;font-weight:700;color:#1e293b;line-height:1.6">${escHtml(v.cargo)}</div>
+    </div>
+    ${v.amount>0||az?`<div style="padding:16px;background:${az?'#f0fdf4':'#fffbeb'};text-align:center;border-bottom:1px solid #e2e8f0">
+      <div style="font-size:10px;font-weight:800;color:${az?'#166534':'#92400e'};margin-bottom:6px">${az?'حالة التحصيل':'المطلوب تحصيله'}</div>
+      <div style="font-size:${az?'24':'36'}px;font-weight:900;color:${az?'#16a34a':'#b45309'}">${az?'✅ مكتمل':fn(v.amount)+' ج'}</div>
+      ${!az?`<div style="font-size:11px;color:#92400e;font-weight:600;margin-top:3px">شامل رسوم الشحن</div>`:''}
+    </div>`:''}
+    ${v.notes?`<div style="padding:10px 16px;border-bottom:1px solid #e2e8f0"><div style="background:#fffbeb;border:1px solid #fcd34d;border-right:3px solid #f59e0b;border-radius:8px;padding:10px 12px;font-size:13px;color:#92400e;font-weight:600;line-height:1.6">📝 ${escHtml(v.notes)}</div></div>`:''}
+    <div style="padding:8px 16px;background:#f1f5f9;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;font-weight:700;display:flex;justify-content:space-between">
+      <span>🚚 ${escHtml(v.company)}</span><span>${new Date().toLocaleDateString('ar-EG')}</span>
+    </div>
+  </div>`;
+}
+
+window.captureWaybillScreenshot=async function(){
+  const btn=$('btn-screenshot');
+  const origText=btn.textContent;
+  btn.disabled=true;btn.textContent='⏳ جاري التصوير...';
+  try{
+    await _loadH2C();
+    if(!orders.length)throw new Error('لا توجد بيانات');
+    const cardHtml=orders.map(o=>_buildWaybillShareCard(o)).join('<div style="height:16px"></div>');
+    const container=document.createElement('div');
+    container.style.cssText='position:absolute;top:-9999px;left:-9999px;width:460px;z-index:-1;background:#fff;';
+    container.innerHTML=`<div style="background:#fff;padding:12px">${cardHtml}</div>`;
+    document.body.appendChild(container);
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const card=container.firstElementChild;
+    const canvas=await html2canvas(card,{scale:2,useCORS:true,allowTaint:false,backgroundColor:'#ffffff',scrollX:0,scrollY:0,windowWidth:460});
+    document.body.removeChild(container);
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.88));
+    const fileName='waybill-'+(document.title.replace(/[^a-zA-Z0-9؀-ۿ]/g,'-'))+'.jpg';
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=fileName;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('تم حفظ الصورة ✅','ok');
+  }catch(e){
+    console.error('Screenshot error:',e);
+    toast('فشل التصوير — حاول مرة أخرى','err');
+  }finally{btn.disabled=false;btn.textContent=origText;}
+};
 </script>
 </body>
 </html>
