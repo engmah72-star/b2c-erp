@@ -521,6 +521,7 @@ function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'exec-cost-entry.html')
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
+import { getTmplMatches } from "./core/cost-template-matching.js";
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
 let activeId=null,currentStageFilters=new Set(),currentSort='priority',editCostIdx=-1;
@@ -2566,34 +2567,26 @@ async function _loadCostTemplates(){
   }catch(e){console.warn('templates load:',e);}
 }
 
-function _getTmplMatches(o){
-  if(!costTemplates.length)return[];
-  const matches=[];
-  (o.products||[]).forEach((prod,prodIdx)=>{
-    const base=_normBaseName(prod.name),qty=_extractQty(prod);
-    const t=costTemplates.find(t=>{
-      const qOk=!t.qty||!qty||String(t.qty)===String(qty);
-      return _normBaseName(t.name)===base&&qOk;
-    });
-    if(t)matches.push({template:t,prod,prodIdx});
-  });
-  return matches;
-}
+function _getTmplMatches(o){ return getTmplMatches(costTemplates, o); }
 
 function _renderTmplApply(o){
   const el=document.getElementById('ws-tmpl-apply');if(!el)return;
-  const matches=_getTmplMatches(o);
-  if(!matches.length){el.hidden=true;el.innerHTML='';return;}
+  const{matched,library}=_getTmplMatches(o);
+  const all=[...matched,...library];
+  if(!all.length){el.hidden=true;el.innerHTML='';return;}
   el.hidden=false;
-  el.innerHTML=matches.map(({template:t,prodIdx})=>{
+  el.innerHTML=all.map(({template:t,prodIdx,score,reasons})=>{
     const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
     const uid=`tap-${t.id}-${prodIdx}`;
+    const pct=Math.round(score*100);
+    const label=score>=0.85?'تطابق قوي':score>=0.55?'مقترح':'ذو صلة';
     return`<div class="tmpl-apply-box">
       <div class="tmpl-apply-hdr">
-        <span class="tmpl-apply-label">⚡ قالب ثابت</span>
+        <span class="tmpl-apply-label">⚡ ${label} <small style="opacity:.7">${pct}%</small></span>
         <span class="tmpl-apply-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</span>
         <span class="tmpl-apply-total">${fn(total)} ج</span>
       </div>
+      ${reasons.length?`<div class="tmpl-apply-reasons">${reasons.map(r=>`<span class="tmpl-reason-chip">${r}</span>`).join('')}</div>`:''}
       <div class="tmpl-apply-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
       <button type="button" class="btn btn-r tmpl-apply-btn" id="${uid}" onclick="applyFullTemplate('${t.id}',${prodIdx},'${uid}')">⚡ تطبيق الكل دفعة واحدة</button>
     </div>`;
