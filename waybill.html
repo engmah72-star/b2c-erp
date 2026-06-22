@@ -72,13 +72,25 @@
 
 <div class="toasts" id="toasts"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script>
+let _h2cLoaded=false;
+function _loadH2C(){
+  if(_h2cLoaded) return Promise.resolve();
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    s.onload=()=>{_h2cLoaded=true;res();};
+    s.onerror=()=>rej(new Error('فشل تحميل مكتبة التصوير'));
+    document.head.appendChild(s);
+  });
+}
+function _isIOS(){return/iPad|iPhone|iPod/.test(navigator.userAgent)||navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1;}
 async function captureWaybillScreenshot(){
   const btn=document.getElementById('btn-screenshot');
   const origText=btn.textContent;
   btn.disabled=true;btn.textContent='⏳ جاري التصوير...';
   try{
+    await _loadH2C();
     const target=document.getElementById('waybills-container');
     const canvas=await html2canvas(target,{
       scale:2,useCORS:true,allowTaint:true,
@@ -87,14 +99,23 @@ async function captureWaybillScreenshot(){
     });
     const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
     const fileName='waybill-'+Date.now()+'.png';
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;a.download=fileName;
-    document.body.appendChild(a);a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const file=new File([blob],fileName,{type:'image/png'});
+    if(_isIOS()&&navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file]});
+    }else{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=fileName;
+      document.body.appendChild(a);a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    toast('تم حفظ الصورة بنجاح ✅','ok');
   }catch(e){
-    if(e.name!=='AbortError') console.error('Screenshot error:',e);
+    if(e.name!=='AbortError'){
+      console.error('Screenshot error:',e);
+      toast('فشل التصوير — حاول مرة أخرى','err');
+    }
   }finally{
     btn.disabled=false;btn.textContent=origText;
   }
