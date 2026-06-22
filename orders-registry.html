@@ -202,6 +202,19 @@
 .perf-stage-bar{height:4px;border-radius:2px;background:var(--line);margin-top:6px;overflow:hidden;}
 .perf-stage-bar-fill{height:100%;border-radius:2px;transition:width .3s;}
 
+/* Quick action menu on card */
+.rc-actions{position:relative;}
+.rc-actions-btn{width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--trans);font-family:inherit;padding:0;line-height:1;flex-shrink:0;}
+.rc-actions-btn:hover{background:var(--bg3);border-color:var(--line2);color:var(--snow);}
+.rc-actions-menu{display:none;position:absolute;top:32px;left:0;z-index:20;min-width:170px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad);box-shadow:0 8px 24px rgba(0,0,0,.4);overflow:hidden;}
+.rc-actions.open .rc-actions-menu{display:block;}
+.rc-action-item{display:flex;align-items:center;gap:6px;width:100%;padding:9px 14px;border:0;background:none;color:var(--snow);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;text-align:right;transition:var(--trans);white-space:nowrap;}
+.rc-action-item:hover{background:var(--bg3);}
+.rc-action-item.danger{color:var(--r);}
+.rc-action-item.danger:hover{background:rgba(255,61,110,.08);}
+.rc-action-item:disabled{opacity:.4;cursor:not-allowed;}
+.rc-action-divider{height:1px;background:var(--line);margin:2px 0;}
+
 /* Responsive */
 @media(max-width:768px){
   .rc-finance{gap:6px;}
@@ -404,6 +417,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, getDoc, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { STAGES, ORDER_DESIGN_STAGES, stageProgressBar, getOrderAlerts, getStageDurations } from "./orders.js";
 import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "./core/permissions-matrix.js";
+import { orderActions } from "./order-actions.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -413,6 +427,7 @@ let allOrders = [];
 let filteredOrders = [];
 let currentRole = 'admin';
 let currentUser = null;
+let currentUserName = '';
 let currentUserPerms = {};
 let stageFilter = 'all';
 let dateRange = 'all';
@@ -474,6 +489,66 @@ window.setView = function(mode) {
 // ── Performance metrics ──
 window.togglePerf = function() {
   $('reg-perf')?.classList.toggle('open');
+};
+
+// ── Quick Actions ──
+const NEXT_STAGE = { design: 'printing', printing: 'production', production: 'shipping' };
+const STAGE_ACTION = { design: 'submitToPrinting', printing: 'submitToProduction', production: 'submitToShipping' };
+
+window.toggleCardMenu = function(id, ev) {
+  ev.stopPropagation();
+  document.querySelectorAll('.rc-actions.open').forEach(el => {
+    if (el.dataset.id !== id) el.classList.remove('open');
+  });
+  const wrap = document.querySelector('.rc-actions[data-id="' + id + '"]');
+  if (wrap) wrap.classList.toggle('open');
+};
+
+document.addEventListener('click', () => {
+  document.querySelectorAll('.rc-actions.open').forEach(el => el.classList.remove('open'));
+});
+
+window.quickAdvance = async function(id, currentStage, ev) {
+  ev.stopPropagation();
+  document.querySelectorAll('.rc-actions.open').forEach(el => el.classList.remove('open'));
+  const actionName = STAGE_ACTION[currentStage];
+  if (!actionName) return toast('لا يمكن تقديم هذه المرحلة', 'err');
+  const nextLabel = (STAGES[NEXT_STAGE[currentStage]] || {}).label || '';
+  if (!confirm('تقديم الأوردر إلى ' + nextLabel + '؟')) return;
+  try {
+    const r = await orderActions[actionName]({
+      db, orderId: id,
+      role: currentRole,
+      userId: currentUser?.uid || '',
+      userName: currentUserName,
+      bypassWarnings: true,
+    });
+    if (!r.ok) return toast((r.errors || []).join(' · ') || 'فشل التقديم', 'err');
+    toast('تم التقديم إلى ' + nextLabel, 'ok');
+  } catch (e) {
+    toast('خطأ: ' + (e.message || ''), 'err');
+  }
+};
+
+window.quickCancel = async function(id, ev) {
+  ev.stopPropagation();
+  document.querySelectorAll('.rc-actions.open').forEach(el => el.classList.remove('open'));
+  const reason = prompt('سبب إلغاء الأوردر (مطلوب):', '');
+  if (reason === null) return;
+  if (!reason.trim()) return toast('سبب الإلغاء مطلوب', 'err');
+  if (!confirm('تأكيد إلغاء الأوردر؟')) return;
+  try {
+    const r = await orderActions.cancelOrder({
+      db, orderId: id,
+      reason: reason.trim(), note: '',
+      userId: currentUser?.uid || '',
+      userName: currentUserName,
+    });
+    if (!r.ok) return toast((r.errors || []).join(' · ') || 'فشل الإلغاء', 'err');
+    toast('تم إلغاء الأوردر', 'ok');
+  } catch (e) {
+    toast('خطأ: ' + (e.message || ''), 'err');
+  }
 };
 
 function renderPerformance() {
@@ -767,7 +842,7 @@ function renderTable(orders) {
   let html = '<div class="reg-table-wrap"><table class="reg-table"><thead><tr>';
   html += '<th>الرقم</th><th>العميل</th><th>المرحلة</th><th>المنتج</th><th>المبلغ</th><th>مدفوع</th><th>متبقي</th>';
   if (showCost) html += '<th>تكلفة</th><th>ربح</th>';
-  html += '<th>المسؤول</th><th>التاريخ</th>';
+  html += '<th>المسؤول</th><th>التاريخ</th><th>إجراء</th>';
   html += '</tr></thead><tbody>';
 
   for (const o of orders) {
@@ -809,6 +884,14 @@ function renderTable(orders) {
 
     html += '<td class="tbl-dim">' + esc(getOwnerName(o)) + '</td>';
     html += '<td class="tbl-dim">' + esc(d) + '</td>';
+    html += '<td>';
+    if (!isCancelled && stage !== 'archived' && NEXT_STAGE[stage]) {
+      const nl = (STAGES[NEXT_STAGE[stage]] || {}).label || '';
+      html += '<button type="button" class="rc-action-item" style="padding:4px 8px;font-size:11px;display:inline-flex;border-radius:var(--rad)" onclick="event.stopPropagation();quickAdvance(\'' + esc(o._id) + '\',\'' + stage + '\',event)">⏩ ' + esc(nl) + '</button>';
+    } else {
+      html += '—';
+    }
+    html += '</td>';
     html += '</tr>';
   }
 
@@ -891,8 +974,24 @@ function renderCard(o) {
     }
   }
 
+  let actionsHtml = '';
+  if (!isCancelled && stage !== 'archived') {
+    const canAdvance = !!NEXT_STAGE[stage];
+    const nextLabel = canAdvance ? (STAGES[NEXT_STAGE[stage]] || {}).label || '' : '';
+    actionsHtml = '<div class="rc-actions" data-id="' + esc(o._id) + '">'
+      + '<button type="button" class="rc-actions-btn" onclick="toggleCardMenu(\'' + esc(o._id) + '\',event)" title="إجراءات">⋮</button>'
+      + '<div class="rc-actions-menu">';
+    if (canAdvance) {
+      actionsHtml += '<button type="button" class="rc-action-item" onclick="quickAdvance(\'' + esc(o._id) + '\',\'' + stage + '\',event)">⏩ تقديم إلى ' + esc(nextLabel) + '</button>';
+    }
+    actionsHtml += '<button type="button" class="rc-action-item" onclick="openOrder(\'' + esc(o._id) + '\')">📄 فتح الأوردر</button>';
+    actionsHtml += '<div class="rc-action-divider"></div>';
+    actionsHtml += '<button type="button" class="rc-action-item danger" onclick="quickCancel(\'' + esc(o._id) + '\',event)">❌ إلغاء</button>';
+    actionsHtml += '</div></div>';
+  }
+
   return '<div class="' + cardCls + '" onclick="openOrder(\'' + esc(o._id) + '\')">'
-    + '<div class="rc-head"><div class="rc-badges">' + badges + '</div><span class="rc-id">' + esc(o.orderId || o._id?.slice(-6) || '') + '</span></div>'
+    + '<div class="rc-head"><div class="rc-badges">' + badges + '</div><div class="rc-foot-right">' + actionsHtml + '<span class="rc-id">' + esc(o.orderId || o._id?.slice(-6) || '') + '</span></div></div>'
     + '<div class="rc-client">' + esc(o.clientName || '—') + (phone ? ' <span style="font-size:11px;color:var(--dim2);font-weight:600">' + esc(phone) + '</span>' : '') + '</div>'
     + '<div class="rc-products">📦 ' + prodText + '</div>'
     + financeHtml
@@ -1036,9 +1135,10 @@ onAuthStateChanged(auth, async u => {
     const userDoc = await getDoc(doc(db, 'users', u.uid));
     const ud = userDoc.exists() ? userDoc.data() : {};
     currentRole = ud.role || 'admin';
+    currentUserName = ud.name || u.displayName || u.email || '';
     currentUserPerms = ud.permissions || {};
     $('role-badge').textContent = currentRole;
-    $('nav-name').textContent = ud.name || u.displayName || u.email || '';
+    $('nav-name').textContent = currentUserName;
     $('nav-av').textContent = (ud.name || u.email || 'U')[0].toUpperCase();
     if (typeof window.initSidebar === 'function') window.initSidebar(currentRole, 'orders-registry.html');
     buildMobNav(currentRole);
