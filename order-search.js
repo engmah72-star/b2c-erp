@@ -21,12 +21,12 @@ if (SKIP.includes(PATH)) { /* no-op: module top-level guard */ } else { init(); 
 
 function init() {
   const STAGES = {
-    design:     { label: 'تصميم',  ico: '✏️', col: '#a78bfa' },
-    printing:   { label: 'طباعة',  ico: '🖨️', col: '#ffaa00' },
-    production: { label: 'تنفيذ',  ico: '🏭', col: '#ff3d6e' },
-    shipping:   { label: 'شحن',    ico: '🚚', col: '#00d9ff' },
-    archived:   { label: 'أرشيف',  ico: '📁', col: '#7878a0' },
-    cancelled:  { label: 'ملغي',   ico: '✕',  col: '#7878a0' },
+    design:     { label: 'تصميم',  ico: '✏️', col: '#a78bfa', page: 'design.html' },
+    printing:   { label: 'طباعة',  ico: '🖨️', col: '#ffaa00', page: 'print.html' },
+    production: { label: 'تنفيذ',  ico: '🏭', col: '#ff3d6e', page: 'production.html' },
+    shipping:   { label: 'شحن',    ico: '🚚', col: '#00d9ff', page: 'shipping.html' },
+    archived:   { label: 'أرشيف',  ico: '📁', col: '#7878a0', page: 'archive.html' },
+    cancelled:  { label: 'ملغي',   ico: '✕',  col: '#7878a0', page: 'archive.html' },
   };
 
   let orders = null; // lazy-loaded
@@ -239,8 +239,13 @@ function init() {
 
   function navigateToOrder(id) {
     if (!id) return;
+    const o = (orders || []).find(x => x._id === id);
     closeModal();
-    const url = 'order.html?id=' + encodeURIComponent(id);
+    const stage = o && o.stage ? o.stage : '';
+    const stageInfo = STAGES[stage];
+    const url = stageInfo
+      ? stageInfo.page + '?orderId=' + encodeURIComponent(id)
+      : 'order.html?id=' + encodeURIComponent(id);
     if (typeof window.navigatePage === 'function') window.navigatePage(url);
     else window.location.href = url;
   }
