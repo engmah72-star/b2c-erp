@@ -28,6 +28,7 @@
       </select>
     </div>
     <button type="button" class="btn btn-yellow hide" id="btn-edit" onclick="openEdit()">✏️ تعديل البوليصة</button>
+    <button type="button" class="btn btn-screenshot hide" id="btn-screenshot" onclick="captureWaybillScreenshot()">📸 تصوير</button>
     <button type="button" class="btn btn-primary hide" id="btn-print" onclick="printNow()">🖨️ طباعة</button>
   </div>
 </div>
@@ -71,6 +72,56 @@
 
 <div class="toasts" id="toasts"></div>
 
+<script>
+let _h2cLoaded=false;
+function _loadH2C(){
+  if(_h2cLoaded) return Promise.resolve();
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    s.onload=()=>{_h2cLoaded=true;res();};
+    s.onerror=()=>rej(new Error('فشل تحميل مكتبة التصوير'));
+    document.head.appendChild(s);
+  });
+}
+function _isIOS(){return/iPad|iPhone|iPod/.test(navigator.userAgent)||navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1;}
+async function captureWaybillScreenshot(){
+  const btn=document.getElementById('btn-screenshot');
+  const origText=btn.textContent;
+  btn.disabled=true;btn.textContent='⏳ جاري التصوير...';
+  try{
+    await _loadH2C();
+    const target=document.getElementById('waybills-container');
+    const canvas=await html2canvas(target,{
+      scale:2,useCORS:true,allowTaint:true,
+      backgroundColor:'#ffffff',
+      scrollX:0,scrollY:-window.scrollY,
+    });
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
+    const fileName='waybill-'+Date.now()+'.png';
+    const file=new File([blob],fileName,{type:'image/png'});
+    if(_isIOS()&&navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file]});
+    }else{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=fileName;
+      document.body.appendChild(a);a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    toast('تم حفظ الصورة بنجاح ✅','ok');
+  }catch(e){
+    if(e.name!=='AbortError'){
+      console.error('Screenshot error:',e);
+      toast('فشل التصوير — حاول مرة أخرى','err');
+    }
+  }finally{
+    btn.disabled=false;btn.textContent=origText;
+  }
+}
+window.captureWaybillScreenshot=captureWaybillScreenshot;
+</script>
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
@@ -176,6 +227,7 @@ function getWaybillView(o){
 function buildWaybillHtml(o,idx){
   const v=getWaybillView(o);
   const orderRef=escHtml(o.orderId||(o._id||'').slice(-6));
+  const amountZero=v.amount<=0;
   return `<div class="waybill" data-id="${escHtml(o._id)}">
     <div class="wb-head">
       <div class="wb-logo-block">
@@ -198,14 +250,14 @@ function buildWaybillHtml(o,idx){
         <div class="wb-label">المحتويات — CONTENTS</div>
         <div class="wb-cargo">${escHtml(v.cargo)}</div>
       </div>
-      <div class="wb-amount">
-        <div class="wb-amount-lbl">المطلوب تحصيله — TO COLLECT</div>
-        <div class="wb-amount-val">${fn(v.amount)} <span style="font-size:var(--fs-lg)">ج</span></div>
-        <div class="wb-amount-tag">شامل رسوم الشحن — Includes shipping</div>
+      <div class="wb-amount"${amountZero?' style="border-color:#22c55e;background:linear-gradient(135deg,#f0fdf4,#dcfce7)"':''}>
+        <div class="wb-amount-lbl"${amountZero?' style="color:#166534"':''}>${amountZero?'حالة التحصيل — STATUS':'المطلوب تحصيله — TO COLLECT'}</div>
+        <div class="wb-amount-val"${amountZero?' style="color:#16a34a;font-size:28px"':''}>${amountZero?'✅ مكتمل':`${fn(v.amount)} <span style="font-size:var(--fs-lg)">ج</span>`}</div>
+        ${amountZero?'':'<div class="wb-amount-tag">شامل رسوم الشحن — Includes shipping</div>'}
       </div>
     </div>
     ${v.notes?`<div class="wb-notes-box">
-      <div style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);color:#a06600;margin-bottom:3px">ملاحظات للمندوب — COURIER NOTES</div>
+      <div style="font-size:var(--fs-tiny);font-weight:var(--fw-extra);color:#92400e;margin-bottom:4px;letter-spacing:.3px">ملاحظات للمندوب — COURIER NOTES</div>
       <div>${escHtml(v.notes)}</div>
     </div>`:''}
     <div class="wb-foot">
@@ -236,7 +288,7 @@ window.changeLayout=function(){
 function render(){
   $('loading-box').style.display='none';
   $('btn-print').style.display='inline-block';
-  // Edit only available for single-order mode (1-up; doesn't make sense in compact layouts to edit a tiny preview)
+  $('btn-screenshot').style.display='inline-block';
   if(!isBulk && canEdit()) $('btn-edit').style.display='inline-block';
   // Layout selector available always (works for single-order too)
   const perPage=getStoredLayout();
