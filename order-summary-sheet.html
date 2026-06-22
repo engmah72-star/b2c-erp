@@ -727,38 +727,36 @@ if(!orderIds.length){
 // ── Screenshot: capture-optimized share card ─────────────────────────
 function _blobToDataUrl(b){return new Promise(r=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=()=>r('');rd.readAsDataURL(b);});}
 function _withTimeout(p,ms){return Promise.race([p,new Promise(r=>setTimeout(()=>r(''),ms))]);}
-// cache-bust: browser caches images loaded by <img> without CORS headers;
-// re-requesting with crossOrigin='anonymous' gets the cached non-CORS response → fail.
-// Adding a unique param forces a fresh request with proper CORS headers.
-function _cacheBust(u){return u+(u.includes('?')?'&':'?')+'_xcb='+Date.now();}
+
+// Extract storage path from Firebase download URL
+function _storagePath(url){
+  const m=url.match(/\/o\/([^?]+)/);
+  return m?decodeURIComponent(m[1]):'';
+}
 
 async function _imgToBase64(url){
   if(!url||url.startsWith('data:'))return url||'';
-  const cbUrl=_cacheBust(url);
-  // Tier 1: Image+canvas with crossOrigin + cache-bust
+  // Tier 1: same-origin proxy (bypasses CORS entirely)
   try{
+    const sp=_storagePath(url);
+    if(sp){
+      const token=await auth.currentUser?.getIdToken();
+      if(token){
+        const proxyUrl=`/img-proxy?path=${encodeURIComponent(sp)}`;
+        const r=await _withTimeout(fetch(proxyUrl,{headers:{'Authorization':'Bearer '+token}}).then(r=>r.ok?r.blob():null),12000);
+        if(r)return await _blobToDataUrl(r);
+      }
+    }
+  }catch(e){console.warn('[img] proxy failed:',e.message);}
+  // Tier 2: direct Image+canvas with crossOrigin (works if CORS configured)
+  try{
+    const cbUrl=url+(url.includes('?')?'&':'?')+'_xcb='+Date.now();
     const d=await _withTimeout(new Promise(res=>{
       const img=new Image();img.crossOrigin='anonymous';
-      img.onload=()=>{try{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);res(c.toDataURL('image/jpeg',0.85));}catch(e){console.warn('[img] canvas tainted:',e.message);res('');}};
-      img.onerror=()=>{console.warn('[img] crossOrigin load failed:',url.slice(0,80));res('');};
-      img.src=cbUrl;
-    }),12000);
+      img.onload=()=>{try{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);res(c.toDataURL('image/jpeg',0.85));}catch{res('');}};
+      img.onerror=()=>res('');img.src=cbUrl;
+    }),10000);
     if(d)return d;
-  }catch{}
-  // Tier 2: fetch with CORS + cache-bust
-  try{
-    const r=await _withTimeout(fetch(cbUrl,{mode:'cors'}).then(r=>r.ok?r.blob():null),10000);
-    if(r)return await _blobToDataUrl(r);
-  }catch{}
-  // Tier 3: Firebase SDK getBlob (uses SDK internals, not browser CORS)
-  try{
-    const m=url.match(/\/o\/([^?]+)/);
-    if(m){
-      const p=decodeURIComponent(m[1]);
-      const{ref:sRef,getBlob:gBlob}=await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js');
-      const b=await _withTimeout(gBlob(sRef(storage,p)),10000);
-      if(b)return await _blobToDataUrl(b);
-    }
   }catch{}
   console.warn('[img] all tiers failed:',url.slice(0,80));
   return '';
