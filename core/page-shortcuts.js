@@ -180,6 +180,83 @@ const PAGE_SHORTCUTS = {
     { icon: '👥', label: 'الموظفين', variant: 'purple', navigate: 'employees.html' },
     { icon: '💰', label: 'الحسابات', variant: 'warning', navigate: 'accounts.html' },
   ],
+
+  // ── مركز الطباعة (print-workspace) — alias for print ──
+  'print-workspace': (ctx) => PAGE_SHORTCUTS.print(ctx),
+
+  // ── مركز التنفيذ (exec-workspace) — alias for production ──
+  'exec-workspace': (ctx) => PAGE_SHORTCUTS.production(ctx),
+
+  // ── صفحتي (my-home) ──
+  'my-home': (ctx) => [
+    { icon: '🚂', label: 'سجل الأوردرات', variant: 'primary', navigate: 'order-rail.html' },
+    { icon: '💬', label: 'التواصل', variant: 'success', navigate: 'inbox.html' },
+    { icon: '👤', label: 'العملاء', navigate: 'clients.html' },
+    { icon: '📊', label: 'التقارير', variant: 'purple', navigate: 'reports.html',
+      when: () => ['admin', 'operation_manager'].includes(ctx.role) },
+  ],
+
+  // ── مساحة التواصل (inbox) ──
+  inbox: (ctx) => [
+    { icon: '🚂', label: 'سجل الأوردرات', variant: 'primary', navigate: 'order-rail.html' },
+    { icon: '👤', label: 'العملاء', navigate: 'clients.html' },
+    { icon: '✏️', label: 'التصميم', variant: 'purple', navigate: 'design.html' },
+  ],
+
+  // ── طلباتي (my-requests) ──
+  'my-requests': (ctx) => [
+    { icon: '🏠', label: 'صفحتي', navigate: 'my-home.html' },
+    { icon: '💬', label: 'التواصل', variant: 'success', navigate: 'inbox.html' },
+    { icon: '🚂', label: 'الأوردرات', variant: 'primary', navigate: 'order-rail.html' },
+  ],
+
+  // ── مساحة العمل (my-profile) ──
+  'my-profile': (ctx) => [
+    { icon: '🏠', label: 'صفحتي', navigate: 'my-home.html' },
+    { icon: '💬', label: 'التواصل', variant: 'success', navigate: 'inbox.html' },
+    { icon: '📋', label: 'طلباتي', navigate: 'my-requests.html' },
+  ],
+
+  // ── المنتجات (products) ──
+  products: (ctx) => [
+    { icon: '⚙️', label: 'الإعدادات', navigate: 'settings.html' },
+    { icon: '▣', label: 'الموردين', navigate: 'suppliers.html' },
+    { icon: '🏭', label: 'التنفيذ', variant: 'cyan', navigate: 'production.html' },
+  ],
+
+  // ── مساحة التصميم (designer-hub) ──
+  'designer-hub': (ctx) => PAGE_SHORTCUTS.design(ctx),
+
+  // ── سجل النشاط (order-log) ──
+  'order-log': (ctx) => [
+    { icon: '🚂', label: 'سجل الأوردرات', variant: 'primary', navigate: 'order-rail.html' },
+    { icon: '👤', label: 'العملاء', navigate: 'clients.html' },
+    { icon: '📊', label: 'التقارير', variant: 'purple', navigate: 'reports.html' },
+  ],
+
+  // ── أوردرات البوابة (portal-orders) ──
+  'portal-orders': (ctx) => [
+    { icon: '🚂', label: 'سجل الأوردرات', variant: 'primary', navigate: 'order-rail.html' },
+    { icon: '👤', label: 'العملاء', navigate: 'clients.html' },
+    { icon: '✏️', label: 'التصميم', variant: 'purple', navigate: 'design.html' },
+  ],
+
+  // ── بنود التكلفة (exec-cost-entry) ──
+  'exec-cost-entry': (ctx) => [
+    { icon: '🏭', label: 'التنفيذ', variant: 'cyan', navigate: 'production.html' },
+    { icon: '💰', label: 'الحسابات', variant: 'warning', navigate: 'accounts.html' },
+    { icon: '▣', label: 'الموردين', navigate: 'suppliers.html' },
+  ],
+
+  // ── طلبات الموردين (supplier-requests) ──
+  'supplier-requests': (ctx) => [
+    { icon: '▣', label: 'الموردين', navigate: 'suppliers.html' },
+    { icon: '🏭', label: 'التنفيذ', variant: 'cyan', navigate: 'production.html' },
+    { icon: '💰', label: 'الحسابات', variant: 'warning', navigate: 'accounts.html' },
+  ],
+
+  // ── معرض التصاميم (gallery) ──
+  gallery: (ctx) => PAGE_SHORTCUTS.design(ctx),
 };
 
 export function initPageShortcuts(pageName, ctx = {}) {

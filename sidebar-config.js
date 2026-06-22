@@ -224,6 +224,18 @@ import('./error-reporter-init.js').catch(function(){});
     document.head.appendChild(s);
   }
 
+  // ── Auto-load Contextual Shortcuts Bar (page-aware action chips) ──
+  // core/shortcuts-auto-init.js detects current page from URL and shows
+  // navigation shortcuts. Pages with manual initPageShortcuts() calls
+  // upgrade to include action shortcuts with full context.
+  if (!document.getElementById('ctx-shortcuts-loader')) {
+    const s = document.createElement('script');
+    s.id = 'ctx-shortcuts-loader';
+    s.type = 'module';
+    s.src = 'core/shortcuts-auto-init.js?v=1';
+    document.head.appendChild(s);
+  }
+
   // ── Auto-load CENTRAL SIDEBAR mount (single source on every page) ──
   // core/sidebar-mount.js يبني الـ sidebar الكامل (brand + أقسام مجمّعة +
   // footer) من window.SIDEBAR_PAGES عبر window.B2CSidebar.build. تحميله من
