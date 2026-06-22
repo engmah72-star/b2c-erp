@@ -2626,10 +2626,33 @@ window.applyFullTemplate=async function(templateId,prodIdx,btnId){
   setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);_renderTmplApply(fresh);_renderAnomalies(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
 };
 
+window.mergeAllDuplicateTemplates=async function(){
+  try{
+    const{mergeDuplicateTemplates}=await import('./core/cost-template-actions.js');
+    const r=await mergeDuplicateTemplates(db,userName);
+    if(!r.ok)return toast('❌ فشل الدمج','err');
+    if(r.removed===0)return toast('✅ لا توجد قوالب مكررة','ok');
+    await _loadCostTemplates();
+    toast(`✅ تم دمج ${r.merged} قالب وحذف ${r.removed} مكرر`,'ok');
+  }catch(e){toast('❌ '+(e.message||'فشل'),'err');}
+};
+
 function _renderLibTemplates(){
   const el=document.getElementById('lib-templates-grid');if(!el)return;
   if(!costTemplates.length){el.innerHTML='<div class="lib-empty">لا توجد قوالب ثابتة — أضف قالباً للمنتجات المتكررة مثل "ملف محامي" أو "كارت 300"</div>';return;}
-  el.innerHTML=`<div class="lib-tmpl-grid">${costTemplates.map(t=>{
+  // Detect duplicates count
+  const _nn=s=>(s||'').replace(/[\d٠-٩,،]+\s*/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
+  const dupeKeys={};
+  costTemplates.forEach(t=>{const k=_nn(t.name)+'::'+(t.qty||'');dupeKeys[k]=(dupeKeys[k]||0)+1;});
+  const dupeCount=Object.values(dupeKeys).filter(v=>v>1).reduce((s,v)=>s+v-1,0);
+  const mergeBtn=dupeCount?`<div class="lib-tmpl-merge-bar"><span class="lib-tmpl-dupe-warn">⚠️ ${dupeCount} قالب مكرر</span><button type="button" class="btn btn-sm btn-y" onclick="mergeAllDuplicateTemplates()">🔀 دمج المكررات تلقائياً</button></div>`:'';
+  // Sort: group by normalized name
+  const sorted=[...costTemplates].sort((a,b)=>{
+    const na=_nn(a.name),nb=_nn(b.name);
+    if(na!==nb)return na.localeCompare(nb,'ar');
+    return(a.qty||'').localeCompare(b.qty||'');
+  });
+  el.innerHTML=mergeBtn+`<div class="lib-tmpl-grid">${sorted.map(t=>{
     const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
     // count matching open orders that still need this template applied
     const pendingCount=orders.filter(o=>{
@@ -2749,7 +2772,12 @@ window.saveTmplModal=async function(){
   const items=_tmplItems.filter(c=>c.type&&c.supplierId&&parseFloat(c.amount)>0);
   if(!items.length)return toast('⚠️ أضف بنداً واحداً على الأقل بنوع + مورد + مبلغ','err');
   try{
-    const{saveCostTemplate}=await import('./core/cost-template-actions.js');
+    const{saveCostTemplate,findDuplicateTemplate}=await import('./core/cost-template-actions.js');
+    // Duplicate check for new templates only
+    if(!id){
+      const dup=findDuplicateTemplate(costTemplates,name,qty,null);
+      if(dup&&!confirm(`⚠️ يوجد قالب "${dup.name}"${dup.qty?' ('+dup.qty+')':''} بالفعل.\n\nمتأكد إنك عايز تحفظ قالب جديد؟`))return;
+    }
     const r=await saveCostTemplate(db,{id,name,qty:qty||null,costItems:items},userName);
     if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
     await _loadCostTemplates();
@@ -2767,24 +2795,44 @@ window.deleteTmpl=async function(id){
   }catch(e){toast('❌ '+(e.message||'فشل الحذف'),'err');}
 };
 
-window.saveCurrentCostAsTemplate=function(prodIdx=-1){
+window.saveCurrentCostAsTemplate=async function(prodIdx=-1){
   const o=orders.find(x=>x._id===activeId);
   if(!o)return toast('⚠️ لا يوجد أوردر محدد','err');
   const allItems=o.costItems||[];
-  // Filter by prodIdx: prodIdx>=0 → items for that product; -1 → general items (no prodIdx)
   const scopedItems=prodIdx>=0
     ?allItems.filter(c=>c.prodIdx===prodIdx)
     :allItems.filter(c=>c.prodIdx==null||c.prodIdx<0);
   if(!scopedItems.length)return toast('⚠️ لا توجد بنود مسجلة لهذا المنتج','err');
   const prod=prodIdx>=0?(o.products||[])[prodIdx]:null;
-  setText('tmpl-modal-title','💾 حفظ البنود كقالب');
-  sv('tmpl-id','');
-  sv('tmpl-name',prod?.name||'');
-  sv('tmpl-qty',prod?.qty!=null?String(prod.qty):'');
-  _tmplItems=scopedItems
+  const name=prod?.name||'';
+  const qty=prod?.qty!=null?String(prod.qty):'';
+  const items=scopedItems
     .map(c=>({type:c.type||'',supplierId:c.supplierId||'',supplierName:c.supplierName||'',amount:parseFloat(c.total)||0}))
     .filter(c=>c.type&&c.supplierId&&c.amount>0);
-  if(!_tmplItems.length)_tmplItems=[{type:'',supplierId:'',supplierName:'',amount:''}];
+  if(!items.length)return toast('⚠️ لا توجد بنود صالحة','err');
+
+  // Check for duplicate template
+  const{findDuplicateTemplate}=await import('./core/cost-template-actions.js');
+  const dup=findDuplicateTemplate(costTemplates,name,qty,null);
+  if(dup){
+    const choice=confirm(`⚠️ يوجد قالب "${dup.name}"${dup.qty?' ('+dup.qty+')':''} بالفعل.\n\nاضغط "موافق" لتحديث أسعاره وإضافة بنود جديدة.\nاضغط "إلغاء" لفتح المودال وحفظ قالب جديد.`);
+    if(choice){
+      try{
+        const{saveCostTemplate}=await import('./core/cost-template-actions.js');
+        const r=await saveCostTemplate(db,{mergeInto:dup.id,costItems:items},userName);
+        if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+        await _loadCostTemplates();
+        toast('✅ تم تحديث القالب الموجود وإضافة البنود الجديدة','ok');
+      }catch(e){toast('❌ '+(e.message||'فشل'),'err');}
+      return;
+    }
+  }
+
+  setText('tmpl-modal-title','💾 حفظ البنود كقالب');
+  sv('tmpl-id','');
+  sv('tmpl-name',name);
+  sv('tmpl-qty',qty);
+  _tmplItems=items.length?items:[{type:'',supplierId:'',supplierName:'',amount:''}];
   _renderTmplItems();
   document.getElementById('tmpl-modal').hidden=false;
 };
