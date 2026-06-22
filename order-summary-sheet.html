@@ -274,18 +274,20 @@ body{
 </div>
 
 <script>
-let _h2cLoaded=false;
+let _h2cLoaded=false,_h2cPromise=null;
 function _loadH2C(){
   if(_h2cLoaded) return Promise.resolve();
-  return new Promise((res,rej)=>{
+  if(_h2cPromise) return _h2cPromise;
+  _h2cPromise=new Promise((res,rej)=>{
     const s=document.createElement('script');
     s.src='https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
     s.onload=()=>{_h2cLoaded=true;res();};
-    s.onerror=()=>rej(new Error('فشل تحميل مكتبة التصوير'));
+    s.onerror=()=>{_h2cPromise=null;rej(new Error('فشل تحميل مكتبة التصوير'));};
     document.head.appendChild(s);
   });
+  return _h2cPromise;
 }
-function _isIOS(){return/iPad|iPhone|iPod/.test(navigator.userAgent)||navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1;}
+_loadH2C().catch(()=>{});
 function _showToast(msg,ok){
   const t=document.createElement('div');
   t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:12px;font-family:Tajawal,sans-serif;font-size:14px;font-weight:700;color:#fff;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.2);transition:opacity .3s;'
@@ -294,47 +296,14 @@ function _showToast(msg,ok){
   document.body.appendChild(t);
   setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300);},2500);
 }
-async function captureScreenshot(){
-  const btn=document.getElementById('screenshot-btn');
-  const origText=btn.textContent;
-  btn.disabled=true;btn.textContent='⏳ جاري التصوير...';
-  try{
-    await _loadH2C();
-    const target=document.getElementById('sheet-root');
-    const canvas=await html2canvas(target,{
-      scale:2,useCORS:true,allowTaint:true,
-      backgroundColor:'#ffffff',
-      scrollX:0,scrollY:-window.scrollY,
-    });
-    const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
-    const fileName='order-sheet-'+Date.now()+'.png';
-    const file=new File([blob],fileName,{type:'image/png'});
-    if(_isIOS()&&navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
-      await navigator.share({files:[file]});
-    }else{
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');
-      a.href=url;a.download=fileName;
-      document.body.appendChild(a);a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
-    _showToast('تم حفظ الصورة بنجاح ✅',true);
-  }catch(e){
-    if(e.name!=='AbortError'){
-      console.error('Screenshot error:',e);
-      _showToast('فشل التصوير — حاول مرة أخرى',false);
-    }
-  }finally{
-    btn.disabled=false;btn.textContent=origText;
-  }
-}
-window.captureScreenshot=captureScreenshot;
+// captureScreenshot is defined in the module script below (needs Firebase access for images)
 </script>
 <script type="module">
-import { app, auth, db } from './core/firebase-init.js';
+import { app, auth, db, storage } from './core/firebase-init.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+let _captureOrders=[];
 
 const params = new URLSearchParams(window.location.search);
 const orderId = params.get('orderId') || '';
@@ -732,6 +701,8 @@ if(!orderIds.length){
         ? renderMultipleOrders(loaded,sheetType)
         : (sheetType==='production' ? buildProductionSheet(loaded[0]) : buildDeliverySheet(loaded[0]));
 
+      _captureOrders=loaded;
+
       // WhatsApp button
       let waHref;
       if(isBulk){
@@ -752,6 +723,188 @@ if(!orderIds.length){
     }
   });
 }
+
+// ── Screenshot: capture-optimized share card ─────────────────────────
+function _blobToDataUrl(b){return new Promise(r=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=()=>r('');rd.readAsDataURL(b);});}
+function _withTimeout(p,ms){return Promise.race([p,new Promise(r=>setTimeout(()=>r(''),ms))]);}
+
+// Extract storage path from Firebase download URL
+function _storagePath(url){
+  const m=url.match(/\/o\/([^?]+)/);
+  return m?decodeURIComponent(m[1]):'';
+}
+
+async function _imgToBase64(url){
+  if(!url||url.startsWith('data:'))return url||'';
+  // Tier 1: same-origin proxy (bypasses CORS entirely)
+  try{
+    const sp=_storagePath(url);
+    if(sp){
+      const token=await auth.currentUser?.getIdToken();
+      if(token){
+        const proxyUrl=`/img-proxy?path=${encodeURIComponent(sp)}`;
+        const r=await _withTimeout(fetch(proxyUrl,{headers:{'Authorization':'Bearer '+token}}).then(r=>r.ok?r.blob():null),12000);
+        if(r)return await _blobToDataUrl(r);
+      }
+    }
+  }catch(e){console.warn('[img] proxy failed:',e.message);}
+  // Tier 2: direct Image+canvas with crossOrigin (works if CORS configured)
+  try{
+    const cbUrl=url+(url.includes('?')?'&':'?')+'_xcb='+Date.now();
+    const d=await _withTimeout(new Promise(res=>{
+      const img=new Image();img.crossOrigin='anonymous';
+      img.onload=()=>{try{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);res(c.toDataURL('image/jpeg',0.85));}catch{res('');}};
+      img.onerror=()=>res('');img.src=cbUrl;
+    }),10000);
+    if(d)return d;
+  }catch{}
+  console.warn('[img] all tiers failed:',url.slice(0,80));
+  return '';
+}
+
+function _getProductImage(p,o){
+  if(Array.isArray(p.designImages)&&p.designImages.filter(Boolean).length) return p.designImages.filter(Boolean)[0];
+  if(p.designImageUrl) return p.designImageUrl;
+  if(o.printFinalUrl) return o.printFinalUrl;
+  if(o.designImageUrl) return o.designImageUrl;
+  return '';
+}
+
+function _buildProductionCard(o,prodImgMap){
+  const products=o.products||[];
+  const notes=o.printNotes||o.designNote||o.briefNotes||'';
+
+  let productsHtml='';
+  if(products.length){
+    productsHtml=products.map((p,i)=>{
+      const imgSrc=prodImgMap[i]||'';
+      const specs=[];
+      specs.push(`الكمية: ${esc(String(p.qty||1))} ${esc(p.name||'')}`);
+      if(p.size||p.printSize) specs.push(`المقاس: ${esc(p.size||p.printSize)}`);
+      const paperLine=p.paper?(p.weight?`${esc(p.paper)} ${p.weight}جم`:`${esc(p.paper)}`):'';
+      if(paperLine) specs.push(`الورق: ${paperLine}`);
+      const pt=(p.printType||'').includes('offset')?'أوفست':(p.printType||'').includes('digital')?'ديجيتال':'';
+      if(pt) specs.push(`الطباعة: ${pt}`);
+      if(p.supplierName) specs.push(`المطبعة: ${esc(p.supplierName)}`);
+      if(p.lamination&&p.lamination!=='بلا') specs.push(`السلوفان: ${esc(p.lamination)}`);
+      if((p.extras||[]).length) specs.push(`إضافات: ${(p.extras||[]).map(e=>esc(e)).join('، ')}`);
+      if(p.notes) specs.push(`ملاحظات: ${esc(p.notes)}`);
+      const specsHtml=specs.map(s=>`<div>${s}</div>`).join('');
+      const sep=i<products.length-1?'border-bottom:1px solid #e2e8f0;':'';
+      return `<div style="padding:12px 16px;${sep}">
+        ${p.name?`<div style="font-size:14px;font-weight:800;color:#1e293b;margin-bottom:8px">${esc(p.name)}</div>`:''}
+        ${imgSrc?`<img src="${imgSrc}" style="width:100%;border-radius:8px;border:1px solid #e2e8f0;display:block;margin-bottom:10px"/>`:''}
+        <div style="font-size:14px;font-weight:700;color:#334155;line-height:2">${specsHtml}</div>
+      </div>`;
+    }).join('');
+  }else{
+    const fallbackImg=prodImgMap[0]||'';
+    productsHtml=`<div style="padding:12px 16px">
+      ${fallbackImg?`<img src="${fallbackImg}" style="width:100%;border-radius:8px;border:1px solid #e2e8f0;display:block;margin-bottom:10px"/>`:''}
+      <div style="font-size:14px;font-weight:700;color:#334155;line-height:2">
+        <div>الكمية: ${esc(String(o.qty||'—'))}</div>
+        <div>المنتج: ${esc(o.product||'—')}</div>
+      </div>
+    </div>`;
+  }
+
+  return `<div style="width:420px;font-family:Tajawal,sans-serif;direction:rtl;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+    <div style="background:#1e293b;padding:12px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:14px;font-weight:900;color:#fff">Business2Card · التنفيذ</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.5);font-weight:700">${esc(o.orderId||(o._id||'').slice(-6))}</div>
+    </div>
+    <div style="padding:10px 16px;background:#f8fafc;border-bottom:1px solid #e2e8f0">
+      <div style="font-size:13px;color:#1e293b;font-weight:700">👤 ${esc(o.clientName||'—')}${o.deadline?' · 📅 '+esc(o.deadline):''}</div>
+    </div>
+    ${productsHtml}
+    ${notes?`<div style="padding:0 16px 12px"><div style="background:#fffbeb;border:1px solid #fcd34d;border-right:3px solid #f59e0b;border-radius:8px;padding:10px 12px;font-size:13px;color:#92400e;font-weight:600;line-height:1.6">📝 ${esc(notes)}</div></div>`:''}
+    <div style="padding:8px 16px;background:#f1f5f9;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;font-weight:700;display:flex;justify-content:space-between">
+      <span>Business2Card ERP</span><span>${nowStr()}</span>
+    </div>
+  </div>`;
+}
+
+function _buildDeliveryCard(o){
+  const phone=o.customerPhoneShip||o.clientPhone||'—';
+  const addr=o.deliveryAddress||{};
+  const addrParts=[(addr.gov||o.shipGov||''),(addr.city||''),(addr.street||o.shipAddress||'')].filter(Boolean);
+  const products=o.products||[];
+  const cargo=products.length
+    ?products.map(p=>`${esc(String(p.qty||1))} × ${esc(p.name||'—')}`).join(' + ')
+    :(o.qty?esc(String(o.qty))+' × ':'')+ esc(o.product||'—');
+  const sale=getNet(o),paid=getPaid(o),rem=getRem(o);
+  const az=rem<=0;
+  return `<div style="width:420px;font-family:Tajawal,sans-serif;direction:rtl;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+    <div style="background:#1e293b;padding:10px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:13px;font-weight:900;color:#fff">Business2Card · الشحن</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.5);font-weight:700">${esc(o.orderId||(o._id||'').slice(-6))}</div>
+    </div>
+    <div style="padding:14px 16px;border-bottom:1px solid #e2e8f0">
+      <div style="font-size:22px;font-weight:900;color:#0f172a;margin-bottom:6px">${esc(o.clientName||'—')}</div>
+      <div style="font-size:15px;color:#334155;font-weight:700;margin-bottom:4px">📞 ${esc(phone)}</div>
+      ${addrParts.length?`<div style="font-size:14px;color:#334155;font-weight:600;line-height:1.6">📍 ${esc(addrParts.join(' — '))}</div>`:''}
+    </div>
+    <div style="padding:12px 16px;border-bottom:1px solid #e2e8f0">
+      <div style="font-size:10px;font-weight:800;color:#94a3b8;margin-bottom:6px">المحتويات</div>
+      <div style="font-size:15px;font-weight:700;color:#1e293b;line-height:1.6">${cargo}</div>
+    </div>
+    ${sale>0?`<div style="padding:16px;background:${az?'#f0fdf4':'#fffbeb'};text-align:center;border-bottom:1px solid #e2e8f0">
+      <div style="font-size:10px;font-weight:800;color:${az?'#166534':'#92400e'};margin-bottom:6px">${az?'حالة التحصيل':'المطلوب تحصيله'}</div>
+      <div style="font-size:${az?'24':'36'}px;font-weight:900;color:${az?'#16a34a':'#b45309'}">${az?'✅ مكتمل':fmtNum(rem)+' ج'}</div>
+      ${!az&&paid>0?`<div style="font-size:12px;color:#64748b;font-weight:600;margin-top:4px">إجمالي ${fmtNum(sale)} ج · مدفوع ${fmtNum(paid)} ج</div>`:''}
+      ${!az?`<div style="font-size:11px;color:#92400e;font-weight:600;margin-top:3px">شامل رسوم الشحن</div>`:''}
+    </div>`:''}
+    <div style="padding:8px 16px;background:#f1f5f9;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;font-weight:700;display:flex;justify-content:space-between">
+      <span>Business2Card ERP</span><span>${nowStr()}</span>
+    </div>
+  </div>`;
+}
+
+window.captureScreenshot=async function(){
+  const btn=document.getElementById('screenshot-btn');
+  const origText=btn.textContent;
+  btn.disabled=true;btn.textContent='⏳ جاري التصوير...';
+  try{
+    await _loadH2C();
+    const o=_captureOrders[0];
+    if(!o)throw new Error('لا توجد بيانات');
+
+    let prodImgMap={};
+    if(sheetType==='production'){
+      btn.textContent='⏳ جاري تحميل الصور...';
+      const products=o.products||[];
+      if(products.length){
+        const imgUrls=products.map(p=>_getProductImage(p,o));
+        const results=await Promise.all(imgUrls.map(u=>u?_imgToBase64(u):Promise.resolve('')));
+        results.forEach((d,i)=>{if(d)prodImgMap[i]=d;});
+      }else{
+        const fb=o.designImageUrl||o.printFinalUrl||'';
+        if(fb){const d=await _imgToBase64(fb);if(d)prodImgMap[0]=d;}
+      }
+    }
+    btn.textContent='⏳ جاري التصوير...';
+    const cardHtml=sheetType==='delivery'?_buildDeliveryCard(o):_buildProductionCard(o,prodImgMap);
+    const container=document.createElement('div');
+    container.style.cssText='position:absolute;top:-9999px;left:-9999px;width:460px;z-index:-1;background:#fff;';
+    container.innerHTML=cardHtml;
+    document.body.appendChild(container);
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const card=container.firstElementChild;
+    const canvas=await html2canvas(card,{scale:2,useCORS:false,allowTaint:false,backgroundColor:'#ffffff',scrollX:0,scrollY:0,windowWidth:460});
+    document.body.removeChild(container);
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.88));
+    const prefix=sheetType==='delivery'?'shipping':'production';
+    const fileName=prefix+'-'+(o.orderId||'').replace(/[^a-zA-Z0-9]/g,'-')+'.jpg';
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=fileName;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    _showToast('تم حفظ الصورة ✅',true);
+  }catch(e){
+    console.error('Screenshot error:',e);
+    _showToast('فشل التصوير — حاول مرة أخرى',false);
+  }finally{btn.disabled=false;btn.textContent=origText;}
+};
 </script>
 </body>
 </html>

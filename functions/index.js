@@ -4016,3 +4016,36 @@ exports.dailyFinancialReconciliation = onSchedule(
     });
   }
 );
+
+// ════════════════════════════════════════════════════════════
+// IMAGE PROXY — serves Storage images with CORS headers
+// ════════════════════════════════════════════════════════════
+const { getStorage: getAdminStorage } = require('firebase-admin/storage');
+
+exports.imgProxy = onRequest(
+  { cors: true, maxInstances: 20, memory: '256MiB', timeoutSeconds: 30 },
+  async (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (!token) { res.status(401).send('Unauthorized'); return; }
+    try { await getAuth().verifyIdToken(token); } catch { res.status(401).send('Invalid token'); return; }
+
+    const filePath = req.query.path;
+    if (!filePath || filePath.includes('..')) { res.status(400).send('Bad path'); return; }
+
+    try {
+      const bucket = getAdminStorage().bucket();
+      const file = bucket.file(filePath);
+      const [exists] = await file.exists();
+      if (!exists) { res.status(404).send('Not found'); return; }
+
+      const [metadata] = await file.getMetadata();
+      res.set('Content-Type', metadata.contentType || 'application/octet-stream');
+      res.set('Cache-Control', 'public, max-age=3600');
+      file.createReadStream().pipe(res);
+    } catch (e) {
+      console.error('[imgProxy]', e.message);
+      res.status(500).send('Error');
+    }
+  }
+);
