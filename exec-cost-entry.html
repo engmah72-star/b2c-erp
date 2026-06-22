@@ -127,6 +127,29 @@
           <div id="lib-templates-grid"></div>
         </div>
 
+        <!-- Fixed Prices -->
+        <div class="lib-section">
+          <div class="lib-section-hdr">
+            <span class="lib-section-title">💲 أسعار ثابتة</span>
+            <button type="button" class="btn btn-sm btn-r" onclick="openFixedPriceForm()">＋ سعر جديد</button>
+          </div>
+          <div id="fp-form-area" hidden style="margin-bottom:10px">
+            <div class="lib-card" style="padding:10px">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div><label style="font-size:11px;color:var(--dim2)">نوع البند *</label><select class="inp" id="fp-type" style="font-size:13px"></select></div>
+                <div><label style="font-size:11px;color:var(--dim2)">المبلغ *</label><input class="inp" id="fp-amount" type="number" placeholder="0" style="font-size:13px"></div>
+                <div><label style="font-size:11px;color:var(--dim2)">نوع الطباعة</label><select class="inp" id="fp-print" style="font-size:13px"><option value="">— الكل —</option><option value="offset">أوفست</option><option value="digital">ديجيتال</option></select></div>
+                <div><label style="font-size:11px;color:var(--dim2)">المورد</label><select class="inp" id="fp-sup" style="font-size:13px"><option value="">— بدون —</option></select></div>
+              </div>
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button type="button" class="btn btn-r" style="flex:1" onclick="saveFixedPriceEntry()">💾 حفظ</button>
+                <button type="button" class="btn" onclick="closeFixedPriceForm()">إلغاء</button>
+              </div>
+            </div>
+          </div>
+          <div id="fp-grid"></div>
+        </div>
+
         <!-- Active suppliers last 30 days -->
         <div class="lib-section">
           <div class="lib-section-hdr">
@@ -303,6 +326,7 @@
 
             <div class="fg"><label>💰 التكلفة (ج) <span class="text-r">*</span></label>
               <input class="inp inp-total" id="ac-total" type="number" placeholder="0" inputmode="numeric" oninput="onTotalInput()">
+              <div id="fp-hint" style="font-size:11px;color:var(--b);margin-top:3px"></div>
               <div class="quick-amounts" id="quick-amounts"></div>
             </div>
 
@@ -522,6 +546,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { getTmplMatches } from "./core/cost-template-matching.js";
+import { getFixedPrices, lookupFixedPrice, saveFixedPrice, deleteFixedPrice } from "./core/fixed-prices-actions.js";
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
 let activeId=null,currentStageFilters=new Set(),currentSort='priority',editCostIdx=-1;
@@ -613,6 +638,7 @@ onAuthStateChanged(auth,async u=>{
   buildSidebar(ud,'exec-cost-entry.html');
   buildMobNav(role,'exec-cost-entry.html');
   _loadCostTemplates();
+  _loadFixedPrices();
   setText('nav-name',userName);
   document.getElementById('nav-av').textContent=userName[0]?.toUpperCase()||'م';
   document.getElementById('role-badge').textContent=role==='production_agent'?'مندوب تنفيذ':(role==='admin'?'أدمن':'مدير');
@@ -1709,8 +1735,29 @@ window.onTypeChange=function(){
   const tl=t.toLowerCase();
   document.getElementById('paper-calc')?.classList.toggle('show',tl.includes('ورق')||tl.includes('كرتون'));
   _triggerLibSuggestions(t);
+  _applyFixedPrice(t);
   onCostInputChange();
 };
+
+function _applyFixedPrice(type){
+  if(!type||!fixedPrices.length)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const prodIdx=parseInt(gv('cost-prod-idx')??'-1');
+  const prod=prodIdx>=0?(o.products||[])[prodIdx]:(o.products||[])[0];
+  const printType=prod?.printType||'';
+  const fp=lookupFixedPrice(fixedPrices,type,printType);
+  if(!fp)return;
+  const totalEl=document.getElementById('ac-total');
+  if(totalEl&&!totalEl.value){
+    totalEl.value=fp.amount;
+    const hint=document.getElementById('fp-hint');
+    if(hint)hint.textContent=`💡 سعر ثابت: ${fp.amount} ج${fp.printType?' ('+fp.printType+')':''}${fp.supplierName?' — '+fp.supplierName:''}`;
+    if(fp.supplierId){
+      const supEl=document.getElementById('ac-sup');
+      if(supEl&&!supEl.value){supEl.value=fp.supplierId;}
+    }
+  }
+}
 
 window.calcPaperCost=function(fromTotal){
   const sheets=parseFloat(gv('ac-psheets'))||0,price=parseFloat(gv('ac-pprice'))||0,total=parseFloat(gv('ac-total'))||0;
@@ -1812,6 +1859,7 @@ function clearForm(){
   const sb=document.getElementById('cost-save-btn');if(sb)sb.textContent='＋ إضافة البند';
   const st=document.getElementById('form-section-title');if(st)st.innerHTML='➕ إضافة بند جديد';
   editCostIdx=-1;
+  const fpH=document.getElementById('fp-hint');if(fpH)fpH.textContent='';
   const libRow=document.getElementById('ws-lib-row');if(libRow){libRow.hidden=true;libRow.innerHTML='';}
 }
 
@@ -2557,6 +2605,71 @@ function _downloadCSV(rows,filename){
    ═══════════════════════════════════════════════════ */
 let costTemplates=[];
 let _tmplItems=[];
+let fixedPrices=[];
+
+async function _loadFixedPrices(){
+  try{fixedPrices=await getFixedPrices(db);_renderFixedPricesPanel();}catch(e){console.warn('fixed prices load:',e);}
+}
+
+function _renderFixedPricesPanel(){
+  const el=document.getElementById('fp-grid');if(!el)return;
+  if(!fixedPrices.length){el.innerHTML='<div class="lib-empty">لا توجد أسعار ثابتة — أضف سعراً مثل "زنكات أوفست = 240 ج"</div>';return;}
+  const ptLabel=v=>v==='offset'?'أوفست':v==='digital'?'ديجيتال':'الكل';
+  el.innerHTML=fixedPrices.map(p=>`<div class="lib-card" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:4px">
+    <span style="font-weight:var(--fw-heavy);color:var(--snow);flex:1">${p.type}</span>
+    ${p.printType?`<span style="font-size:11px;background:var(--bg1);padding:1px 6px;border-radius:6px;color:var(--dim2)">${ptLabel(p.printType)}</span>`:''}
+    ${p.supplierName?`<span style="font-size:11px;color:var(--dim2)">🏭 ${p.supplierName}</span>`:''}
+    <strong style="color:var(--g)">${fn(p.amount)} ج</strong>
+    <button type="button" class="btn btn-sm" onclick="editFixedPrice('${p.id}')" style="padding:2px 6px;font-size:11px">✏️</button>
+    <button type="button" class="btn btn-sm" onclick="removeFixedPrice('${p.id}')" style="padding:2px 6px;font-size:11px">🗑</button>
+  </div>`).join('');
+}
+
+let _fpEditId=null;
+window.openFixedPriceForm=function(editId){
+  _fpEditId=editId||null;
+  const form=document.getElementById('fp-form-area');if(!form)return;
+  form.hidden=false;
+  const tSel=document.getElementById('fp-type');
+  if(tSel){
+    tSel.innerHTML='<option value="">— اختر —</option>'+masterCategories.filter(c=>c.isCostItem!==false).map(c=>`<option value="${c.label}">${c.label}</option>`).join('');
+  }
+  const sSel=document.getElementById('fp-sup');
+  if(sSel)sSel.innerHTML='<option value="">— بدون —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}">${s.name||s._id}</option>`).join('');
+  if(editId){
+    const p=fixedPrices.find(x=>x.id===editId);
+    if(p){
+      if(tSel)tSel.value=p.type||'';
+      document.getElementById('fp-amount').value=p.amount||'';
+      document.getElementById('fp-print').value=p.printType||'';
+      if(sSel)sSel.value=p.supplierId||'';
+    }
+  }else{
+    document.getElementById('fp-amount').value='';
+    document.getElementById('fp-print').value='';
+  }
+};
+window.closeFixedPriceForm=function(){document.getElementById('fp-form-area').hidden=true;_fpEditId=null;};
+window.editFixedPrice=function(id){openFixedPriceForm(id);};
+window.removeFixedPrice=async function(id){
+  if(!confirm('حذف هذا السعر الثابت؟'))return;
+  await deleteFixedPrice(db,id);
+  await _loadFixedPrices();
+  toast('✅ تم الحذف','ok');
+};
+window.saveFixedPriceEntry=async function(){
+  const type=document.getElementById('fp-type')?.value?.trim();
+  const amount=document.getElementById('fp-amount')?.value;
+  const printType=document.getElementById('fp-print')?.value||'';
+  const supEl=document.getElementById('fp-sup');
+  const supplierId=supEl?.value||'';
+  const supplierName=supEl?.selectedOptions?.[0]?.dataset?.name||'';
+  const r=await saveFixedPrice(db,{id:_fpEditId,type,amount,printType,supplierId,supplierName},userName);
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  closeFixedPriceForm();
+  await _loadFixedPrices();
+  toast('✅ تم الحفظ','ok');
+};
 
 async function _loadCostTemplates(){
   try{

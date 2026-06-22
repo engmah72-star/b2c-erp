@@ -500,6 +500,7 @@ import { canSeeField } from "./core/permissions-matrix.js";
 import { getCostTemplates, saveCostTemplate } from "./core/cost-template-actions.js";
 import { getTmplMatches, scoreTmpl } from "./core/cost-template-matching.js";
 import { getPriceTrend, getSupplierRanking } from "./core/cost-library-actions.js";
+import { getFixedPrices, lookupFixedPrice } from "./core/fixed-prices-actions.js";
 import { uploadOrderFile } from "./core/storage-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -525,7 +526,7 @@ const STATUS_LABELS={wip:'🔄 جاري',done:'✅ تم',problem:'⚠️ مشك�
 
 // ── State ──────────────────────────────────────────────────────────
 let me={uid:'',name:'',role:'',perms:null};
-let orders=[], suppliers=[], prodAgents=[], costTemplates=[], masterCategories=[], wallets=[];
+let orders=[], suppliers=[], prodAgents=[], costTemplates=[], masterCategories=[], wallets=[], fixedPrices=[];
 let loaded=false, selectedId=null, detailTab='main', editCostIdx=-1, costFormProdIdx=0;
 let filterK='all', mineOnly=false, searchQ='', supFilter='';
 let selectMode=false, selected=new Set();
@@ -605,6 +606,18 @@ function _buildTypeOptions(sel=''){
 // ── Template matching — delegated to core/cost-template-matching.js ──
 function _getTmplMatches(o){ return getTmplMatches(costTemplates, o); }
 
+function _wsApplyFixedPrice(type){
+  if(!type||!fixedPrices.length)return;
+  const o=orders.find(x=>x._id===selectedId);if(!o)return;
+  const prodIdx=parseInt(document.getElementById('cf-prod')?.value||'0');
+  const prod=prodIdx>=0?(o.products||[])[prodIdx]:(o.products||[])[0];
+  const fp=lookupFixedPrice(fixedPrices,type,prod?.printType||'');
+  if(!fp)return;
+  const inp=document.getElementById('cf-total');
+  if(inp&&!inp.value){inp.value=fp.amount;}
+  if(fp.supplierId){const sup=document.getElementById('cf-sup');if(sup&&!sup.value)sup.value=fp.supplierId;}
+}
+
 async function _loadSupplierInsights(o){
   const el=document.getElementById('ws-sup-insights');if(!el)return;
   const types=new Set((o.costItems||[]).map(c=>c.type).filter(Boolean));
@@ -661,6 +674,7 @@ onAuthStateChanged(auth,async u=>{
     if(role==='production_agent'){mineOnly=true;syncMine();}
   }
   getCostTemplates(db).then(t=>{costTemplates=t;if(selectedId)renderDetail();}).catch(e=>console.warn('[exec-ws] templates',e));
+  getFixedPrices(db).then(p=>{fixedPrices=p;}).catch(e=>console.warn('[exec-ws] fixed prices',e));
   getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
     if(s.exists())masterCategories=(s.data().items||[]).filter(c=>c.isActive!==false&&c.isSupplierService!==false&&c.isCostItem!==false);
     if(selectedId)renderDetail();
@@ -1366,6 +1380,7 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
     } else if(act==='qefill'){
       const type=btn.dataset.type;
       const sel=document.getElementById('cf-type');if(sel){sel.value=type;}
+      _wsApplyFixedPrice(type);
       const inp=document.getElementById('cf-total');if(inp){inp.focus();inp.select();}
       btn.disabled=false;return;
     } else if(act==='copycosts'){
@@ -1436,6 +1451,7 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
 
 // ── Supplier per product + #9 Photo upload (change events) ────────
 document.getElementById('ws-detail').addEventListener('change',async e=>{
+  if(e.target.id==='cf-type'){_wsApplyFixedPrice(e.target.value);}
   const sel=e.target.closest('[data-act="setsup"]');
   if(sel&&selectedId){
     const prodIdx=parseInt(sel.dataset.pidx,10),supplierId=sel.value;
