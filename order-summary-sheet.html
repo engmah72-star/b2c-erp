@@ -749,24 +749,52 @@ async function _imgToBase64(url){
   return '';
 }
 
-function _buildProductionCard(o,imgDataUrls){
+function _getProductImage(p,o){
+  if(Array.isArray(p.designImages)&&p.designImages.filter(Boolean).length) return p.designImages.filter(Boolean)[0];
+  if(p.designImageUrl) return p.designImageUrl;
+  if(o.printFinalUrl) return o.printFinalUrl;
+  if(o.designImageUrl) return o.designImageUrl;
+  return '';
+}
+
+function _buildProductionCard(o,prodImgMap){
   const products=o.products||[];
-  const prodLines=products.length
-    ?products.map(p=>`${esc(String(p.qty||1))} × ${esc(p.name||'—')}`).join(' + ')
-    :(o.qty?esc(String(o.qty))+' × ':'')+ esc(o.product||'—');
-  const details=products.map(p=>{
-    const parts=[];
-    if(p.size||p.printSize) parts.push(esc(p.size||p.printSize));
-    if(p.paper) parts.push(esc(p.paper)+(p.weight?' '+p.weight+'جم':''));
-    const pt=(p.printType||'').includes('offset')?'أوفست':(p.printType||'').includes('digital')?'ديجيتال':'';
-    if(pt) parts.push(pt);
-    if(p.lamination&&p.lamination!=='بلا') parts.push('سلوفان '+esc(p.lamination));
-    if((p.extras||[]).length) parts.push((p.extras||[]).map(e=>esc(e)).join(' · '));
-    return parts.join(' · ');
-  }).filter(Boolean);
   const notes=o.printNotes||o.designNote||o.briefNotes||'';
-  const hasImgs=imgDataUrls&&imgDataUrls.length>0;
-  const imgsHtml=hasImgs?imgDataUrls.map(src=>`<img src="${src}" style="width:100%;border-radius:10px;border:1px solid #e2e8f0;display:block"/>`).join('<div style="height:8px"></div>'):'';
+
+  let productsHtml='';
+  if(products.length){
+    productsHtml=products.map((p,i)=>{
+      const imgSrc=prodImgMap[i]||'';
+      const specs=[];
+      specs.push(`الكمية: ${esc(String(p.qty||1))} ${esc(p.name||'')}`);
+      if(p.size||p.printSize) specs.push(`المقاس: ${esc(p.size||p.printSize)}`);
+      const paperLine=p.paper?(p.weight?`${esc(p.paper)} ${p.weight}جم`:`${esc(p.paper)}`):'';
+      if(paperLine) specs.push(`الورق: ${paperLine}`);
+      const pt=(p.printType||'').includes('offset')?'أوفست':(p.printType||'').includes('digital')?'ديجيتال':'';
+      if(pt) specs.push(`الطباعة: ${pt}`);
+      if(p.supplierName) specs.push(`المطبعة: ${esc(p.supplierName)}`);
+      if(p.lamination&&p.lamination!=='بلا') specs.push(`السلوفان: ${esc(p.lamination)}`);
+      if((p.extras||[]).length) specs.push(`إضافات: ${(p.extras||[]).map(e=>esc(e)).join('، ')}`);
+      if(p.notes) specs.push(`ملاحظات: ${esc(p.notes)}`);
+      const specsHtml=specs.map(s=>`<div>${s}</div>`).join('');
+      const sep=i<products.length-1?'border-bottom:1px solid #e2e8f0;':'';
+      return `<div style="padding:12px 16px;${sep}">
+        ${p.name?`<div style="font-size:14px;font-weight:800;color:#1e293b;margin-bottom:8px">${esc(p.name)}</div>`:''}
+        ${imgSrc?`<img src="${imgSrc}" style="width:100%;border-radius:8px;border:1px solid #e2e8f0;display:block;margin-bottom:10px"/>`:''}
+        <div style="font-size:14px;font-weight:700;color:#334155;line-height:2">${specsHtml}</div>
+      </div>`;
+    }).join('');
+  }else{
+    const fallbackImg=prodImgMap[0]||'';
+    productsHtml=`<div style="padding:12px 16px">
+      ${fallbackImg?`<img src="${fallbackImg}" style="width:100%;border-radius:8px;border:1px solid #e2e8f0;display:block;margin-bottom:10px"/>`:''}
+      <div style="font-size:14px;font-weight:700;color:#334155;line-height:2">
+        <div>الكمية: ${esc(String(o.qty||'—'))}</div>
+        <div>المنتج: ${esc(o.product||'—')}</div>
+      </div>
+    </div>`;
+  }
+
   return `<div style="width:420px;font-family:Tajawal,sans-serif;direction:rtl;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
     <div style="background:#1e293b;padding:12px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:14px;font-weight:900;color:#fff">Business2Card · التنفيذ</div>
@@ -775,11 +803,7 @@ function _buildProductionCard(o,imgDataUrls){
     <div style="padding:10px 16px;background:#f8fafc;border-bottom:1px solid #e2e8f0">
       <div style="font-size:13px;color:#1e293b;font-weight:700">👤 ${esc(o.clientName||'—')}${o.deadline?' · 📅 '+esc(o.deadline):''}</div>
     </div>
-    ${hasImgs?`<div style="padding:12px 16px">${imgsHtml}</div>`:''}
-    <div style="padding:${hasImgs?'0':'12px'} 16px 12px">
-      <div style="font-size:16px;font-weight:800;color:#1e293b;line-height:1.7">${prodLines}</div>
-      ${details.length?`<div style="font-size:13px;color:#64748b;font-weight:600;margin-top:4px;line-height:1.7">${details.join('<br>')}</div>`:''}
-    </div>
+    ${productsHtml}
     ${notes?`<div style="padding:0 16px 12px"><div style="background:#fffbeb;border:1px solid #fcd34d;border-right:3px solid #f59e0b;border-radius:8px;padding:10px 12px;font-size:13px;color:#92400e;font-weight:600;line-height:1.6">📝 ${esc(notes)}</div></div>`:''}
     <div style="padding:8px 16px;background:#f1f5f9;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;font-weight:700;display:flex;justify-content:space-between">
       <span>Business2Card ERP</span><span>${nowStr()}</span>
@@ -831,17 +855,21 @@ window.captureScreenshot=async function(){
     await _loadH2C();
     const o=_captureOrders[0];
     if(!o)throw new Error('لا توجد بيانات');
-    let imgDataUrls=[];
+    let prodImgMap={};
     if(sheetType==='production'){
-      const imgs=getAllDesignImages(o);
-      if(imgs.length){
+      const products=o.products||[];
+      if(products.length){
         btn.textContent='⏳ جاري تحميل الصور...';
-        const results=await Promise.all(imgs.slice(0,4).map(u=>_imgToBase64(u)));
-        imgDataUrls=results.filter(Boolean);
+        const imgUrls=products.map((p,i)=>_getProductImage(p,o));
+        const results=await Promise.all(imgUrls.map(u=>u?_imgToBase64(u):Promise.resolve('')));
+        results.forEach((d,i)=>{if(d)prodImgMap[i]=d;});
+      }else{
+        const fallback=o.designImageUrl||o.printFinalUrl||'';
+        if(fallback){btn.textContent='⏳ جاري تحميل الصور...';const d=await _imgToBase64(fallback);if(d)prodImgMap[0]=d;}
       }
     }
     btn.textContent='⏳ جاري التصوير...';
-    const cardHtml=sheetType==='delivery'?_buildDeliveryCard(o):_buildProductionCard(o,imgDataUrls);
+    const cardHtml=sheetType==='delivery'?_buildDeliveryCard(o):_buildProductionCard(o,prodImgMap);
     const container=document.createElement('div');
     container.style.cssText='position:absolute;top:-9999px;left:-9999px;width:460px;z-index:-1;background:#fff;';
     container.innerHTML=cardHtml;
