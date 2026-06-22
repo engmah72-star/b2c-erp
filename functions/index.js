@@ -4021,6 +4021,7 @@ exports.dailyFinancialReconciliation = onSchedule(
 // IMAGE PROXY — serves Storage images with CORS headers
 // ════════════════════════════════════════════════════════════
 const { getStorage: getAdminStorage } = require('firebase-admin/storage');
+const STORAGE_BUCKET = 'business2card-c041b.firebasestorage.app';
 
 exports.imgProxy = onRequest(
   { cors: true, maxInstances: 20, memory: '256MiB', timeoutSeconds: 30 },
@@ -4034,7 +4035,7 @@ exports.imgProxy = onRequest(
     if (!filePath || filePath.includes('..')) { res.status(400).send('Bad path'); return; }
 
     try {
-      const bucket = getAdminStorage().bucket();
+      const bucket = getAdminStorage().bucket(STORAGE_BUCKET);
       const file = bucket.file(filePath);
       const [exists] = await file.exists();
       if (!exists) { res.status(404).send('Not found'); return; }
@@ -4049,3 +4050,30 @@ exports.imgProxy = onRequest(
     }
   }
 );
+
+// ════════════════════════════════════════════════════════════
+// SETUP STORAGE CORS — one-time callable to configure CORS
+// ════════════════════════════════════════════════════════════
+exports.setupStorageCors = onCall(CALL_OPTS, async (req) => {
+  if (!req.auth) throw new HttpsError('unauthenticated', 'Login required');
+  const db = getFirestore();
+  const userDoc = await db.collection('users').doc(req.auth.uid).get();
+  const role = userDoc.exists ? userDoc.data().role : '';
+  if (role !== 'admin') throw new HttpsError('permission-denied', 'Admin only');
+
+  const bucket = getAdminStorage().bucket(STORAGE_BUCKET);
+  await bucket.setCorsConfiguration([{
+    origin: [
+      'https://business2card-c041b.web.app',
+      'https://business2card-c041b.firebaseapp.com',
+      'https://engmah72-star.github.io',
+      'http://localhost:5000',
+      'http://localhost:5173',
+      'http://127.0.0.1:5000',
+    ],
+    method: ['GET', 'HEAD'],
+    maxAgeSeconds: 3600,
+    responseHeader: ['Content-Type', 'Content-Length'],
+  }]);
+  return { ok: true, message: 'CORS configured on storage bucket' };
+});
