@@ -62,6 +62,14 @@ function buildChip(shortcut) {
   return el;
 }
 
+function setBarVisible(visible) {
+  if (visible) {
+    document.documentElement.classList.add('has-ctx-bar');
+  } else {
+    document.documentElement.classList.remove('has-ctx-bar');
+  }
+}
+
 function render(shortcuts) {
   if (!__bar) return;
   const chips = __bar.querySelector('.ctx-chips');
@@ -77,11 +85,13 @@ function render(shortcuts) {
   chips.innerHTML = '';
   if (visible.length === 0) {
     __bar.classList.add('hidden');
+    setBarVisible(false);
     return;
   }
 
   visible.forEach(s => chips.appendChild(buildChip(s)));
   __bar.classList.remove('hidden');
+  setBarVisible(true);
 }
 
 export function initContextualShortcuts({ shortcuts = [] } = {}) {
@@ -119,7 +129,10 @@ export function refreshShortcuts() {
 }
 
 export function hideShortcuts() {
-  if (__bar) __bar.classList.add('hidden');
+  if (__bar) {
+    __bar.classList.add('hidden');
+    setBarVisible(false);
+  }
 }
 
 export function showShortcuts() {
