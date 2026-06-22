@@ -274,17 +274,20 @@ body{
 </div>
 
 <script>
-let _h2cLoaded=false;
+let _h2cLoaded=false,_h2cPromise=null;
 function _loadH2C(){
   if(_h2cLoaded) return Promise.resolve();
-  return new Promise((res,rej)=>{
+  if(_h2cPromise) return _h2cPromise;
+  _h2cPromise=new Promise((res,rej)=>{
     const s=document.createElement('script');
     s.src='https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
     s.onload=()=>{_h2cLoaded=true;res();};
-    s.onerror=()=>rej(new Error('فشل تحميل مكتبة التصوير'));
+    s.onerror=()=>{_h2cPromise=null;rej(new Error('فشل تحميل مكتبة التصوير'));};
     document.head.appendChild(s);
   });
+  return _h2cPromise;
 }
+_loadH2C().catch(()=>{});
 function _showToast(msg,ok){
   const t=document.createElement('div');
   t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:12px;font-family:Tajawal,sans-serif;font-size:14px;font-weight:700;color:#fff;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.2);transition:opacity .3s;'
@@ -723,23 +726,25 @@ if(!orderIds.length){
 
 // ── Screenshot: capture-optimized share card ─────────────────────────
 function _blobToDataUrl(b){return new Promise(r=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=()=>r('');rd.readAsDataURL(b);});}
+function _withTimeout(p,ms){return Promise.race([p,new Promise(r=>setTimeout(()=>r(''),ms))]);}
 async function _imgToBase64(url){
   if(!url||url.startsWith('data:'))return url||'';
-  try{const r=await fetch(url,{mode:'cors'});if(r.ok)return await _blobToDataUrl(await r.blob());}catch{}
+  try{const r=await _withTimeout(fetch(url,{mode:'cors'}).then(r=>r.ok?r.blob():null),4000);if(r)return await _blobToDataUrl(r);}catch{}
   try{
     const m=url.match(/\/o\/([^?]+)/);
     if(m){
       const p=decodeURIComponent(m[1]);
       const{ref:sRef,getBlob:gBlob}=await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js');
-      return await _blobToDataUrl(await gBlob(sRef(storage,p)));
+      const b=await _withTimeout(gBlob(sRef(storage,p)),5000);
+      if(b)return await _blobToDataUrl(b);
     }
   }catch{}
   try{
-    return await new Promise(res=>{
+    return await _withTimeout(new Promise(res=>{
       const img=new Image();img.crossOrigin='anonymous';
       img.onload=()=>{try{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);res(c.toDataURL('image/jpeg',0.85));}catch{res('');}};
       img.onerror=()=>res('');img.src=url;
-    });
+    }),4000);
   }catch{}
   return '';
 }
@@ -843,9 +848,9 @@ window.captureScreenshot=async function(){
     document.body.appendChild(container);
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     const card=container.firstElementChild;
-    const canvas=await html2canvas(card,{scale:3,useCORS:true,allowTaint:false,backgroundColor:'#ffffff',scrollX:0,scrollY:0,windowWidth:820});
+    const canvas=await html2canvas(card,{scale:2,useCORS:true,allowTaint:false,backgroundColor:'#ffffff',scrollX:0,scrollY:0,windowWidth:820});
     document.body.removeChild(container);
-    const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.92));
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.88));
     const prefix=sheetType==='delivery'?'shipping':'production';
     const fileName=prefix+'-'+(o.orderId||'').replace(/[^a-zA-Z0-9]/g,'-')+'.jpg';
     const url=URL.createObjectURL(blob);
