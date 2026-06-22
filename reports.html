@@ -1817,6 +1817,7 @@ window.openOrdDrawer=function(id){
           </div>
           <div class="fg" style="margin:0"><label>التكلفة (ج)</label><input class="inp" id="drawer-cost-amt" type="number" placeholder="0" min="0"></div>
         </div>
+        <div class="fg" style="margin:0 0 8px"><label>المورد</label><select class="inp" id="drawer-cost-sup"></select></div>
         <div class="fg" style="margin:0 0 10px"><label>ملاحظة (اختياري)</label><input class="inp" id="drawer-cost-note" type="text" placeholder="اختياري..."></div>
         <div style="display:flex;gap:var(--space-sm);justify-content:flex-end">
           <button type="button" onclick="__drawerHideCostForm()" class="btn btn-ghost btn-sm">إلغاء</button>
@@ -2395,12 +2396,17 @@ function __renderDrawerCostList(o){
   }).join('');
 }
 
+function __populateSupplierSelect(selId){
+  const sel=document.getElementById('drawer-cost-sup');if(!sel)return;
+  sel.innerHTML='<option value="">— اختر المورد —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}"${s._id===selId?' selected':''}>${s.name||'—'}${s.phone?' · '+s.phone:''}</option>`).join('');
+}
 window.__drawerShowCostForm=function(){
   __dCostEditIdx=-1;
   document.getElementById('drawer-form-lbl').textContent='＋ إضافة بند جديد';
   document.getElementById('drawer-type').value='';
   document.getElementById('drawer-cost-amt').value='';
   document.getElementById('drawer-cost-note').value='';
+  __populateSupplierSelect('');
   const sb=document.getElementById('drawer-cost-save');
   sb.textContent='＋ إضافة';
   document.getElementById('drawer-cost-form').style.display='block';
@@ -2424,6 +2430,7 @@ window.editDrawerCost=function(idx){
   document.getElementById('drawer-type').value=c.type||'';
   document.getElementById('drawer-cost-amt').value=c.total||'';
   document.getElementById('drawer-cost-note').value=c.note||'';
+  __populateSupplierSelect(c.supplierId||'');
   const sb=document.getElementById('drawer-cost-save');
   sb.textContent='💾 حفظ التعديل';
   document.getElementById('drawer-cost-form').style.display='block';
@@ -2434,16 +2441,12 @@ window.rmDrawerCost=async function(idx){
   const c=(o.costItems||[])[idx];
   if(__isDrawerCostLinked(c))return toast('⚠️ هذا البند مرتبط بدفعة محفظة. احذفه من صفحة الحسابات','err');
   if(!confirm('حذف هذا البند؟'))return;
-  const items=[...(o.costItems||[])];
-  items.splice(idx,1);
-  // H1.1 fix: المرّر عبر orderActions.updateOrderField (modular SDK + audit trail)
-  const r=await orderActions.updateOrderField({
-    orderId:__dOrderId, changes:{costItems:items},
-    timelineAction:'🗑️ [تقارير] حذف بند تكلفة',
-    userId:auth.currentUser?.uid||'', userName:userName||'admin',
+  const r=await orderActions.removeCostItem({
+    db, orderId:__dOrderId, costItemIdx:idx,
+    role:userRole, userId:auth.currentUser?.uid||'', userName:userName||'',
   });
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-  o.costItems=items;
+  o.costItems=(o.costItems||[]).filter((_,i)=>i!==idx);
   __renderDrawerCostList(o);
   toast('✅ تم الحذف','ok');
 };
@@ -2452,31 +2455,29 @@ window.saveDrawerCost=async function(){
   const type=document.getElementById('drawer-type').value.trim();
   const total=parseFloat(document.getElementById('drawer-cost-amt').value)||0;
   const note=document.getElementById('drawer-cost-note').value.trim();
+  const supSel=document.getElementById('drawer-cost-sup');
+  const supplierId=supSel?.value||'';
+  const supplierName=supSel?.selectedOptions?.[0]?.dataset?.name||'';
   if(!type){toast('اختر نوع البند','err');return;}
   if(!total){toast('أدخل التكلفة','err');return;}
   const o=orders.find(x=>x._id===__dOrderId);if(!o)return;
-  const items=[...(o.costItems||[])];
-  if(__dCostEditIdx>=0&&__dCostEditIdx<items.length){
-    if(__isDrawerCostLinked(items[__dCostEditIdx]))return toast('⚠️ هذا البند مرتبط بدفعة محفظة. عدّله من صفحة الحسابات','err');
-  }
+  const isEdit=__dCostEditIdx>=0&&__dCostEditIdx<(o.costItems||[]).length;
+  if(isEdit&&__isDrawerCostLinked((o.costItems||[])[__dCostEditIdx]))
+    return toast('⚠️ هذا البند مرتبط بدفعة محفظة. عدّله من صفحة الحسابات','err');
   const btn=document.getElementById('drawer-cost-save');
   btn.disabled=true;btn.textContent='...';
-  const now=new Date().toLocaleString('ar-EG');
-  const who=userName||auth.currentUser?.displayName||auth.currentUser?.email||'';
-  if(__dCostEditIdx>=0&&__dCostEditIdx<items.length){
-    items[__dCostEditIdx]={...items[__dCostEditIdx],type,total,note,addedBy:who,addedAt:now};
-  }else{
-    items.push({type,total,note,addedBy:who,addedAt:now});
-  }
-  // H1.1 fix: المرّر عبر orderActions.updateOrderField
-  const r=await orderActions.updateOrderField({
-    orderId:__dOrderId, changes:{costItems:items},
-    timelineAction:__dCostEditIdx>=0?'✏️ [تقارير] تعديل بند تكلفة':'＋ [تقارير] إضافة بند تكلفة',
-    userId:auth.currentUser?.uid||'', userName:userName||'admin',
+  const r=await orderActions.recordCostItem({
+    db, orderId:__dOrderId, prodIdx:-1,
+    payload:{type,total,supplierId,supplierName,note},
+    role:userRole, userId:auth.currentUser?.uid||'', userName:userName||'',
+    isEdit, editIdx:isEdit?__dCostEditIdx:-1,
   });
-  btn.disabled=false;btn.textContent=__dCostEditIdx>=0?'💾 حفظ التعديل':'＋ إضافة';
+  btn.disabled=false;btn.textContent=isEdit?'💾 حفظ التعديل':'＋ إضافة';
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-  o.costItems=items;
+  const saved={type,total,supplierId,supplierName,note,costItemId:r.costItemId||'',
+    addedBy:userName||'',addedAt:new Date().toLocaleString('ar-EG')};
+  if(isEdit){(o.costItems||[])[__dCostEditIdx]={...(o.costItems||[])[__dCostEditIdx],...saved};}
+  else{(o.costItems=o.costItems||[]).push(saved);}
   __renderDrawerCostList(o);
   __drawerHideCostForm();
   toast('✅ تم الحفظ','ok');
