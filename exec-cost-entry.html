@@ -1174,11 +1174,19 @@ async function _triggerLibSuggestions(type){
   row.hidden=false;
   row.innerHTML=`<div class="lib-loading">⏳ جارٍ البحث عن أفضل الأسعار لـ "${type}"...</div>`;
   try{
-    const {searchCostLibrary}=await import('./core/cost-library-actions.js');
-    const items=await searchCostLibrary({db,type,limitN:5});
+    const {searchCostLibrary,getPriceTrend}=await import('./core/cost-library-actions.js');
+    const items=await searchCostLibrary({db,type,limitN:8});
+    items.forEach(item=>{item._trend=getPriceTrend(item.priceHistory);});
     _libCache[type]=items;
     _renderLibRow(type,items);
   }catch(e){row.hidden=true;}
+}
+
+function _trendBadge(trend){
+  if(!trend||trend.direction==='new')return'';
+  if(trend.direction==='up')return`<span class="lib-trend lib-trend-up">▲ ${Math.abs(trend.pctChange)}%</span>`;
+  if(trend.direction==='down')return`<span class="lib-trend lib-trend-down">▼ ${Math.abs(trend.pctChange)}%</span>`;
+  return`<span class="lib-trend lib-trend-stable">● ثابت</span>`;
 }
 
 function _renderLibRow(type,items){
@@ -1186,16 +1194,25 @@ function _renderLibRow(type,items){
   if(!items||!items.length){row.hidden=true;return;}
   const active=items.filter(x=>x.isActive!==false);
   if(!active.length){row.hidden=true;return;}
+  // sort by avgUnitCost ascending to show cheapest first
+  const sorted=[...active].sort((a,b)=>(a.avgUnitCost||0)-(b.avgUnitCost||0));
+  const cheapestId=sorted[0]?._id;
   row.hidden=false;
   row.innerHTML=`
-    <div class="lib-row-title">💡 أفضل أسعار "${type}" من المكتبة</div>
+    <div class="lib-row-title">💡 مقارنة الموردين لـ "${type}" <span class="lib-row-count">${active.length} مورد</span></div>
     <div class="lib-cards">
-      ${active.slice(0,4).map(item=>`
-        <div class="lib-card" onclick="applyLibItem('${item._id||''}','${(item.supplierId||'').replace(/'/g,'&#39;')}','${(item.supplierName||'').replace(/'/g,'&#39;')}',${item.avgUnitCost||0})">
-          <div class="lib-card-sup">🏭 ${item.supplierName||'—'}</div>
-          <div class="lib-card-price">${fn(item.avgUnitCost||0)} ج</div>
-          <div class="lib-card-meta">× ${(item.usageCount||0)} استخدام</div>
-        </div>`).join('')}
+      ${sorted.slice(0,5).map((item,idx)=>{
+        const trend=_trendBadge(item._trend);
+        const cheapTag=item._id===cheapestId?'<span class="lib-cheapest">✦ الأرخص</span>':'';
+        const minMax=item.minUnitCost!=null&&item.maxUnitCost!=null&&item.minUnitCost!==item.maxUnitCost
+          ?`<div class="lib-card-range">${fn(item.minUnitCost)} — ${fn(item.maxUnitCost)} ج</div>`:'';
+        return`<div class="lib-card${item._id===cheapestId?' lib-card-best':''}" onclick="applyLibItem('${item._id||''}','${(item.supplierId||'').replace(/'/g,'&#39;')}','${(item.supplierName||'').replace(/'/g,'&#39;')}',${item.lastTotal||item.avgUnitCost||0})">
+          <div class="lib-card-sup">🏭 ${item.supplierName||'—'} ${cheapTag}</div>
+          <div class="lib-card-price">${fn(item.lastTotal||item.avgUnitCost||0)} ج ${trend}</div>
+          ${minMax}
+          <div class="lib-card-meta">× ${(item.usageCount||0)} · متوسط ${fn(item.avgUnitCost||0)} ج</div>
+        </div>`;
+      }).join('')}
     </div>`;
 }
 
@@ -2811,7 +2828,12 @@ function _renderAnomalies(o){
    SMART COST COMPLETION (Layer 4)
    ═══════════════════════════════════════════════════ */
 function _buildSmartSuggestions(o){
-  const existTypes=new Set((o.costItems||[]).map(c=>c.type));
+  const existByProd={};
+  (o.costItems||[]).forEach(c=>{
+    const k=c.prodIdx!=null&&c.prodIdx>=0?c.prodIdx:-1;
+    if(!existByProd[k])existByProd[k]=new Set();
+    existByProd[k].add(c.type);
+  });
   const prods=(o.products||[]).map((p,i)=>({base:_normBaseName(p.name),idx:i,qty:_extractQty(p)})).filter(x=>x.base.length>=2);
   if(!prods.length)return[];
   // sort newest first so first match per type = most recent price
@@ -2828,7 +2850,7 @@ function _buildSmartSuggestions(o){
       const match=prods.find(x=>x.base===base&&((!x.qty||!srcQty)||x.qty===srcQty));
       if(!match)return;
       (ord.costItems||[])
-        .filter(c=>(c.prodIdx===pi||c.prodIdx<0)&&c.type&&c.supplierId&&!existTypes.has(c.type))
+        .filter(c=>(c.prodIdx===pi||c.prodIdx<0)&&c.type&&c.supplierId&&!(existByProd[match.idx]||new Set()).has(c.type))
         .forEach(c=>{
           if(!byType[c.type]){
             // first seen = most recent order = last recorded price (no averaging)
@@ -2916,8 +2938,9 @@ function _renderQuickEntry(o){
   el.hidden=false;
   let totalEst=0,totalRows=0;
   groups.forEach(g=>{g.entries.forEach(e=>{totalEst+=e.lastPrice;totalRows++;});});
-  // Collapsed by default — user taps header to expand
-  let html=`<div class="qe-box">
+  // Auto-expand when all items have prices (high confidence)
+  const allHavePrices=groups.every(g=>g.entries.every(e=>e.lastPrice>0));
+  let html=`<div class="qe-box${allHavePrices?' qe-open':''}">
     <div class="qe-hdr qe-hdr-toggle" onclick="this.closest('.qe-box').classList.toggle('qe-open')" role="button">
       <span class="qe-label">⚡ إدخال سريع <span class="qe-count-badge">${totalRows} بند</span></span>
       <span class="qe-toggle-ico">▼</span>
@@ -3113,13 +3136,17 @@ function _renderSmartSuggest(o){
   const suggs=_buildSmartSuggestions(o);
   if(!suggs.length){el.hidden=true;el.innerHTML='';return;}
   el.hidden=false;
-  const chips=suggs.map((s,i)=>`
-    <div class="smart-chip" onclick="applySmartItem(${i})">
+  const prodNames=(o.products||[]).map(p=>p.name||'');
+  const chips=suggs.map((s,i)=>{
+    const prodLabel=s.prodIdx>=0&&prodNames[s.prodIdx]?`<span class="smart-chip-prod">📦 ${prodNames[s.prodIdx]}</span>`:'';
+    return`<div class="smart-chip" onclick="applySmartItem(${i})">
+      ${prodLabel}
       <span class="smart-chip-type">${s.type}</span>
       <span class="smart-chip-sup">${s.supplierName||'—'}</span>
       <strong class="smart-chip-amt">${fn(s.avgAmt)} ج</strong>
       ${s.srcQty?`<span class="smart-chip-qty">×${s.srcQty}</span>`:`<span class="smart-chip-count">${s.count}×</span>`}
-    </div>`).join('');
+    </div>`;
+  }).join('');
   el.innerHTML=`<div class="smart-suggest-box">
     <div class="smart-suggest-hdr">
       <span class="smart-suggest-lbl">🤖 آخر سعر مسجّل</span>
