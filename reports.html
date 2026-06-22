@@ -261,7 +261,7 @@ import { buildDesignerStats, buildShippingStats, buildClientActivityStats, build
 import { buildPriorityItems as _buildPriorityItems, buildSalesTabStats, buildExpenseBreakdown } from "./core/reports-priorities.js";
 import { buildReturnsStats } from "./core/reports-returns-stats.js";
 import { buildApprovalsStats } from "./core/reports-approvals-stats.js";
-import { buildCollectionStats, buildCollectionByClient } from "./core/reports-collection-stats.js";
+import { buildCollectionStats, buildCollectionByClient, buildDailyCollectionSummary, buildAgingDetailed, buildCollectionByShipper } from "./core/reports-collection-stats.js";
 import { buildReturnsTabHTML } from "./features/reports/views/render-returns.js";
 import { buildApprovalsTabHTML } from "./features/reports/views/render-approvals.js";
 import { buildShippingTabHTML, buildClientsTabHTML } from "./features/reports/views/render-shipping-clients.js";
@@ -1911,6 +1911,11 @@ function renderCollection(f){
   const {fullPaid, partial, noPay, staleCount, noCostCount} = counts;
   const activeFilters=(__payFilter!=='all'?1:0)+(__stageFilter!=='all'?1:0)+(__flagFilter!=='all'?1:0);
 
+  // Daily summary (pure aggregator)
+  const daily = buildDailyCollectionSummary({ transactions, orders, calcRem });
+  // Shipper stats (pure aggregator)
+  const shipperStats = buildCollectionByShipper({ orders: f, calcRem });
+
   return`
     <!-- Hero: 3 أرقام بس -->
     <div class="col-hero">
@@ -1918,6 +1923,9 @@ function renderCollection(f){
       <div class="col-hero-cell"><div class="v text-g">${fn(totPaid)} ج</div><div class="l">إجمالي المحصّل</div></div>
       <div class="col-hero-cell"><div class="v text-r">${fn(totRem)} ج</div><div class="l">إجمالي المتبقي</div></div>
     </div>
+
+    <!-- ══ ملخص التحصيل اليومي ══ -->
+    ${renderDailySummary(daily)}
 
     <!-- Critical banner (يظهر فقط لو في حرج) -->
     ${postDesignWithRem.length?`
@@ -1937,6 +1945,7 @@ function renderCollection(f){
       <div class="vm-group">
         <button type="button" class="d-btn ${__viewMode==='orders'?'active':''}" onclick="setViewMode('orders',this)">📋 أوردر</button>
         <button type="button" class="d-btn ${__viewMode==='clients'?'active':''}" onclick="setViewMode('clients',this)">👤 عميل</button>
+        <button type="button" class="d-btn ${__viewMode==='shippers'?'active':''}" onclick="setViewMode('shippers',this)">🚚 شركة شحن</button>
       </div>
       <div class="search-wrap">
         <input id="col-search" class="search-input" type="search" placeholder="🔍 ابحث عن عميل / موبايل / كود" value="${(__search||'').replace(/"/g,'&quot;')}" oninput="colSearch(this.value)">
@@ -1975,8 +1984,8 @@ function renderCollection(f){
       ${activeFilters?`<div class="filters-reset"><button type="button" onclick="resetCollectionFilters()">✕ مسح كل الفلاتر</button></div>`:''}
     </div>
 
-    <!-- الجدول/العملاء — الأهم في الصفحة -->
-    ${__viewMode==='clients'?renderCollectionByClient(withSale):`
+    <!-- الجدول/العملاء/شركات الشحن — الأهم في الصفحة -->
+    ${__viewMode==='shippers'?renderShipperCollection(shipperStats):__viewMode==='clients'?renderCollectionByClient(withSale):`
     <div class="col-table-wrap">
       <div class="col-grid-head" style="background:var(--bg3);border-bottom:1px solid var(--line);font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2)">
         <div class="col-head-cell ${__sortKey==='client'?'active':''}" onclick="colSort('client')" style="justify-content:flex-start"><span>العميل / الأوردر</span><span class="sort-arrow">${__sortKey==='client'?(__sortDir==='asc'?'↑':'↓'):'⇅'}</span></div>
@@ -1996,9 +2005,12 @@ function renderCollection(f){
       </div>
     </div>`}
 
+    <!-- ══ تقادم الديون المفصّل (من مرحلة التنفيذ) ══ -->
+    ${renderAgingDetailedSection(f)}
+
     <!-- إحصائيات إضافية (مطوية افتراضياً) -->
     <details class="more-details" style="margin-top:14px">
-      <summary>📊 إحصائيات إضافية وتقادم الديون</summary>
+      <summary>📊 إحصائيات إضافية</summary>
       <div class="chart-wrap" style="border:none;background:transparent;margin:var(--space-md)">
         <div class="chart-title">💰 تفاصيل مالية</div>
         <div class="col-tiles">
@@ -2008,19 +2020,175 @@ function renderCollection(f){
           <div class="col-tile"><div class="v text-y">${partial}</div><div class="l">⚡ دفع جزئي</div></div>
         </div>
       </div>
-      <div class="chart-wrap" style="border:none;background:transparent;margin:var(--space-md)">
-        <div class="chart-title">📅 تقادم الباقي على العملاء (من تاريخ الإنشاء)</div>
-        <div class="aging-grid">
-          ${[['0-30','var(--g)','حديث'],['31-60','var(--y)','متوسط'],['61-90','#ff8a4a','متأخر'],['90+','var(--r)','حرج جداً']].map(([k,c,lbl])=>`
-            <div class="aging-cell" style="--lvl:${c}">
-              <div class="lbl">${lbl}</div>
-              <div class="rng">${k} يوم</div>
-              <div class="amt">${fn(aging[k].a)} ج</div>
-              <div class="cnt">${aging[k].n} أوردر</div>
-            </div>`).join('')}
+    </details>`;
+}
+
+// ══ ملخص التحصيل اليومي ══
+function renderDailySummary(d){
+  const todayPct = d.yesterdayCol > 0 ? Math.round((d.todayCol - d.yesterdayCol) / d.yesterdayCol * 100) : null;
+  const weekPct = d.prev7Col > 0 ? Math.round((d.last7Col - d.prev7Col) / d.prev7Col * 100) : null;
+  const trendArrow = (pct) => pct === null ? '' : pct > 0 ? '↑' : pct < 0 ? '↓' : '→';
+  const trendCls = (pct) => pct === null ? '' : pct > 0 ? 'color:var(--g)' : pct < 0 ? 'color:var(--r)' : 'color:var(--dim2)';
+  const maxDay = Math.max(...d.dailyBreakdown.map(x => x.amount), 1);
+  return `
+    <div class="ds-card" style="margin-top:12px">
+      <div class="ds-header">
+        <div>
+          <div class="ds-title">📅 ملخص التحصيل اليومي</div>
+          <div class="ds-sub">من مرحلة التنفيذ · ${d.prodOrderCount} أوردر · نسبة التحصيل ${d.collectionPct}%</div>
+        </div>
+        <div style="text-align:left;font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold)">
+          باقي تحصيل: <b style="color:var(--r)">${fn(d.totalRemProd)} ج</b>
         </div>
       </div>
-    </details>`;
+      <div class="ds-metrics">
+        <div class="ds-metric">
+          <div class="ds-metric-val" style="color:var(--g)">${fn(d.todayCol)} ج</div>
+          <div class="ds-metric-lbl">تحصيل اليوم</div>
+          ${todayPct !== null ? `<div class="ds-metric-trend" style="${trendCls(todayPct)}">${trendArrow(todayPct)} ${Math.abs(todayPct)}% عن أمس</div>` : ''}
+        </div>
+        <div class="ds-metric">
+          <div class="ds-metric-val" style="color:var(--b)">${fn(d.yesterdayCol)} ج</div>
+          <div class="ds-metric-lbl">تحصيل أمس</div>
+        </div>
+        <div class="ds-metric">
+          <div class="ds-metric-val" style="color:var(--c-bright,var(--c))">${fn(d.last7Col)} ج</div>
+          <div class="ds-metric-lbl">آخر 7 أيام</div>
+          ${weekPct !== null ? `<div class="ds-metric-trend" style="${trendCls(weekPct)}">${trendArrow(weekPct)} ${Math.abs(weekPct)}% عن الأسبوع السابق</div>` : ''}
+        </div>
+        <div class="ds-metric">
+          <div class="ds-metric-val" style="color:var(--y)">${fn(Math.round(d.avg7))} ج</div>
+          <div class="ds-metric-lbl">المتوسط اليومي</div>
+        </div>
+      </div>
+      <div class="ds-chart-row">
+        ${d.dailyBreakdown.map(day => {
+          const h = maxDay > 0 ? Math.max(4, Math.round(day.amount / maxDay * 48)) : 4;
+          const isToday = day.date.toDateString() === new Date().toDateString();
+          return `<div class="ds-bar-col${isToday ? ' today' : ''}">
+            <div class="ds-bar-val">${day.amount > 0 ? fn(day.amount) : '—'}</div>
+            <div class="ds-bar" style="height:${h}px;background:${isToday ? 'var(--g)' : 'var(--b)'}"></div>
+            <div class="ds-bar-lbl">${day.label}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="ds-progress">
+        <div style="display:flex;justify-content:space-between;font-size:var(--fs-sm);margin-bottom:6px">
+          <span style="color:var(--dim2);font-weight:var(--fw-bold)">نسبة التحصيل الكلية (من التنفيذ)</span>
+          <span style="color:${d.collectionPct >= 80 ? 'var(--g)' : d.collectionPct >= 50 ? 'var(--y)' : 'var(--r)'};font-weight:var(--fw-heavy)">${d.collectionPct}%</span>
+        </div>
+        <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${Math.min(100, d.collectionPct)}%;background:${d.collectionPct >= 80 ? 'var(--g)' : d.collectionPct >= 50 ? 'var(--y)' : 'var(--r)'};border-radius:4px;transition:width .5s"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ══ تقادم الديون المفصّل (من مرحلة التنفيذ) ══
+function renderAgingDetailedSection(f){
+  const agingData = buildAgingDetailed({ orders: f, calcRem, daysSince });
+  if (agingData.totalOrders === 0) return '';
+  const {buckets, grandTotal, totalOrders} = agingData;
+  const bucketKeys = ['0-30', '31-60', '61-90', '90+'];
+  const bucketMeta = [
+    {k:'0-30', ico:'🟢', border:'rgba(0,217,126,.3)'},
+    {k:'31-60', ico:'🟡', border:'rgba(255,170,0,.3)'},
+    {k:'61-90', ico:'🟠', border:'rgba(255,138,74,.3)'},
+    {k:'90+', ico:'🔴', border:'rgba(255,61,110,.3)'},
+  ];
+  return `
+    <div class="aging-detailed" style="margin-top:14px">
+      <div class="aging-d-header">
+        <div>
+          <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow)">📅 تقادم الديون المفصّل</div>
+          <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">من مرحلة التنفيذ فقط · ${totalOrders} أوردر · إجمالي ${fn(grandTotal)} ج</div>
+        </div>
+      </div>
+      <div class="aging-grid" style="margin-top:12px">
+        ${bucketMeta.map(({k, ico}) => {
+          const b = buckets[k];
+          const pct = grandTotal > 0 ? Math.round(b.total / grandTotal * 100) : 0;
+          return `<div class="aging-cell" style="--lvl:${b.color}">
+            <div class="lbl">${ico} ${b.label}</div>
+            <div class="rng">${k} يوم</div>
+            <div class="amt">${fn(b.total)} ج</div>
+            <div class="cnt">${b.orders.length} أوردر · ${pct}%</div>
+          </div>`;
+        }).join('')}
+      </div>
+      ${bucketMeta.filter(({k}) => buckets[k].clientList.length > 0).map(({k, ico, border}) => {
+        const b = buckets[k];
+        if (!b.clientList.length) return '';
+        return `
+        <details class="aging-bucket-details" style="margin-top:10px;background:var(--bg2);border:1px solid ${border};border-radius:12px;overflow:hidden">
+          <summary style="padding:10px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--snow);list-style:none;user-select:none">
+            <span>${ico} ${b.label} (${k} يوم) — ${b.clientList.length} عميل</span>
+            <span style="color:${b.color};font-weight:var(--fw-heavy)">${fn(b.total)} ج</span>
+          </summary>
+          <div style="border-top:1px solid var(--line)">
+            ${b.clientList.slice(0, 15).map((c, i) => {
+              const pct = b.total > 0 ? Math.round(c.rem / b.total * 100) : 0;
+              const safeName = (c.name || '').replace(/'/g, "\\'");
+              return `<div class="aging-client-row" onclick="focusClient('${safeName}')" title="اضغط لعرض أوردرات العميل">
+                <div class="aging-client-rank">${i + 1}</div>
+                <div class="aging-client-info">
+                  <div class="aging-client-name">${c.name}</div>
+                  <div class="aging-client-meta">${c.phone || '—'} · ${c.count} أوردر</div>
+                </div>
+                <div class="aging-client-bar-wrap">
+                  <div class="aging-client-bar" style="width:${pct}%;background:${b.color}"></div>
+                </div>
+                <div class="aging-client-amount" style="color:${b.color}">${fn(c.rem)} ج</div>
+              </div>`;
+            }).join('')}
+            ${b.clientList.length > 15 ? `<div style="text-align:center;padding:8px;font-size:var(--fs-sm);color:var(--dim2)">+ ${b.clientList.length - 15} عميل آخر</div>` : ''}
+          </div>
+        </details>`;
+      }).join('')}
+    </div>`;
+}
+
+// ══ تحصيل حسب شركة الشحن ══
+function renderShipperCollection(stats){
+  const {list, totals} = stats;
+  if (!list.length) return `<div class="empty-pretty"><div class="ico">🚚</div><div class="ttl">لا توجد أوردرات شحن عبر شركات</div><div class="sub">الأوردرات المشحونة عبر شركات الشحن ستظهر هنا</div></div>`;
+  const totPct = totals.sale > 0 ? Math.round(totals.paid / totals.sale * 100) : 0;
+  return `
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden">
+      <div style="padding:14px 16px;background:var(--bg3);border-bottom:1px solid var(--line)">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--snow)">🚚 تحصيل شركات الشحن</div>
+            <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">${list.length} شركة · ${totals.count} أوردر · نسبة التحصيل ${totPct}%</div>
+          </div>
+          <div style="display:flex;gap:12px;font-size:var(--fs-sm);font-weight:var(--fw-bold)">
+            <span style="color:var(--g)">محصّل: ${fn(totals.paid)} ج</span>
+            <span style="color:var(--r)">متبقي: ${fn(totals.rem)} ج</span>
+            <span style="color:var(--y)">غير مسوّى: ${totals.unsettled}</span>
+          </div>
+        </div>
+      </div>
+      ${list.map(c => {
+        const statusCol = c.rem <= 0 ? 'var(--g)' : c.pct >= 50 ? 'var(--y)' : 'var(--r)';
+        return `<div class="shipper-row">
+          <div class="shipper-info">
+            <div class="shipper-name">🚚 ${c.name}</div>
+            <div class="shipper-meta">${c.count} أوردر · ${c.delivered} تم التوصيل · ${c.pending} قيد التوصيل</div>
+            <div style="display:flex;gap:8px;margin-top:4px;font-size:var(--fs-xs);font-weight:var(--fw-bold)">
+              ${c.settled > 0 ? `<span style="color:var(--g)">✅ ${c.settled} تمت تسويته</span>` : ''}
+              ${c.unsettled > 0 ? `<span style="color:var(--y)">⏳ ${c.unsettled} غير مسوّى</span>` : ''}
+            </div>
+            <div style="height:4px;background:var(--bg3);border-radius:2px;margin-top:6px;overflow:hidden">
+              <div style="height:100%;width:${c.pct}%;background:${statusCol};border-radius:2px"></div>
+            </div>
+          </div>
+          <div class="shipper-cell" style="color:var(--b)"><span class="col-cell-mobile-label">الإجمالي:</span>${fn(c.sale)} ج</div>
+          <div class="shipper-cell" style="color:var(--g)"><span class="col-cell-mobile-label">المحصّل:</span>${fn(c.paid)} ج</div>
+          <div class="shipper-cell" style="color:${c.rem > 0 ? 'var(--r)' : 'var(--dim2)'}; font-weight:var(--fw-heavy)"><span class="col-cell-mobile-label">المتبقي:</span>${c.rem > 0 ? fn(c.rem) + ' ج' : '—'}</div>
+          <div class="shipper-cell" style="color:${statusCol};font-weight:var(--fw-heavy)"><span class="col-cell-mobile-label">النسبة:</span>${c.pct}%</div>
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 
 // ══ Per-customer rollup view ══
