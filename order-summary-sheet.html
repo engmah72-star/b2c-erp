@@ -293,71 +293,14 @@ function _showToast(msg,ok){
   document.body.appendChild(t);
   setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300);},2500);
 }
-async function _inlineImages(root){
-  const imgs=root.querySelectorAll('img[src]');
-  const tasks=[...imgs].map(async img=>{
-    if(img.src.startsWith('data:')) return;
-    try{
-      const r=await fetch(img.src,{mode:'cors'});
-      const b=await r.blob();
-      const dataUrl=await new Promise(res=>{const rd=new FileReader();rd.onload=()=>res(rd.result);rd.readAsDataURL(b);});
-      img.setAttribute('src',dataUrl);
-    }catch(_){}
-  });
-  await Promise.allSettled(tasks);
-}
-function _fixArabicForCapture(root){
-  const style=document.createElement('style');
-  style.id='_h2c_fix';
-  style.textContent='._h2c_active *{letter-spacing:0!important;text-transform:none!important;word-spacing:0!important;}';
-  document.head.appendChild(style);
-  root.classList.add('_h2c_active');
-  return ()=>{root.classList.remove('_h2c_active');style.remove();};
-}
-async function captureScreenshot(){
-  const btn=document.getElementById('screenshot-btn');
-  const origText=btn.textContent;
-  btn.disabled=true;btn.textContent='⏳ جاري التصوير...';
-  try{
-    await _loadH2C();
-    const target=document.getElementById('sheet-root');
-    const wrapper=document.querySelector('.sheet-wrapper');
-    const origWS=wrapper.style.cssText;
-    wrapper.style.cssText='max-width:820px;margin:0 auto;padding:12px;background:#fff;';
-    await _inlineImages(target);
-    const undoArabicFix=_fixArabicForCapture(target);
-    const canvas=await html2canvas(target,{
-      scale:3,useCORS:true,allowTaint:false,
-      backgroundColor:'#ffffff',
-      scrollX:0,scrollY:-window.scrollY,
-      windowWidth:860,
-    });
-    undoArabicFix();
-    wrapper.style.cssText=origWS;
-    const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.92));
-    const fileName='order-'+(document.title.replace(/[^a-zA-Z0-9؀-ۿ]/g,'-'))+'.jpg';
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;a.download=fileName;
-    document.body.appendChild(a);a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    _showToast('تم حفظ الصورة ✅',true);
-  }catch(e){
-    if(e.name!=='AbortError'){
-      console.error('Screenshot error:',e);
-      _showToast('فشل التصوير — حاول مرة أخرى',false);
-    }
-  }finally{
-    btn.disabled=false;btn.textContent=origText;
-  }
-}
-window.captureScreenshot=captureScreenshot;
+// captureScreenshot is defined in the module script below (needs Firebase access for images)
 </script>
 <script type="module">
-import { app, auth, db } from './core/firebase-init.js';
+import { app, auth, db, storage } from './core/firebase-init.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+let _captureOrders=[];
 
 const params = new URLSearchParams(window.location.search);
 const orderId = params.get('orderId') || '';
@@ -755,6 +698,8 @@ if(!orderIds.length){
         ? renderMultipleOrders(loaded,sheetType)
         : (sheetType==='production' ? buildProductionSheet(loaded[0]) : buildDeliverySheet(loaded[0]));
 
+      _captureOrders=loaded;
+
       // WhatsApp button
       let waHref;
       if(isBulk){
@@ -775,6 +720,133 @@ if(!orderIds.length){
     }
   });
 }
+
+// ── Screenshot: capture-optimized share card ─────────────────────────
+function _blobToDataUrl(b){return new Promise(r=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=()=>r('');rd.readAsDataURL(b);});}
+async function _imgToBase64(url){
+  if(!url||url.startsWith('data:'))return url||'';
+  try{const r=await fetch(url,{mode:'cors'});if(r.ok)return await _blobToDataUrl(await r.blob());}catch{}
+  try{
+    const m=url.match(/\/o\/([^?]+)/);
+    if(m){
+      const p=decodeURIComponent(m[1]);
+      const{ref:sRef,getBlob:gBlob}=await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js');
+      return await _blobToDataUrl(await gBlob(sRef(storage,p)));
+    }
+  }catch{}
+  try{
+    return await new Promise(res=>{
+      const img=new Image();img.crossOrigin='anonymous';
+      img.onload=()=>{try{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);res(c.toDataURL('image/jpeg',0.85));}catch{res('');}};
+      img.onerror=()=>res('');img.src=url;
+    });
+  }catch{}
+  return '';
+}
+
+function _buildShareCard(o,imgDataUrl){
+  const products=o.products||[];
+  const totalQty=products.reduce((s,p)=>s+(parseInt(p.qty)||1),0);
+  const prodCards=products.length?products.map(p=>{
+    const pt=(p.printType||'').includes('offset')?'أوفست':(p.printType||'').includes('digital')?'ديجيتال':(p.printType||'');
+    return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;margin-bottom:10px">
+      <div style="font-size:17px;font-weight:800;color:#1e293b;margin-bottom:12px;border-bottom:2px solid #e2e8f0;padding-bottom:8px">${esc(p.name||'—')}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        <div style="flex:1;min-width:130px;background:#fff;padding:10px 14px;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;margin-bottom:3px">الكمية</div>
+          <div style="font-size:20px;font-weight:900;color:#1e293b">${esc(String(p.qty||1))} قطعة</div>
+        </div>
+        <div style="flex:1;min-width:130px;background:#fff;padding:10px 14px;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;margin-bottom:3px">المقاس</div>
+          <div style="font-size:20px;font-weight:900;color:#1e293b">${esc(p.size||p.printSize||'—')}</div>
+        </div>
+        ${p.paper?`<div style="flex:1;min-width:130px;background:#fff;padding:10px 14px;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;margin-bottom:3px">نوع الورق</div>
+          <div style="font-size:16px;font-weight:700;color:#1e293b">${esc(p.paper)}${p.weight?' '+p.weight+'جم':''}</div>
+        </div>`:''}
+        ${pt?`<div style="flex:1;min-width:130px;background:#fff;padding:10px 14px;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;margin-bottom:3px">نوع الطباعة</div>
+          <div style="font-size:16px;font-weight:700;color:#1e293b">${esc(pt)}</div>
+        </div>`:''}
+        ${p.lamination&&p.lamination!=='بلا'?`<div style="flex:1;min-width:130px;background:#fff;padding:10px 14px;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;margin-bottom:3px">السلوفان</div>
+          <div style="font-size:16px;font-weight:700;color:#1e293b">${esc(p.lamination)}</div>
+        </div>`:''}
+        ${(p.extras||[]).length?`<div style="flex:1;min-width:130px;background:#fff;padding:10px 14px;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="font-size:11px;color:#94a3b8;font-weight:700;margin-bottom:3px">تشطيبات</div>
+          <div style="font-size:14px;font-weight:700;color:#059669">${(p.extras||[]).map(e=>'✓ '+esc(e)).join(' · ')}</div>
+        </div>`:''}
+      </div>
+    </div>`;
+  }).join(''):`<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px">
+    <div style="font-size:17px;font-weight:700;color:#1e293b">${esc(o.product||'—')}</div>
+    ${o.qty?`<div style="font-size:15px;color:#64748b;margin-top:4px">${esc(String(o.qty))} قطعة</div>`:''}
+  </div>`;
+  const notes=o.printNotes||o.designNote||o.briefNotes||'';
+  return `<div style="width:780px;font-family:Tajawal,sans-serif;direction:rtl;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0">
+    <div style="background:#1e293b;padding:24px 28px;color:#fff">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div style="width:46px;height:46px;background:rgba(255,255,255,0.1);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;border:1px solid rgba(255,255,255,0.15)">🎨</div>
+        <div><div style="font-size:20px;font-weight:900;color:#fff">Business2Card</div><div style="font-size:12px;color:rgba(255,255,255,0.5);font-weight:600">ملخص التنفيذ</div></div>
+      </div>
+      <div style="font-size:34px;font-weight:900;color:#fff;margin-bottom:6px">${esc(o.orderId||(o._id||'').slice(-6))}</div>
+      <div style="font-size:17px;color:rgba(255,255,255,0.75);font-weight:600;margin-bottom:8px">👤 ${esc(o.clientName||'—')}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${o.deadline?`<div style="font-size:12px;color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.06);padding:4px 12px;border-radius:16px;font-weight:600;border:1px solid rgba(255,255,255,0.08)">📅 ${esc(o.deadline)}</div>`:''}
+        ${products.length?`<div style="font-size:12px;color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.06);padding:4px 12px;border-radius:16px;font-weight:600;border:1px solid rgba(255,255,255,0.08)">📦 ${products.length} منتجات · ${totalQty} قطعة</div>`:''}
+      </div>
+    </div>
+    ${imgDataUrl?`<div style="padding:20px 28px 10px;background:#f8fafc">
+      <div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid #e2e8f0">🖼️ صورة التصميم</div>
+      <div style="border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;background:#fff"><img src="${imgDataUrl}" style="width:100%;max-height:320px;object-fit:contain;display:block"/></div>
+    </div>`:''}
+    <div style="padding:20px 28px">
+      <div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #e2e8f0">📦 تفاصيل المنتجات</div>
+      ${prodCards}
+    </div>
+    ${notes?`<div style="padding:0 28px 20px"><div style="background:#fffbeb;border:1px solid #fcd34d;border-right:4px solid #f59e0b;border-radius:12px;padding:14px 18px;font-size:14px;color:#92400e;font-weight:600;line-height:1.8">📝 ${esc(notes)}</div></div>`:''}
+    <div style="display:flex;justify-content:space-between;padding:14px 28px;background:#f1f5f9;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8;font-weight:700">
+      <span>Business2Card ERP · ملخص التنفيذ</span><span>${nowStr()}</span>
+    </div>
+  </div>`;
+}
+
+window.captureScreenshot=async function(){
+  const btn=document.getElementById('screenshot-btn');
+  const origText=btn.textContent;
+  btn.disabled=true;btn.textContent='⏳ جاري التصوير...';
+  try{
+    await _loadH2C();
+    const o=_captureOrders[0];
+    if(!o)throw new Error('لا توجد بيانات');
+    const imgs=getAllDesignImages(o);
+    let imgDataUrl='';
+    if(imgs.length){
+      btn.textContent='⏳ جاري تحميل الصور...';
+      imgDataUrl=await _imgToBase64(imgs[0]);
+    }
+    btn.textContent='⏳ جاري التصوير...';
+    const cardHtml=_buildShareCard(o,imgDataUrl);
+    const container=document.createElement('div');
+    container.style.cssText='position:absolute;top:-9999px;left:-9999px;width:780px;z-index:-1;background:#fff;';
+    container.innerHTML=cardHtml;
+    document.body.appendChild(container);
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const card=container.firstElementChild;
+    const canvas=await html2canvas(card,{scale:3,useCORS:true,allowTaint:false,backgroundColor:'#ffffff',scrollX:0,scrollY:0,windowWidth:820});
+    document.body.removeChild(container);
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.92));
+    const fileName='order-'+(o.orderId||'').replace(/[^a-zA-Z0-9]/g,'-')+'.jpg';
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=fileName;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    _showToast('تم حفظ الصورة ✅',true);
+  }catch(e){
+    console.error('Screenshot error:',e);
+    _showToast('فشل التصوير — حاول مرة أخرى',false);
+  }finally{btn.disabled=false;btn.textContent=origText;}
+};
 </script>
 </body>
 </html>
