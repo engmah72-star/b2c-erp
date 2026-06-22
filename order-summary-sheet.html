@@ -727,29 +727,40 @@ if(!orderIds.length){
 // ── Screenshot: capture-optimized share card ─────────────────────────
 function _blobToDataUrl(b){return new Promise(r=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=()=>r('');rd.readAsDataURL(b);});}
 function _withTimeout(p,ms){return Promise.race([p,new Promise(r=>setTimeout(()=>r(''),ms))]);}
+// cache-bust: browser caches images loaded by <img> without CORS headers;
+// re-requesting with crossOrigin='anonymous' gets the cached non-CORS response → fail.
+// Adding a unique param forces a fresh request with proper CORS headers.
+function _cacheBust(u){return u+(u.includes('?')?'&':'?')+'_xcb='+Date.now();}
+
 async function _imgToBase64(url){
   if(!url||url.startsWith('data:'))return url||'';
-  // Tier 1: Image+canvas with crossOrigin (works if server sends CORS headers)
+  const cbUrl=_cacheBust(url);
+  // Tier 1: Image+canvas with crossOrigin + cache-bust
   try{
     const d=await _withTimeout(new Promise(res=>{
       const img=new Image();img.crossOrigin='anonymous';
-      img.onload=()=>{try{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);res(c.toDataURL('image/jpeg',0.85));}catch{res('');}};
-      img.onerror=()=>res('');img.src=url;
-    }),8000);
+      img.onload=()=>{try{const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);res(c.toDataURL('image/jpeg',0.85));}catch(e){console.warn('[img] canvas tainted:',e.message);res('');}};
+      img.onerror=()=>{console.warn('[img] crossOrigin load failed:',url.slice(0,80));res('');};
+      img.src=cbUrl;
+    }),12000);
     if(d)return d;
   }catch{}
-  // Tier 2: Firebase SDK getBlob
+  // Tier 2: fetch with CORS + cache-bust
+  try{
+    const r=await _withTimeout(fetch(cbUrl,{mode:'cors'}).then(r=>r.ok?r.blob():null),10000);
+    if(r)return await _blobToDataUrl(r);
+  }catch{}
+  // Tier 3: Firebase SDK getBlob (uses SDK internals, not browser CORS)
   try{
     const m=url.match(/\/o\/([^?]+)/);
     if(m){
       const p=decodeURIComponent(m[1]);
       const{ref:sRef,getBlob:gBlob}=await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js');
-      const b=await _withTimeout(gBlob(sRef(storage,p)),8000);
+      const b=await _withTimeout(gBlob(sRef(storage,p)),10000);
       if(b)return await _blobToDataUrl(b);
     }
   }catch{}
-  // Tier 3: fetch with CORS
-  try{const r=await _withTimeout(fetch(url,{mode:'cors'}).then(r=>r.ok?r.blob():null),6000);if(r)return await _blobToDataUrl(r);}catch{}
+  console.warn('[img] all tiers failed:',url.slice(0,80));
   return '';
 }
 
@@ -860,8 +871,6 @@ window.captureScreenshot=async function(){
     const o=_captureOrders[0];
     if(!o)throw new Error('لا توجد بيانات');
 
-    // Strategy A: convert images to data URLs (CORS workaround)
-    // Strategy B: use original URLs + let html2canvas load them (fallback)
     let prodImgMap={};
     if(sheetType==='production'){
       btn.textContent='⏳ جاري تحميل الصور...';
@@ -870,11 +879,9 @@ window.captureScreenshot=async function(){
         const imgUrls=products.map(p=>_getProductImage(p,o));
         const results=await Promise.all(imgUrls.map(u=>u?_imgToBase64(u):Promise.resolve('')));
         results.forEach((d,i)=>{if(d)prodImgMap[i]=d;});
-        // fallback: if data URL conversion failed, use original URLs
-        imgUrls.forEach((u,i)=>{if(u&&!prodImgMap[i])prodImgMap[i]=u;});
       }else{
         const fb=o.designImageUrl||o.printFinalUrl||'';
-        if(fb){const d=await _imgToBase64(fb);prodImgMap[0]=d||fb;}
+        if(fb){const d=await _imgToBase64(fb);if(d)prodImgMap[0]=d;}
       }
     }
     btn.textContent='⏳ جاري التصوير...';
@@ -883,26 +890,9 @@ window.captureScreenshot=async function(){
     container.style.cssText='position:absolute;top:-9999px;left:-9999px;width:460px;z-index:-1;background:#fff;';
     container.innerHTML=cardHtml;
     document.body.appendChild(container);
-
-    // preload images in container before capture
-    const imgs=container.querySelectorAll('img');
-    if(imgs.length){
-      await Promise.all([...imgs].map(img=>img.complete?Promise.resolve():new Promise(r=>{img.onload=r;img.onerror=r;})));
-      await new Promise(r=>setTimeout(r,200));
-    }
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     const card=container.firstElementChild;
-
-    // try with allowTaint:true first (renders all images), fallback to clean capture
-    let canvas;
-    try{
-      canvas=await html2canvas(card,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',scrollX:0,scrollY:0,windowWidth:460});
-      // test if canvas is tainted
-      canvas.toBlob(()=>{});
-    }catch{
-      // tainted canvas — retry without tainted images
-      canvas=await html2canvas(card,{scale:2,useCORS:true,allowTaint:false,backgroundColor:'#ffffff',scrollX:0,scrollY:0,windowWidth:460});
-    }
+    const canvas=await html2canvas(card,{scale:2,useCORS:false,allowTaint:false,backgroundColor:'#ffffff',scrollX:0,scrollY:0,windowWidth:460});
     document.body.removeChild(container);
     const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.88));
     const prefix=sheetType==='delivery'?'shipping':'production';
