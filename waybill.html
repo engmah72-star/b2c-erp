@@ -28,6 +28,7 @@
       </select>
     </div>
     <button type="button" class="btn btn-yellow hide" id="btn-edit" onclick="openEdit()">✏️ تعديل البوليصة</button>
+    <button type="button" class="btn btn-screenshot hide" id="btn-screenshot" onclick="captureWaybillScreenshot()">📸 تصوير</button>
     <button type="button" class="btn btn-primary hide" id="btn-print" onclick="printNow()">🖨️ طباعة</button>
   </div>
 </div>
@@ -71,6 +72,42 @@
 
 <div class="toasts" id="toasts"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script>
+async function captureWaybillScreenshot(){
+  const btn=document.getElementById('btn-screenshot');
+  const origText=btn.textContent;
+  btn.disabled=true;btn.textContent='⏳ جاري التصوير...';
+  try{
+    const target=document.getElementById('waybills-container');
+    const canvas=await html2canvas(target,{
+      scale:2,useCORS:true,allowTaint:true,
+      backgroundColor:'#ffffff',
+      scrollX:0,scrollY:-window.scrollY,
+    });
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
+    const fileName='waybill-'+Date.now()+'.png';
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[new File([blob],fileName,{type:'image/png'})]})){
+      await navigator.share({
+        title:document.title,
+        files:[new File([blob],fileName,{type:'image/png'})]
+      });
+    }else{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=fileName;
+      document.body.appendChild(a);a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  }catch(e){
+    if(e.name!=='AbortError') console.error('Screenshot error:',e);
+  }finally{
+    btn.disabled=false;btn.textContent=origText;
+  }
+}
+window.captureWaybillScreenshot=captureWaybillScreenshot;
+</script>
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
@@ -237,7 +274,7 @@ window.changeLayout=function(){
 function render(){
   $('loading-box').style.display='none';
   $('btn-print').style.display='inline-block';
-  // Edit only available for single-order mode (1-up; doesn't make sense in compact layouts to edit a tiny preview)
+  $('btn-screenshot').style.display='inline-block';
   if(!isBulk && canEdit()) $('btn-edit').style.display='inline-block';
   // Layout selector available always (works for single-order too)
   const perPage=getStoredLayout();
