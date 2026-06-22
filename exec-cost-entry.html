@@ -127,6 +127,31 @@
           <div id="lib-templates-grid"></div>
         </div>
 
+        <!-- Fixed Prices -->
+        <div class="lib-section">
+          <div class="lib-section-hdr">
+            <span class="lib-section-title">💲 أسعار ثابتة</span>
+            <button type="button" class="btn btn-sm btn-r" onclick="openFixedPriceForm()">＋ سعر جديد</button>
+          </div>
+          <div id="fp-form-area" hidden style="margin-bottom:10px">
+            <div class="lib-card" style="padding:10px">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div><label style="font-size:11px;color:var(--dim2)">نوع البند *</label><select class="inp" id="fp-type" style="font-size:13px"></select></div>
+                <div><label style="font-size:11px;color:var(--dim2)">المبلغ *</label><input class="inp" id="fp-amount" type="number" placeholder="0" style="font-size:13px"></div>
+                <div><label style="font-size:11px;color:var(--dim2)">نوع الطباعة</label><select class="inp" id="fp-print" style="font-size:13px"><option value="">— الكل —</option><option value="offset">أوفست</option><option value="digital">ديجيتال</option></select></div>
+                <div><label style="font-size:11px;color:var(--dim2)">المورد</label><select class="inp" id="fp-sup" style="font-size:13px"><option value="">— بدون —</option></select></div>
+                <div><label style="font-size:11px;color:var(--dim2)">المقاس</label><input class="inp" id="fp-size" type="text" placeholder="مثال: 70×100" style="font-size:13px"></div>
+                <div><label style="font-size:11px;color:var(--dim2)">ملاحظات</label><input class="inp" id="fp-note" type="text" placeholder="اختياري" style="font-size:13px"></div>
+              </div>
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button type="button" class="btn btn-r" style="flex:1" onclick="saveFixedPriceEntry()">💾 حفظ</button>
+                <button type="button" class="btn" onclick="closeFixedPriceForm()">إلغاء</button>
+              </div>
+            </div>
+          </div>
+          <div id="fp-grid"></div>
+        </div>
+
         <!-- Active suppliers last 30 days -->
         <div class="lib-section">
           <div class="lib-section-hdr">
@@ -303,6 +328,7 @@
 
             <div class="fg"><label>💰 التكلفة (ج) <span class="text-r">*</span></label>
               <input class="inp inp-total" id="ac-total" type="number" placeholder="0" inputmode="numeric" oninput="onTotalInput()">
+              <div id="fp-hint" style="font-size:11px;color:var(--b);margin-top:3px"></div>
               <div class="quick-amounts" id="quick-amounts"></div>
             </div>
 
@@ -521,6 +547,8 @@ function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'exec-cost-entry.html')
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
+import { getTmplMatches } from "./core/cost-template-matching.js";
+import { getFixedPrices, lookupFixedPrice, saveFixedPrice, deleteFixedPrice } from "./core/fixed-prices-actions.js";
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
 let activeId=null,currentStageFilters=new Set(),currentSort='priority',editCostIdx=-1;
@@ -612,6 +640,7 @@ onAuthStateChanged(auth,async u=>{
   buildSidebar(ud,'exec-cost-entry.html');
   buildMobNav(role,'exec-cost-entry.html');
   _loadCostTemplates();
+  _loadFixedPrices();
   setText('nav-name',userName);
   document.getElementById('nav-av').textContent=userName[0]?.toUpperCase()||'م';
   document.getElementById('role-badge').textContent=role==='production_agent'?'مندوب تنفيذ':(role==='admin'?'أدمن':'مدير');
@@ -1174,11 +1203,19 @@ async function _triggerLibSuggestions(type){
   row.hidden=false;
   row.innerHTML=`<div class="lib-loading">⏳ جارٍ البحث عن أفضل الأسعار لـ "${type}"...</div>`;
   try{
-    const {searchCostLibrary}=await import('./core/cost-library-actions.js');
-    const items=await searchCostLibrary({db,type,limitN:5});
+    const {searchCostLibrary,getPriceTrend}=await import('./core/cost-library-actions.js');
+    const items=await searchCostLibrary({db,type,limitN:8});
+    items.forEach(item=>{item._trend=getPriceTrend(item.priceHistory);});
     _libCache[type]=items;
     _renderLibRow(type,items);
   }catch(e){row.hidden=true;}
+}
+
+function _trendBadge(trend){
+  if(!trend||trend.direction==='new')return'';
+  if(trend.direction==='up')return`<span class="lib-trend lib-trend-up">▲ ${Math.abs(trend.pctChange)}%</span>`;
+  if(trend.direction==='down')return`<span class="lib-trend lib-trend-down">▼ ${Math.abs(trend.pctChange)}%</span>`;
+  return`<span class="lib-trend lib-trend-stable">● ثابت</span>`;
 }
 
 function _renderLibRow(type,items){
@@ -1186,16 +1223,25 @@ function _renderLibRow(type,items){
   if(!items||!items.length){row.hidden=true;return;}
   const active=items.filter(x=>x.isActive!==false);
   if(!active.length){row.hidden=true;return;}
+  // sort by avgUnitCost ascending to show cheapest first
+  const sorted=[...active].sort((a,b)=>(a.avgUnitCost||0)-(b.avgUnitCost||0));
+  const cheapestId=sorted[0]?._id;
   row.hidden=false;
   row.innerHTML=`
-    <div class="lib-row-title">💡 أفضل أسعار "${type}" من المكتبة</div>
+    <div class="lib-row-title">💡 مقارنة الموردين لـ "${type}" <span class="lib-row-count">${active.length} مورد</span></div>
     <div class="lib-cards">
-      ${active.slice(0,4).map(item=>`
-        <div class="lib-card" onclick="applyLibItem('${item._id||''}','${(item.supplierId||'').replace(/'/g,'&#39;')}','${(item.supplierName||'').replace(/'/g,'&#39;')}',${item.avgUnitCost||0})">
-          <div class="lib-card-sup">🏭 ${item.supplierName||'—'}</div>
-          <div class="lib-card-price">${fn(item.avgUnitCost||0)} ج</div>
-          <div class="lib-card-meta">× ${(item.usageCount||0)} استخدام</div>
-        </div>`).join('')}
+      ${sorted.slice(0,5).map((item,idx)=>{
+        const trend=_trendBadge(item._trend);
+        const cheapTag=item._id===cheapestId?'<span class="lib-cheapest">✦ الأرخص</span>':'';
+        const minMax=item.minUnitCost!=null&&item.maxUnitCost!=null&&item.minUnitCost!==item.maxUnitCost
+          ?`<div class="lib-card-range">${fn(item.minUnitCost)} — ${fn(item.maxUnitCost)} ج</div>`:'';
+        return`<div class="lib-card${item._id===cheapestId?' lib-card-best':''}" onclick="applyLibItem('${item._id||''}','${(item.supplierId||'').replace(/'/g,'&#39;')}','${(item.supplierName||'').replace(/'/g,'&#39;')}',${item.lastTotal||item.avgUnitCost||0})">
+          <div class="lib-card-sup">🏭 ${item.supplierName||'—'} ${cheapTag}</div>
+          <div class="lib-card-price">${fn(item.lastTotal||item.avgUnitCost||0)} ج ${trend}</div>
+          ${minMax}
+          <div class="lib-card-meta">× ${(item.usageCount||0)} · متوسط ${fn(item.avgUnitCost||0)} ج</div>
+        </div>`;
+      }).join('')}
     </div>`;
 }
 
@@ -1691,8 +1737,29 @@ window.onTypeChange=function(){
   const tl=t.toLowerCase();
   document.getElementById('paper-calc')?.classList.toggle('show',tl.includes('ورق')||tl.includes('كرتون'));
   _triggerLibSuggestions(t);
+  _applyFixedPrice(t);
   onCostInputChange();
 };
+
+function _applyFixedPrice(type){
+  if(!type||!fixedPrices.length)return;
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const prodIdx=parseInt(gv('cost-prod-idx')??'-1');
+  const prod=prodIdx>=0?(o.products||[])[prodIdx]:(o.products||[])[0];
+  const printType=prod?.printType||'';
+  const fp=lookupFixedPrice(fixedPrices,type,printType);
+  if(!fp)return;
+  const totalEl=document.getElementById('ac-total');
+  if(totalEl&&!totalEl.value){
+    totalEl.value=fp.amount;
+    const hint=document.getElementById('fp-hint');
+    if(hint)hint.textContent=`💡 سعر ثابت: ${fp.amount} ج${fp.size?' · '+fp.size:''}${fp.printType?' ('+fp.printType+')':''}${fp.supplierName?' — '+fp.supplierName:''}${fp.note?' · '+fp.note:''}`;
+    if(fp.supplierId){
+      const supEl=document.getElementById('ac-sup');
+      if(supEl&&!supEl.value){supEl.value=fp.supplierId;}
+    }
+  }
+}
 
 window.calcPaperCost=function(fromTotal){
   const sheets=parseFloat(gv('ac-psheets'))||0,price=parseFloat(gv('ac-pprice'))||0,total=parseFloat(gv('ac-total'))||0;
@@ -1794,6 +1861,7 @@ function clearForm(){
   const sb=document.getElementById('cost-save-btn');if(sb)sb.textContent='＋ إضافة البند';
   const st=document.getElementById('form-section-title');if(st)st.innerHTML='➕ إضافة بند جديد';
   editCostIdx=-1;
+  const fpH=document.getElementById('fp-hint');if(fpH)fpH.textContent='';
   const libRow=document.getElementById('ws-lib-row');if(libRow){libRow.hidden=true;libRow.innerHTML='';}
 }
 
@@ -2539,6 +2607,79 @@ function _downloadCSV(rows,filename){
    ═══════════════════════════════════════════════════ */
 let costTemplates=[];
 let _tmplItems=[];
+let fixedPrices=[];
+
+async function _loadFixedPrices(){
+  try{fixedPrices=await getFixedPrices(db);_renderFixedPricesPanel();}catch(e){console.warn('fixed prices load:',e);}
+}
+
+function _renderFixedPricesPanel(){
+  const el=document.getElementById('fp-grid');if(!el)return;
+  if(!fixedPrices.length){el.innerHTML='<div class="lib-empty">لا توجد أسعار ثابتة — أضف سعراً مثل "زنكات أوفست = 240 ج"</div>';return;}
+  const ptLabel=v=>v==='offset'?'أوفست':v==='digital'?'ديجيتال':'الكل';
+  el.innerHTML=fixedPrices.map(p=>`<div class="lib-card" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:4px;flex-wrap:wrap">
+    <span style="font-weight:var(--fw-heavy);color:var(--snow)">${p.type}</span>
+    ${p.size?`<span style="font-size:11px;background:var(--bg1);padding:1px 6px;border-radius:6px;color:var(--y)">📐 ${p.size}</span>`:''}
+    ${p.printType?`<span style="font-size:11px;background:var(--bg1);padding:1px 6px;border-radius:6px;color:var(--dim2)">${ptLabel(p.printType)}</span>`:''}
+    ${p.supplierName?`<span style="font-size:11px;color:var(--dim2)">🏭 ${p.supplierName}</span>`:''}
+    <strong style="color:var(--g);margin-right:auto">${fn(p.amount)} ج</strong>
+    ${p.note?`<span style="font-size:10px;color:var(--dim2);width:100%;margin-top:2px">📝 ${p.note}</span>`:''}
+    <button type="button" class="btn btn-sm" onclick="editFixedPrice('${p.id}')" style="padding:2px 6px;font-size:11px">✏️</button>
+    <button type="button" class="btn btn-sm" onclick="removeFixedPrice('${p.id}')" style="padding:2px 6px;font-size:11px">🗑</button>
+  </div>`).join('');
+}
+
+let _fpEditId=null;
+window.openFixedPriceForm=function(editId){
+  _fpEditId=editId||null;
+  const form=document.getElementById('fp-form-area');if(!form)return;
+  form.hidden=false;
+  const tSel=document.getElementById('fp-type');
+  if(tSel){
+    tSel.innerHTML='<option value="">— اختر —</option>'+masterCategories.filter(c=>c.isCostItem!==false).map(c=>`<option value="${c.label}">${c.label}</option>`).join('');
+  }
+  const sSel=document.getElementById('fp-sup');
+  if(sSel)sSel.innerHTML='<option value="">— بدون —</option>'+suppliers.map(s=>`<option value="${s._id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}">${s.name||s._id}</option>`).join('');
+  if(editId){
+    const p=fixedPrices.find(x=>x.id===editId);
+    if(p){
+      if(tSel)tSel.value=p.type||'';
+      document.getElementById('fp-amount').value=p.amount||'';
+      document.getElementById('fp-print').value=p.printType||'';
+      document.getElementById('fp-size').value=p.size||'';
+      document.getElementById('fp-note').value=p.note||'';
+      if(sSel)sSel.value=p.supplierId||'';
+    }
+  }else{
+    document.getElementById('fp-amount').value='';
+    document.getElementById('fp-print').value='';
+    document.getElementById('fp-size').value='';
+    document.getElementById('fp-note').value='';
+  }
+};
+window.closeFixedPriceForm=function(){document.getElementById('fp-form-area').hidden=true;_fpEditId=null;};
+window.editFixedPrice=function(id){openFixedPriceForm(id);};
+window.removeFixedPrice=async function(id){
+  if(!confirm('حذف هذا السعر الثابت؟'))return;
+  await deleteFixedPrice(db,id);
+  await _loadFixedPrices();
+  toast('✅ تم الحذف','ok');
+};
+window.saveFixedPriceEntry=async function(){
+  const type=document.getElementById('fp-type')?.value?.trim();
+  const amount=document.getElementById('fp-amount')?.value;
+  const printType=document.getElementById('fp-print')?.value||'';
+  const supEl=document.getElementById('fp-sup');
+  const supplierId=supEl?.value||'';
+  const supplierName=supEl?.selectedOptions?.[0]?.dataset?.name||'';
+  const size=document.getElementById('fp-size')?.value||'';
+  const note=document.getElementById('fp-note')?.value||'';
+  const r=await saveFixedPrice(db,{id:_fpEditId,type,amount,printType,supplierId,supplierName,note,size},userName);
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  closeFixedPriceForm();
+  await _loadFixedPrices();
+  toast('✅ تم الحفظ','ok');
+};
 
 async function _loadCostTemplates(){
   try{
@@ -2549,34 +2690,26 @@ async function _loadCostTemplates(){
   }catch(e){console.warn('templates load:',e);}
 }
 
-function _getTmplMatches(o){
-  if(!costTemplates.length)return[];
-  const matches=[];
-  (o.products||[]).forEach((prod,prodIdx)=>{
-    const base=_normBaseName(prod.name),qty=_extractQty(prod);
-    const t=costTemplates.find(t=>{
-      const qOk=!t.qty||!qty||String(t.qty)===String(qty);
-      return _normBaseName(t.name)===base&&qOk;
-    });
-    if(t)matches.push({template:t,prod,prodIdx});
-  });
-  return matches;
-}
+function _getTmplMatches(o){ return getTmplMatches(costTemplates, o); }
 
 function _renderTmplApply(o){
   const el=document.getElementById('ws-tmpl-apply');if(!el)return;
-  const matches=_getTmplMatches(o);
-  if(!matches.length){el.hidden=true;el.innerHTML='';return;}
+  const{matched,library}=_getTmplMatches(o);
+  const all=[...matched,...library];
+  if(!all.length){el.hidden=true;el.innerHTML='';return;}
   el.hidden=false;
-  el.innerHTML=matches.map(({template:t,prodIdx})=>{
+  el.innerHTML=all.map(({template:t,prodIdx,score,reasons})=>{
     const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
     const uid=`tap-${t.id}-${prodIdx}`;
+    const pct=Math.round(score*100);
+    const label=score>=0.85?'تطابق قوي':score>=0.55?'مقترح':'ذو صلة';
     return`<div class="tmpl-apply-box">
       <div class="tmpl-apply-hdr">
-        <span class="tmpl-apply-label">⚡ قالب ثابت</span>
+        <span class="tmpl-apply-label">⚡ ${label} <small style="opacity:.7">${pct}%</small></span>
         <span class="tmpl-apply-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</span>
         <span class="tmpl-apply-total">${fn(total)} ج</span>
       </div>
+      ${reasons.length?`<div class="tmpl-apply-reasons">${reasons.map(r=>`<span class="tmpl-reason-chip">${r}</span>`).join('')}</div>`:''}
       <div class="tmpl-apply-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
       <button type="button" class="btn btn-r tmpl-apply-btn" id="${uid}" onclick="applyFullTemplate('${t.id}',${prodIdx},'${uid}')">⚡ تطبيق الكل دفعة واحدة</button>
     </div>`;
@@ -2609,10 +2742,33 @@ window.applyFullTemplate=async function(templateId,prodIdx,btnId){
   setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderTemplate(fresh);_renderTmplApply(fresh);_renderAnomalies(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
 };
 
+window.mergeAllDuplicateTemplates=async function(){
+  try{
+    const{mergeDuplicateTemplates}=await import('./core/cost-template-actions.js');
+    const r=await mergeDuplicateTemplates(db,userName);
+    if(!r.ok)return toast('❌ فشل الدمج','err');
+    if(r.removed===0)return toast('✅ لا توجد قوالب مكررة','ok');
+    await _loadCostTemplates();
+    toast(`✅ تم دمج ${r.merged} قالب وحذف ${r.removed} مكرر`,'ok');
+  }catch(e){toast('❌ '+(e.message||'فشل'),'err');}
+};
+
 function _renderLibTemplates(){
   const el=document.getElementById('lib-templates-grid');if(!el)return;
   if(!costTemplates.length){el.innerHTML='<div class="lib-empty">لا توجد قوالب ثابتة — أضف قالباً للمنتجات المتكررة مثل "ملف محامي" أو "كارت 300"</div>';return;}
-  el.innerHTML=`<div class="lib-tmpl-grid">${costTemplates.map(t=>{
+  // Detect duplicates count
+  const _nn=s=>(s||'').replace(/[\d٠-٩,،]+\s*/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
+  const dupeKeys={};
+  costTemplates.forEach(t=>{const k=_nn(t.name)+'::'+(t.qty||'');dupeKeys[k]=(dupeKeys[k]||0)+1;});
+  const dupeCount=Object.values(dupeKeys).filter(v=>v>1).reduce((s,v)=>s+v-1,0);
+  const mergeBtn=dupeCount?`<div class="lib-tmpl-merge-bar"><span class="lib-tmpl-dupe-warn">⚠️ ${dupeCount} قالب مكرر</span><button type="button" class="btn btn-sm btn-y" onclick="mergeAllDuplicateTemplates()">🔀 دمج المكررات تلقائياً</button></div>`:'';
+  // Sort: group by normalized name
+  const sorted=[...costTemplates].sort((a,b)=>{
+    const na=_nn(a.name),nb=_nn(b.name);
+    if(na!==nb)return na.localeCompare(nb,'ar');
+    return(a.qty||'').localeCompare(b.qty||'');
+  });
+  el.innerHTML=mergeBtn+`<div class="lib-tmpl-grid">${sorted.map(t=>{
     const total=t.costItems.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
     // count matching open orders that still need this template applied
     const pendingCount=orders.filter(o=>{
@@ -2732,7 +2888,12 @@ window.saveTmplModal=async function(){
   const items=_tmplItems.filter(c=>c.type&&c.supplierId&&parseFloat(c.amount)>0);
   if(!items.length)return toast('⚠️ أضف بنداً واحداً على الأقل بنوع + مورد + مبلغ','err');
   try{
-    const{saveCostTemplate}=await import('./core/cost-template-actions.js');
+    const{saveCostTemplate,findDuplicateTemplate}=await import('./core/cost-template-actions.js');
+    // Duplicate check for new templates only
+    if(!id){
+      const dup=findDuplicateTemplate(costTemplates,name,qty,null);
+      if(dup&&!confirm(`⚠️ يوجد قالب "${dup.name}"${dup.qty?' ('+dup.qty+')':''} بالفعل.\n\nمتأكد إنك عايز تحفظ قالب جديد؟`))return;
+    }
     const r=await saveCostTemplate(db,{id,name,qty:qty||null,costItems:items},userName);
     if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
     await _loadCostTemplates();
@@ -2750,24 +2911,44 @@ window.deleteTmpl=async function(id){
   }catch(e){toast('❌ '+(e.message||'فشل الحذف'),'err');}
 };
 
-window.saveCurrentCostAsTemplate=function(prodIdx=-1){
+window.saveCurrentCostAsTemplate=async function(prodIdx=-1){
   const o=orders.find(x=>x._id===activeId);
   if(!o)return toast('⚠️ لا يوجد أوردر محدد','err');
   const allItems=o.costItems||[];
-  // Filter by prodIdx: prodIdx>=0 → items for that product; -1 → general items (no prodIdx)
   const scopedItems=prodIdx>=0
     ?allItems.filter(c=>c.prodIdx===prodIdx)
     :allItems.filter(c=>c.prodIdx==null||c.prodIdx<0);
   if(!scopedItems.length)return toast('⚠️ لا توجد بنود مسجلة لهذا المنتج','err');
   const prod=prodIdx>=0?(o.products||[])[prodIdx]:null;
-  setText('tmpl-modal-title','💾 حفظ البنود كقالب');
-  sv('tmpl-id','');
-  sv('tmpl-name',prod?.name||'');
-  sv('tmpl-qty',prod?.qty!=null?String(prod.qty):'');
-  _tmplItems=scopedItems
+  const name=prod?.name||'';
+  const qty=prod?.qty!=null?String(prod.qty):'';
+  const items=scopedItems
     .map(c=>({type:c.type||'',supplierId:c.supplierId||'',supplierName:c.supplierName||'',amount:parseFloat(c.total)||0}))
     .filter(c=>c.type&&c.supplierId&&c.amount>0);
-  if(!_tmplItems.length)_tmplItems=[{type:'',supplierId:'',supplierName:'',amount:''}];
+  if(!items.length)return toast('⚠️ لا توجد بنود صالحة','err');
+
+  // Check for duplicate template
+  const{findDuplicateTemplate}=await import('./core/cost-template-actions.js');
+  const dup=findDuplicateTemplate(costTemplates,name,qty,null);
+  if(dup){
+    const choice=confirm(`⚠️ يوجد قالب "${dup.name}"${dup.qty?' ('+dup.qty+')':''} بالفعل.\n\nاضغط "موافق" لتحديث أسعاره وإضافة بنود جديدة.\nاضغط "إلغاء" لفتح المودال وحفظ قالب جديد.`);
+    if(choice){
+      try{
+        const{saveCostTemplate}=await import('./core/cost-template-actions.js');
+        const r=await saveCostTemplate(db,{mergeInto:dup.id,costItems:items},userName);
+        if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+        await _loadCostTemplates();
+        toast('✅ تم تحديث القالب الموجود وإضافة البنود الجديدة','ok');
+      }catch(e){toast('❌ '+(e.message||'فشل'),'err');}
+      return;
+    }
+  }
+
+  setText('tmpl-modal-title','💾 حفظ البنود كقالب');
+  sv('tmpl-id','');
+  sv('tmpl-name',name);
+  sv('tmpl-qty',qty);
+  _tmplItems=items.length?items:[{type:'',supplierId:'',supplierName:'',amount:''}];
   _renderTmplItems();
   document.getElementById('tmpl-modal').hidden=false;
 };
@@ -2811,7 +2992,12 @@ function _renderAnomalies(o){
    SMART COST COMPLETION (Layer 4)
    ═══════════════════════════════════════════════════ */
 function _buildSmartSuggestions(o){
-  const existTypes=new Set((o.costItems||[]).map(c=>c.type));
+  const existByProd={};
+  (o.costItems||[]).forEach(c=>{
+    const k=c.prodIdx!=null&&c.prodIdx>=0?c.prodIdx:-1;
+    if(!existByProd[k])existByProd[k]=new Set();
+    existByProd[k].add(c.type);
+  });
   const prods=(o.products||[]).map((p,i)=>({base:_normBaseName(p.name),idx:i,qty:_extractQty(p)})).filter(x=>x.base.length>=2);
   if(!prods.length)return[];
   // sort newest first so first match per type = most recent price
@@ -2828,7 +3014,7 @@ function _buildSmartSuggestions(o){
       const match=prods.find(x=>x.base===base&&((!x.qty||!srcQty)||x.qty===srcQty));
       if(!match)return;
       (ord.costItems||[])
-        .filter(c=>(c.prodIdx===pi||c.prodIdx<0)&&c.type&&c.supplierId&&!existTypes.has(c.type))
+        .filter(c=>(c.prodIdx===pi||c.prodIdx<0)&&c.type&&c.supplierId&&!(existByProd[match.idx]||new Set()).has(c.type))
         .forEach(c=>{
           if(!byType[c.type]){
             // first seen = most recent order = last recorded price (no averaging)
@@ -2916,8 +3102,9 @@ function _renderQuickEntry(o){
   el.hidden=false;
   let totalEst=0,totalRows=0;
   groups.forEach(g=>{g.entries.forEach(e=>{totalEst+=e.lastPrice;totalRows++;});});
-  // Collapsed by default — user taps header to expand
-  let html=`<div class="qe-box">
+  // Auto-expand when all items have prices (high confidence)
+  const allHavePrices=groups.every(g=>g.entries.every(e=>e.lastPrice>0));
+  let html=`<div class="qe-box${allHavePrices?' qe-open':''}">
     <div class="qe-hdr qe-hdr-toggle" onclick="this.closest('.qe-box').classList.toggle('qe-open')" role="button">
       <span class="qe-label">⚡ إدخال سريع <span class="qe-count-badge">${totalRows} بند</span></span>
       <span class="qe-toggle-ico">▼</span>
@@ -3113,13 +3300,17 @@ function _renderSmartSuggest(o){
   const suggs=_buildSmartSuggestions(o);
   if(!suggs.length){el.hidden=true;el.innerHTML='';return;}
   el.hidden=false;
-  const chips=suggs.map((s,i)=>`
-    <div class="smart-chip" onclick="applySmartItem(${i})">
+  const prodNames=(o.products||[]).map(p=>p.name||'');
+  const chips=suggs.map((s,i)=>{
+    const prodLabel=s.prodIdx>=0&&prodNames[s.prodIdx]?`<span class="smart-chip-prod">📦 ${prodNames[s.prodIdx]}</span>`:'';
+    return`<div class="smart-chip" onclick="applySmartItem(${i})">
+      ${prodLabel}
       <span class="smart-chip-type">${s.type}</span>
       <span class="smart-chip-sup">${s.supplierName||'—'}</span>
       <strong class="smart-chip-amt">${fn(s.avgAmt)} ج</strong>
       ${s.srcQty?`<span class="smart-chip-qty">×${s.srcQty}</span>`:`<span class="smart-chip-count">${s.count}×</span>`}
-    </div>`).join('');
+    </div>`;
+  }).join('');
   el.innerHTML=`<div class="smart-suggest-box">
     <div class="smart-suggest-hdr">
       <span class="smart-suggest-lbl">🤖 آخر سعر مسجّل</span>

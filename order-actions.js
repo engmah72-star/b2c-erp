@@ -1783,6 +1783,67 @@ export const orderActions = {
     }, _doRecord);
   },
 
+  /**
+   * removeCostItem — حذف بند تكلفة غير مدفوع
+   *
+   * للبنود المدفوعة: استخدم adminDeletePaidCostItem من production-actions.js
+   * (يعمل wallet reversal + ledger + supplier cascade).
+   *
+   * هذا الـ action للبنود غير المدفوعة فقط:
+   *   - يحذف من order.costItems
+   *   - يحذف supplier_orders المرتبط (لو وُجد)
+   *   - audit trail
+   */
+  async removeCostItem({
+    db = defaultDb, orderId, costItemIdx,
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
+    if (!orderId) return { ok: false, errors: ['⚠️ orderId مطلوب'], warnings: [] };
+    if (!['admin', 'operation_manager', 'production_agent'].includes(role)) {
+      return { ok: false, errors: ['⛔ ليس لديك صلاحية حذف بنود التكلفة'], warnings: [] };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [] };
+    const items = [...(order.costItems || [])];
+    if (costItemIdx < 0 || costItemIdx >= items.length) {
+      return { ok: false, errors: ['البند غير موجود'], warnings: [] };
+    }
+    const item = items[costItemIdx];
+    if (item.paid || item.walletId || item.txId || item.spId) {
+      return { ok: false, errors: ['⛔ هذا البند مرتبط بدفعة — استخدم حذف البند المدفوع من الحسابات'], warnings: [] };
+    }
+    items.splice(costItemIdx, 1);
+    try {
+      const batch = writeBatch(db);
+      batch.update(order._ref, {
+        costItems: items,
+        timeline: [...(order.timeline || []), auditEntry({
+          action: `🗑️ حذف بند تكلفة: ${item.type || ''} — ${parseFloat(item.total) || 0} ج${item.supplierName ? ' — ' + item.supplierName : ''}`,
+          userId, userName, kind: 'edit',
+          meta: { costItemIndex: costItemIdx, type: item.type, total: item.total, supplierId: item.supplierId },
+        })],
+        updatedAt: serverTimestamp(),
+      });
+      if (item.supplierOrderId) {
+        batch.update(doc(db, 'supplier_orders', item.supplierOrderId), {
+          isDeleted: true, voidedAt: serverTimestamp(), voidedBy: userId,
+          voidReason: 'حذف بند التكلفة',
+        });
+      }
+      if (item.pendingPaymentRequestId) {
+        batch.update(doc(db, 'payment_requests', item.pendingPaymentRequestId), {
+          status: 'cancelled', cancelledBy: userId, cancelledByName: userName || '',
+          cancelledAt: serverTimestamp(), cancelReason: 'حذف البند',
+        });
+      }
+      await batch.commit();
+      return { ok: true, errors: [], warnings: [], orderId, action: 'remove_cost_item' };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
+    }
+  },
+
   // ─── Production Actions (P2.1) ────────────
   //
   // Order-level operations triggered from production.html. All follow the

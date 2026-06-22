@@ -498,6 +498,9 @@ import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https:
 import { orderActions } from "./order-actions.js";
 import { canSeeField } from "./core/permissions-matrix.js";
 import { getCostTemplates, saveCostTemplate } from "./core/cost-template-actions.js";
+import { getTmplMatches, scoreTmpl } from "./core/cost-template-matching.js";
+import { getPriceTrend, getSupplierRanking } from "./core/cost-library-actions.js";
+import { getFixedPrices, lookupFixedPrice } from "./core/fixed-prices-actions.js";
 import { uploadOrderFile } from "./core/storage-helpers.js";
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -523,7 +526,7 @@ const STATUS_LABELS={wip:'🔄 جاري',done:'✅ تم',problem:'⚠️ مشك�
 
 // ── State ──────────────────────────────────────────────────────────
 let me={uid:'',name:'',role:'',perms:null};
-let orders=[], suppliers=[], prodAgents=[], costTemplates=[], masterCategories=[], wallets=[];
+let orders=[], suppliers=[], prodAgents=[], costTemplates=[], masterCategories=[], wallets=[], fixedPrices=[];
 let loaded=false, selectedId=null, detailTab='main', editCostIdx=-1, costFormProdIdx=0;
 let filterK='all', mineOnly=false, searchQ='', supFilter='';
 let selectMode=false, selected=new Set();
@@ -600,77 +603,51 @@ function _buildTypeOptions(sel=''){
   return '<option value="">— اختر النوع —</option>'+def.map(t=>`<option value="${esc(t)}"${selAttr(t)}>${esc(t)}</option>`).join('');
 }
 
-// ── Template matching — Multi-signal intelligence ──────────────────
-const _normAr=s=>(s||'')
-  .replace(/[أإآ]/g,'ا').replace(/[ةه]/g,'ه').replace(/[يى]/g,'ي')
-  .replace(/\s+/g,'').replace(/[٠-٩0-9]+/g,'').toLowerCase();
-const _extractQty=p=>String(p.qty||'').replace(/[^0-9]/g,'')||'';
+// ── Template matching — delegated to core/cost-template-matching.js ──
+function _getTmplMatches(o){ return getTmplMatches(costTemplates, o); }
 
-function _similarity(a,b){
-  if(!a||!b)return 0;
-  if(a===b)return 1;
-  if(a.includes(b)||b.includes(a))return 0.9;
-  const wa=a.match(/.{2,}/g)||[];const wb=b.match(/.{2,}/g)||[];
-  const shared=wa.filter(w=>wb.some(x=>x.includes(w)||w.includes(x)));
-  return wa.length?shared.length/Math.max(wa.length,wb.length):0;
+function _wsApplyFixedPrice(type){
+  if(!type||!fixedPrices.length)return;
+  const o=orders.find(x=>x._id===selectedId);if(!o)return;
+  const prodIdx=parseInt(document.getElementById('cf-prod')?.value||'0');
+  const prod=prodIdx>=0?(o.products||[])[prodIdx]:(o.products||[])[0];
+  const fp=lookupFixedPrice(fixedPrices,type,prod?.printType||'');
+  if(!fp)return;
+  const inp=document.getElementById('cf-total');
+  if(inp&&!inp.value){inp.value=fp.amount;}
+  if(fp.supplierId){const sup=document.getElementById('cf-sup');if(sup&&!sup.value)sup.value=fp.supplierId;}
 }
 
-// يحسب score + أسباب التوصية لقالب + منتج
-function _scoreTmpl(t,p){
-  let score=0;const reasons=[];
-  // 1. اسم (40%)
-  const ns=_similarity(_normAr(p.name),_normAr(t.name));
-  score+=ns*0.4;
-  if(ns>=0.85)reasons.push('اسم مطابق');
-  else if(ns>=0.5)reasons.push('اسم مشابه');
-  // 2. كمية (30%)
-  const pQty=parseInt(_extractQty(p))||0;
-  const tQty=parseInt(t.qty||0);
-  if(pQty&&tQty){
-    const r=Math.min(pQty,tQty)/Math.max(pQty,tQty);
-    score+=r*0.3;
-    if(r===1)reasons.push(`كمية ×${pQty} مطابقة`);
-    else if(r>=0.6)reasons.push('كمية قريبة');
-  }else if(!tQty){score+=0.12;}
-  // 3. تغطية الإضافات (25%)
-  const extras=(p.extras||[]);
-  if(extras.length){
-    const ctypes=(t.costItems||[]).map(c=>_normAr(c.type||''));
-    const covered=extras.filter(e=>ctypes.some(ct=>ct.includes(_normAr(e))||_normAr(e).includes(ct)));
-    score+=covered.length/extras.length*0.25;
-    if(covered.length)reasons.push('يشمل '+covered.join('+'));
-  }
-  // 4. نوع الطباعة (5%)
-  if(p.printType){
-    const ptn=p.printType==='digital'?'ديجيتال':'اوفست';
-    if((t.costItems||[]).some(c=>_normAr(c.type||'').includes(_normAr(ptn)))){
-      score+=0.05;reasons.push(p.printType==='digital'?'ديجيتال':'أوفست');
+async function _loadSupplierInsights(o){
+  const el=document.getElementById('ws-sup-insights');if(!el)return;
+  const types=new Set((o.costItems||[]).map(c=>c.type).filter(Boolean));
+  if(!types.size){el.innerHTML='';return;}
+  const prodName=(o.products||[])[0]?.name||'';
+  try{
+    const results=[];
+    for(const type of types){
+      const ranking=await getSupplierRanking({db,type,productName:prodName,limitN:3});
+      if(ranking.length>1)results.push({type,ranking});
     }
-  }
-  return{score,reasons};
-}
-
-// يعيد {matched:[],library:[]} مرتبة بالـ score
-function _getTmplMatches(o){
-  if(!costTemplates.length)return{matched:[],library:[]};
-  const all=[];
-  const seen=new Set();
-  (o.products||[]).forEach((prod,prodIdx)=>{
-    costTemplates.forEach(t=>{
-      const key=t.id+'|'+prodIdx;
-      if(seen.has(key))return; seen.add(key);
-      const{score,reasons}=_scoreTmpl(t,prod);
-      all.push({template:t,prod,prodIdx,score,reasons});
-    });
-  });
-  // إزالة التكرار (أفضل score لكل قالب)
-  const byId={};
-  all.forEach(r=>{if(!byId[r.template.id]||r.score>byId[r.template.id].score)byId[r.template.id]=r;});
-  const ranked=Object.values(byId).sort((a,b)=>b.score-a.score);
-  return{
-    matched:ranked.filter(r=>r.score>=0.55),   // اقتراح قوي
-    library:ranked.filter(r=>r.score>=0.15&&r.score<0.55), // مكتبة ذات صلة
-  };
+    if(!results.length){el.innerHTML='';return;}
+    const trendIcon=d=>d==='up'?'<span style="color:var(--r)">▲</span>':d==='down'?'<span style="color:var(--g)">▼</span>':'<span style="color:var(--dim2)">●</span>';
+    el.innerHTML=`<details class="cost-lib" style="margin-top:8px">
+      <summary style="font-size:var(--fs-xs);font-weight:var(--fw-heavy);cursor:pointer">📊 مقارنة الموردين <span style="color:var(--b)">${results.length} نوع</span> ▾</summary>
+      ${results.map(({type,ranking})=>{
+        const cheapest=ranking[0];
+        return`<div style="margin:8px 0 4px;font-size:var(--fs-xs);font-weight:var(--fw-heavy);color:var(--snow)">${esc(type)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">${ranking.map((s,i)=>{
+          const trend=s.priceHistory?getPriceTrend(s.priceHistory):{direction:'stable'};
+          return`<span style="font-size:11px;background:var(--card);border:1px solid ${i===0?'var(--g)':'var(--border)'};border-radius:8px;padding:3px 8px;display:inline-flex;align-items:center;gap:4px">
+            ${i===0?'<span style="color:var(--g);font-weight:bold">✦</span>':''}
+            ${esc(s.supplierName||'—')}
+            <b>${fn(s.lastPrice||0)} ج</b>
+            ${trendIcon(trend.direction)}
+          </span>`;
+        }).join('')}</div>`;
+      }).join('')}
+    </details>`;
+  }catch(e){console.warn('supplier insights:',e);el.innerHTML='';}
 }
 
 function toast(msg,type='ok'){const c=document.getElementById('toasts');const el=document.createElement('div');el.className=`ti t-${type}`;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3500);}
@@ -697,6 +674,7 @@ onAuthStateChanged(auth,async u=>{
     if(role==='production_agent'){mineOnly=true;syncMine();}
   }
   getCostTemplates(db).then(t=>{costTemplates=t;if(selectedId)renderDetail();}).catch(e=>console.warn('[exec-ws] templates',e));
+  getFixedPrices(db).then(p=>{fixedPrices=p;}).catch(e=>console.warn('[exec-ws] fixed prices',e));
   getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
     if(s.exists())masterCategories=(s.data().items||[]).filter(c=>c.isActive!==false&&c.isSupplierService!==false&&c.isCostItem!==false);
     if(selectedId)renderDetail();
@@ -1205,7 +1183,7 @@ function renderDetail(){
     }).join('');
     let libHTML='';
     const libItems=library.length?library:(matched.length?[]:Object.values(
-      costTemplates.reduce((acc,t)=>{const{score,reasons}=_scoreTmpl(t,products[0]||{});if(!acc[t.id])acc[t.id]={template:t,prod:products[0]||{},prodIdx:0,score,reasons};return acc;},{})
+      costTemplates.reduce((acc,t)=>{const{score,reasons}=scoreTmpl(t,products[0]||{});if(!acc[t.id])acc[t.id]={template:t,prod:products[0]||{},prodIdx:0,score,reasons};return acc;},{})
     ).sort((a,b)=>b.score-a.score));
     if(libItems.length){
       libHTML=`<details class="cost-lib">
@@ -1222,8 +1200,10 @@ function renderDetail(){
         <div class="cf-full"><button type="button" class="act act-save act-full" data-act="savetmpl">حفظ في المكتبة</button></div>
       </div>
     </div>`:'';
+    const supInsightsHTML=`<div id="ws-sup-insights" style="margin-top:8px"></div>`;
     const costCenterLink=`<a href="exec-cost-entry.html?id=${esc(o._id)}" class="act act-ghost act-full" style="margin-top:6px;text-decoration:none;justify-content:center">🧮 فتح مركز التكاليف المتقدم</a>`;
-    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${metricsHTML}${supChipsHTML}${simHTML}${itemsSec}${formHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}${costCenterLink}</div>`;
+    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd">${metricsHTML}${supChipsHTML}${simHTML}${itemsSec}${formHTML}${supInsightsHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}${costCenterLink}</div>`;
+    _loadSupplierInsights(o);
     return;
   }
 
@@ -1400,6 +1380,7 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
     } else if(act==='qefill'){
       const type=btn.dataset.type;
       const sel=document.getElementById('cf-type');if(sel){sel.value=type;}
+      _wsApplyFixedPrice(type);
       const inp=document.getElementById('cf-total');if(inp){inp.focus();inp.select();}
       btn.disabled=false;return;
     } else if(act==='copycosts'){
@@ -1470,6 +1451,7 @@ document.getElementById('ws-detail').addEventListener('click',async e=>{
 
 // ── Supplier per product + #9 Photo upload (change events) ────────
 document.getElementById('ws-detail').addEventListener('change',async e=>{
+  if(e.target.id==='cf-type'){_wsApplyFixedPrice(e.target.value);}
   const sel=e.target.closest('[data-act="setsup"]');
   if(sel&&selectedId){
     const prodIdx=parseInt(sel.dataset.pidx,10),supplierId=sel.value;
