@@ -293,6 +293,27 @@ function _showToast(msg,ok){
   document.body.appendChild(t);
   setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300);},2500);
 }
+async function _inlineImages(root){
+  const imgs=root.querySelectorAll('img[src]');
+  const tasks=[...imgs].map(async img=>{
+    if(img.src.startsWith('data:')) return;
+    try{
+      const r=await fetch(img.src,{mode:'cors'});
+      const b=await r.blob();
+      const dataUrl=await new Promise(res=>{const rd=new FileReader();rd.onload=()=>res(rd.result);rd.readAsDataURL(b);});
+      img.setAttribute('src',dataUrl);
+    }catch(_){}
+  });
+  await Promise.allSettled(tasks);
+}
+function _fixArabicForCapture(root){
+  const style=document.createElement('style');
+  style.id='_h2c_fix';
+  style.textContent='._h2c_active *{letter-spacing:0!important;text-transform:none!important;word-spacing:0!important;}';
+  document.head.appendChild(style);
+  root.classList.add('_h2c_active');
+  return ()=>{root.classList.remove('_h2c_active');style.remove();};
+}
 async function captureScreenshot(){
   const btn=document.getElementById('screenshot-btn');
   const origText=btn.textContent;
@@ -301,15 +322,17 @@ async function captureScreenshot(){
     await _loadH2C();
     const target=document.getElementById('sheet-root');
     const wrapper=document.querySelector('.sheet-wrapper');
-    // pre-capture: maximize clarity — remove wrapper padding/margin, force white bg
     const origWS=wrapper.style.cssText;
     wrapper.style.cssText='max-width:820px;margin:0 auto;padding:12px;background:#fff;';
+    await _inlineImages(target);
+    const undoArabicFix=_fixArabicForCapture(target);
     const canvas=await html2canvas(target,{
-      scale:3,useCORS:true,allowTaint:true,
+      scale:3,useCORS:true,allowTaint:false,
       backgroundColor:'#ffffff',
       scrollX:0,scrollY:-window.scrollY,
       windowWidth:860,
     });
+    undoArabicFix();
     wrapper.style.cssText=origWS;
     const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.92));
     const fileName='order-'+(document.title.replace(/[^a-zA-Z0-9؀-ۿ]/g,'-'))+'.jpg';
