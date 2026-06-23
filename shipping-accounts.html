@@ -409,6 +409,7 @@ import { setText, gv, fmtNum as _fmtNum, fmtNow as _fmtNow } from "./core/dom-ut
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { isShipPendingSettle, isShipTerminal, isShipReadyToClose, detectOrderIssues, validateSettle, validateReturn, buildSettlementUpdates } from "./orders.js";
+import { expectedFromCompany } from "./core/order-math.js";
 import { shippingActions } from "./shipping-actions.js";
 import { orderActions } from "./order-actions.js";
 import { processFullReturn, processPartialReturn, healSingleOrder, healOrdersBulk, markOrderManualSettled, saveShippingFeeEdit } from "./shipping-accounts-actions.js";
@@ -587,10 +588,10 @@ window.render=function(){
     const isReady=SETTLE_READY_STG.has(o.shipStage||'ready');
     // المسؤولية التاريخية للشركة:
     //  ـ مسوّى → shipSettledAmount (المبلغ اللي كانت بتدين به الشركة وقت التسوية)
-    //  ـ غير مسوّى → الباقي حالياً (FC.getDueByCo)
-    const dueHist=isSettled?(parseFloat(o.shipSettledAmount)||0):FC.getDueByCo(o);
+    //  ـ غير مسوّى → المتوقع من الشركة (بعد خصم تكلفة الشحن)
+    const dueHist=isSettled?(parseFloat(o.shipSettledAmount)||0):expectedFromCompany(o);
     // الـ "باقي حالياً" لعرض الأوردر الفردي
-    const dueRem=isSettled?0:FC.getDueByCo(o);
+    const dueRem=isSettled?0:expectedFromCompany(o);
     coMap[co].allOrders.push({...o,due:dueRem,isReturn,isSettled});
     if(isReturn){coMap[co].returnsCount++;}
     else{
@@ -698,7 +699,7 @@ window.render=function(){
         ${co.pendingOrds.length?`
         <div style="font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:8px">⏳ بانتظار التسوية (${co.pendingOrds.length})</div>
         ${co.pendingOrds.map(o=>{
-          const paid=FC.getPaid(o);const due=FC.getDueByCo(o);
+          const paid=FC.getPaid(o);const due=expectedFromCompany(o);
           const noCost=!(o.costItems||[]).length;
           // ── Self-healer
           const issues=detectOrderIssues(o);
@@ -821,10 +822,10 @@ window.openSettle=function(coName){
     !returns.some(r=>r.orderId===o._id&&r.status!=='cancelled')
   );
 
-  const totalDue=coOrds.reduce((s,o)=>s+FC.getDueByCo(o),0);
+  const totalDue=coOrds.reduce((s,o)=>s+expectedFromCompany(o),0);
   const coReturnsCount=returns.filter(r=>r.companyName===coName&&r.status!=='cancelled').length;
   // مؤجلات = أوردرات يوجد دفع مسبق لكن باقي جزء منها
-  const deferredCount=coOrds.filter(o=>FC.getPaid(o)>0&&FC.getDueByCo(o)>0).length;
+  const deferredCount=coOrds.filter(o=>FC.getPaid(o)>0&&expectedFromCompany(o)>0).length;
 
   // Section A
   setText('settle-co-name',coName);
@@ -847,7 +848,7 @@ window.openSettle=function(coName){
     } else {
       const buildRow=(o,isReady)=>{
         const paid=FC.getPaid(o);
-        const due=FC.getDueByCo(o);
+        const due=expectedFromCompany(o);
         const sale=parseFloat(o.salePrice)||0;
         const stg=o.shipStage||'ready';
         const stgCol=SETTLE_STAGE_COL[stg]||'var(--dim2)';
@@ -885,7 +886,7 @@ window.openSettle=function(coName){
   }
 
   // تحديث totalDue ليشمل الجاهزة فقط في الـ auto-fill
-  const readyDue=readyOrds.reduce((s,o)=>s+FC.getDueByCo(o),0);
+  const readyDue=readyOrds.reduce((s,o)=>s+expectedFromCompany(o),0);
 
   // Section C — ملء المحافظ واختيار افتراضي
   const wSel=document.getElementById('settle-wallet');
