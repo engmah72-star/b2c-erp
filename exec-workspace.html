@@ -363,6 +363,29 @@
 .pin-btn{position:absolute;top:6px;inset-inline-end:6px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--dim2);font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s}
 .wl-card:hover .pin-btn,.pin-btn.pinned{opacity:1}
 .pin-btn.pinned{color:var(--y);border-color:rgba(255,193,7,.4);background:rgba(255,193,7,.08)}
+
+/* ══ Agent Expenses ══════════════════════════════════════════════════ */
+.agent-cat-chips{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+.agent-cat-chip{padding:4px 10px;border-radius:20px;border:1px solid var(--line);background:transparent;color:var(--dim2);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;white-space:nowrap}
+.agent-cat-chip:hover{border-color:var(--b);color:var(--snow)}
+.agent-cat-chip.sel{background:var(--b);color:#fff;border-color:var(--b)}
+.agent-exp-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:var(--fs-xs)}
+.agent-exp-row:last-child{border-bottom:none}
+.agent-exp-total{display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:2px solid var(--line);font-size:var(--fs-sm);font-weight:var(--fw-heavy)}
+
+/* ══ Admin section ══════════════════════════════════════════════════ */
+.adm-section{margin:12px 0;background:rgba(255,61,110,.04);border:1px solid rgba(255,61,110,.15);border-radius:10px;padding:12px}
+.adm-title{font-size:var(--fs-sm);font-weight:var(--fw-extra);color:var(--r);margin-bottom:10px}
+.adm-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}
+.adm-field-lbl{font-size:var(--fs-xs);color:var(--dim2);margin-bottom:3px;font-weight:var(--fw-bold)}
+.adm-inp{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);color:var(--snow);font-size:var(--fs-sm);font-family:inherit;font-weight:var(--fw-bold)}
+.adm-inp:focus{outline:none;border-color:var(--b)}
+.adm-preview{font-size:var(--fs-xs);color:var(--dim2);padding:6px 0;font-weight:var(--fw-bold)}
+.adm-btn{width:100%;padding:9px;border-radius:8px;border:1px solid;font-size:var(--fs-sm);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit;margin-top:4px}
+.adm-btn-save{background:rgba(255,193,7,.1);border-color:rgba(255,193,7,.3);color:var(--y)}
+.adm-btn-save:hover{background:rgba(255,193,7,.2)}
+.adm-btn-del{background:rgba(255,61,110,.08);border-color:rgba(255,61,110,.25);color:var(--r)}
+.adm-btn-del:hover{background:rgba(255,61,110,.15)}
 </style>
 </head>
 <body>
@@ -496,6 +519,7 @@ import { auth, db } from "./core/firebase-init.js";
 import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
+import { productionActions } from "./production-actions.js";
 import { canSeeField } from "./core/permissions-matrix.js";
 import { getCostTemplates, saveCostTemplate } from "./core/cost-template-actions.js";
 import { getTmplMatches, scoreTmpl } from "./core/cost-template-matching.js";
@@ -534,6 +558,8 @@ let __started=false;
 let shiftStart=Date.now(), shiftDone=0, shiftCosts=0;
 let pinnedIds=new Set(JSON.parse(localStorage.getItem('exec-pinned')||'[]'));
 let prodChecks={};
+let _agentCat='نقل';
+const isAdminRole=()=>['admin','operation_manager'].includes(me.role);
 
 // ── Helpers ────────────────────────────────────────────────────────
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG',{maximumFractionDigits:0});
@@ -651,6 +677,66 @@ async function _loadSupplierInsights(o){
 }
 
 function toast(msg,type='ok'){const c=document.getElementById('toasts');const el=document.createElement('div');el.className=`ti t-${type}`;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3500);}
+
+// ── Agent expense helpers ──
+window.selAgentCat=function(el,cat){_agentCat=cat;document.querySelectorAll('.agent-cat-chip').forEach(c=>c.classList.remove('sel'));el.classList.add('sel');};
+window.saveAgentExpense=async function(){
+  if(!selectedId)return;
+  const amount=parseFloat(document.getElementById('agent-exp-amt')?.value||0);
+  if(amount<=0)return toast('أدخل مبلغ صحيح','err');
+  const note=document.getElementById('agent-exp-note')?.value||'';
+  const r=await orderActions.addAgentExpense({db,orderId:selectedId,type:_agentCat,amount,note,userId:me.uid,userName:me.name});
+  if(!r?.ok)return toast((r?.errors||[])[0]||'فشل التسجيل','err');
+  const amtEl=document.getElementById('agent-exp-amt');if(amtEl)amtEl.value='';
+  const noteEl=document.getElementById('agent-exp-note');if(noteEl)noteEl.value='';
+  toast('تم تسجيل المصروف ✓','ok');
+};
+
+// ── Waybill ──
+window.openWaybill=function(){if(!selectedId)return;window.open('waybill.html?id='+selectedId,'_blank');};
+
+// ── Admin finance ──
+window.calcAdmRemaining=function(){
+  const sale=parseFloat(document.getElementById('adm-sale-price')?.value)||0;
+  const paid=parseFloat(document.getElementById('adm-paid')?.value)||0;
+  const disc=parseFloat(document.getElementById('adm-discount')?.value)||0;
+  const net=Math.max(0,sale-disc);
+  const rem=Math.max(0,net-paid);
+  const el=document.getElementById('adm-remaining-preview');
+  if(el)el.textContent=`الصافي: ${fn(net)} ج | الباقي: ${fn(rem)} ج`;
+};
+window.saveAdminFinance=async function(){
+  if(!selectedId)return;
+  const o=orders.find(x=>x._id===selectedId);if(!o)return;
+  const sale=parseFloat(document.getElementById('adm-sale-price')?.value)||0;
+  const paid=parseFloat(document.getElementById('adm-paid')?.value)||0;
+  const discount=parseFloat(document.getElementById('adm-discount')?.value)||0;
+  const oldPaid=parseFloat(o.totalPaid)||0;
+  if(Math.abs(paid-oldPaid)>0.01){toast('تعديل المدفوع يحتاج صفحة الحسابات','err');return;}
+  const changes={salePrice:sale,discount};
+  const changesLabel=`سعر ${fn(sale)} ج | خصم ${fn(discount)} ج`;
+  const r=await orderActions.editOrderPayment({db,orderId:selectedId,changes,changesLabel,userId:me.uid,userName:me.name});
+  if(!r?.ok)return toast((r?.errors||[])[0]||'فشل التعديل','err');
+  toast('تم التعديل المالي ✓','ok');
+};
+window.deleteOrderFull=async function(){
+  if(!selectedId)return;
+  const o=orders.find(x=>x._id===selectedId);if(!o)return;
+  if(!confirm(`⚠️ حذف أوردر "${o.clientName}" نهائياً؟\nلا يمكن التراجع.`))return;
+  if(!confirm('تأكيد الحذف النهائي؟'))return;
+  const r=await orderActions.adminDeleteOrder({orderId:selectedId,reason:'حذف من مركز التنفيذ',userId:me.uid,userName:me.name,wallets});
+  if(!r?.ok)return toast((r?.errors||[])[0]||'فشل الحذف','err');
+  selectedId=null;document.body.classList.remove('detail-open');renderList();
+  toast(r.idempotent?'تم الحذف مسبقاً':'تم الحذف النهائي ✓','ok');
+};
+window.finalizeCosts=async function(prodIdx){
+  const o=orders.find(x=>x._id===selectedId);if(!o)return;
+  const prod=prodIdx>=0?(o.products||[])[prodIdx]:(o.products||[])[0];
+  if(!prod?.productId)return toast('المنتج غير مرتبط بالكتالوج','err');
+  const r=await orderActions.finalizeProductCosts({db,orderId:selectedId,productId:prod.productId,prodIdx,userId:me.uid,userName:me.name});
+  if(!r?.ok)return toast((r?.errors||[])[0]||'فشل الحفظ','err');
+  toast(`تم حفظ ${r.itemCount} بند (${fn(r.total)} ج) في سجل المنتج ✓`,'ok');
+};
 
 window.toggleNav=()=>{document.querySelector('.sidenav')?.classList.toggle('mob-open');document.getElementById('nav-ov')?.classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav')?.classList.remove('mob-open');document.getElementById('nav-ov')?.classList.remove('show');};
@@ -1002,9 +1088,11 @@ function renderDetail(){
   const imgSrc=designUrl(o);
 
   // ── header (compact) ──
+  const agentExps=o.agentExpenses||[];
   const tabsHTML=`<div class="wd-tabs">
     <button type="button" class="wdt${detailTab==='main'?' on':''}" onclick="switchDetailTab('main')">🏭 التنفيذ</button>
     ${canCost()?`<button type="button" class="wdt${detailTab==='costs'?' on':''}" onclick="switchDetailTab('costs')">💰 التكاليف${costs.length?' ('+costs.length+')':''}</button>`:''}
+    <button type="button" class="wdt${detailTab==='agent'?' on':''}" onclick="switchDetailTab('agent')">👷 المندوب${agentExps.length?' ('+agentExps.length+')':''}</button>
     <button type="button" class="wdt${detailTab==='timeline'?' on':''}" onclick="switchDetailTab('timeline')">📋 السجل (${(o.timeline||[]).length})</button>
   </div>`;
 
@@ -1021,6 +1109,28 @@ function renderDetail(){
     </div>
     <a href="order.html?id=${esc(o._id)}" class="wd-link">📋 تتبع</a>
   </div>`;
+
+  // ── Agent expenses tab ──
+  if(detailTab==='agent'){
+    const expTotal=agentExps.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
+    const expListHTML=agentExps.length
+      ?agentExps.map(e=>`<div class="agent-exp-row"><span>${esc(e.type||'—')}${e.note?' · '+esc(e.note):''}</span><span style="font-weight:var(--fw-heavy);color:var(--snow)">${fn(e.amount)} ج</span></div>`).join('')
+      :`<div style="color:var(--dim2);font-size:var(--fs-sm);padding:8px 0">لا توجد مصروفات بعد</div>`;
+    const agentTabHTML=`<div class="wd">
+      <div class="wd-sec"><div class="wd-sec-hdr">👷 مصروفات المندوب</div><div class="wd-sec-body">
+        ${expListHTML}
+        ${agentExps.length?`<div class="agent-exp-total"><span>الإجمالي</span><span style="color:var(--b)">${fn(expTotal)} ج</span></div>`:''}
+      </div></div>
+      <div class="wd-sec"><div class="wd-sec-hdr">➕ تسجيل مصروف</div><div class="wd-sec-body" style="gap:8px">
+        <div class="agent-cat-chips">${['نقل','وقود','تغليف','طباعة اضافية','متفرقات'].map(c=>`<button type="button" class="agent-cat-chip${_agentCat===c?' sel':''}" onclick="selAgentCat(this,'${esc(c)}')">${c==='نقل'?'🚗':c==='وقود'?'⛽':c==='تغليف'?'📦':c==='طباعة اضافية'?'🖨️':'📌'} ${esc(c)}</button>`).join('')}</div>
+        <input type="number" class="adm-inp" id="agent-exp-amt" placeholder="المبلغ (ج)" min="0">
+        <input type="text" class="adm-inp" id="agent-exp-note" placeholder="ملاحظة (اختياري)">
+        <button type="button" class="act act-save act-full" onclick="saveAgentExpense()">💰 تسجيل المصروف</button>
+      </div></div>
+    </div>`;
+    panel.innerHTML=hdrHTML+tabsHTML+agentTabHTML;
+    return;
+  }
 
   // ── Timeline tab ──
   if(detailTab==='timeline'){
@@ -1303,7 +1413,23 @@ function renderDetail(){
     ${prodsHTML}
     ${o.productionAgent?agentHTML:''}
     ${noteHTML}
-    ${shipBtn}
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      ${shipBtn}
+      <button type="button" class="act" style="flex-shrink:0;padding:13px 16px;background:rgba(59,158,255,.08);border-color:rgba(59,158,255,.3);color:var(--b)" onclick="openWaybill()">🧾</button>
+    </div>
+    ${canCost()&&costs.length?`<div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">${products.map((p,i)=>p.productId?`<button type="button" class="act act-ghost" style="flex:1;justify-content:center;font-size:var(--fs-xs)" onclick="finalizeCosts(${i})">✅ حفظ تكاليف ${esc(p.name||('منتج '+(i+1)))} في السجل</button>`:'').join('')}</div>`:''}
+    ${isAdminRole()?`<div class="adm-section">
+      <div class="adm-title">⚙️ إدارة الأوردر (أدمن)</div>
+      <div style="font-size:var(--fs-xs);color:var(--dim2);margin-bottom:8px;font-weight:var(--fw-bold)">💰 تعديل مالي</div>
+      <div class="adm-grid">
+        <div><div class="adm-field-lbl">السعر (ج)</div><input class="adm-inp" id="adm-sale-price" type="number" value="${o.salePrice||0}" oninput="calcAdmRemaining()"></div>
+        <div><div class="adm-field-lbl">المدفوع (ج)</div><input class="adm-inp" id="adm-paid" type="number" value="${o.totalPaid||o.deposit||o.paid||0}" disabled title="التعديل من صفحة الحسابات"></div>
+      </div>
+      <div style="margin-bottom:6px"><div class="adm-field-lbl">الخصم (ج)</div><input class="adm-inp" id="adm-discount" type="number" value="${o.discount||0}" oninput="calcAdmRemaining()"></div>
+      <div class="adm-preview" id="adm-remaining-preview">الصافي: ${fn(Math.max(0,(o.salePrice||0)-(o.discount||0)))} ج | الباقي: ${fn(Math.max(0,(o.salePrice||0)-(o.discount||0)-(o.totalPaid||o.deposit||o.paid||0)))} ج</div>
+      <button type="button" class="adm-btn adm-btn-save" onclick="saveAdminFinance()">✓ حفظ التعديل المالي</button>
+      <button type="button" class="adm-btn adm-btn-del" onclick="deleteOrderFull()">🗑 حذف الأوردر نهائياً</button>
+    </div>`:``}
     <button type="button" class="act act-full" style="background:rgba(255,61,110,.06);border-color:rgba(255,61,110,.2);color:var(--r);margin-top:4px" onclick="openCancelModal(false,'${esc(o._id)}')">❌ إلغاء الأوردر</button>
   </div>`;
 }
