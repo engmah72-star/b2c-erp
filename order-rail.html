@@ -131,6 +131,24 @@ html[dir=rtl] .panel{inset-inline-start:auto;inset-inline-end:0;border-inline-en
 </div>
 <div class="nav-overlay" id="nav-ov" onclick="document.querySelector('.sidenav')?.classList.remove('mob-open');this.classList.remove('show')"></div>
 
+<!-- Incident Modal -->
+<div class="overlay" id="ov-incident" style="">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head"><span class="modal-title">⚠️ تسجيل إخفاق</span><button type="button" class="modal-x" onclick="closeIncidentModal()">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:12px;margin-bottom:14px;padding:10px;background:var(--bg3);border-radius:var(--rad);border:1px solid var(--line)">
+        <div style="font-size:12px;font-weight:700;color:var(--dim2)">👤 الموظف: <b style="color:var(--snow)" id="inc-emp-name">—</b></div>
+        <div style="font-size:12px;font-weight:700;color:var(--dim2)">📋 أوردر: <b style="color:var(--snow);direction:ltr;font-family:monospace" id="inc-order-id">—</b></div>
+      </div>
+      <div class="fg"><label>سبب الإخفاق *</label><select class="inp" id="inc-reason"></select></div>
+      <div class="fg"><label>درجة الخطورة</label><select class="inp" id="inc-severity"><option value="low">منخفضة</option><option value="medium">متوسطة</option><option value="high">مرتفعة</option></select></div>
+      <div class="fg"><label>وصف / ملاحظات</label><textarea class="inp" id="inc-desc" rows="3" placeholder="تفاصيل إضافية..."></textarea></div>
+    </div>
+    <div class="modal-foot"><button type="button" class="btn btn-ghost" onclick="closeIncidentModal()">إلغاء</button><button type="button" class="btn btn-r" onclick="submitIncident()">⚠️ تسجيل الإخفاق</button></div>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+
 <!-- ══ لوحة تفاصيل الأوردر ══ -->
 <div class="panel-ov" id="panel-ov" onclick="if(event.target===this)closePanel()">
   <div class="panel">
@@ -143,9 +161,12 @@ html[dir=rtl] .panel{inset-inline-start:auto;inset-inline-end:0;border-inline-en
 import { auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { doc, getDoc, onSnapshot, collection, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { STAGES, getStageResponsibilities, getOrderDates, getOrderAlerts, skeletonCards, emptyState, productStatusBadge, fn } from "./orders.js";
+import { STAGES, getStageResponsibilities, getOrderDates, getOrderAlerts, skeletonCards, emptyState, productStatusBadge, fn, STAGE_OWNERSHIP } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 import { initPageShortcuts } from './core/page-shortcuts.js';
+import { ensureOrderThread } from "./inbox-actions.js";
+import { addIncident } from "./employee-actions.js";
+import { DEFAULT_INCIDENT_REASONS, REASON_TYPE_META } from "./core/incident-reasons.js";
 
 const $ = id => document.getElementById(id);
 const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -375,6 +396,17 @@ function renderPanel(o) {
     html += `</div>`;
   }
 
+  // Quick actions
+  const stageOwner = STAGE_OWNERSHIP[cur];
+  const empId = stageOwner ? (o[stageOwner] || '') : '';
+  const empNameMap = { designerId:'designerName', printerId:'printerName', productionAgent:'productionAgentName', shippingOfficerId:'shippingOfficerName' };
+  const empName = stageOwner ? (o[empNameMap[stageOwner]] || '') : '';
+  html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+    <button type="button" class="btn btn-ghost" style="flex:1" onclick="quickConversation('${esc(o._id)}')">💬 محادثة</button>
+    <button type="button" class="btn btn-ghost" style="flex:1" onclick="quickNote('${esc(o._id)}')">📝 ملاحظة</button>
+    ${empId ? `<button type="button" class="btn btn-ghost" style="flex:1;color:var(--r)" onclick="quickIncident('${esc(o._id)}','${esc(empId)}','${esc(empName)}','${esc(o.clientName || '')}')">⚠️ إخفاق</button>` : ''}
+  </div>`;
+
   // فتح الصفحة الكاملة
   html += `<button type="button" class="btn btn-b w-full" style="margin-top:6px" onclick="openOrder('${esc(o._id)}')">↗ فتح صفحة الأوردر الكاملة</button>`;
 
@@ -413,6 +445,77 @@ window.purgeOrderFromRail = async function (id) {
     console.error(e);
     alert('❌ خطأ: ' + (e?.message || e));
   }
+};
+
+// ── Toast helper ──
+function toast(m,t=''){const c=$('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+(t==='ok'?'ok':t==='err'?'err':'');el.textContent=m;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
+
+// ── Quick Conversation ──
+window.quickConversation = async function(id) {
+  const o = orders.find(x => x._id === id);
+  if (!o) return toast('لم يتم العثور على الأوردر', 'err');
+  try {
+    toast('جاري فتح المحادثة...', '');
+    await ensureOrderThread({ db, order: o, currentUserId: currentUser?.uid || '', extraParticipants: [] });
+    const convId = 'order_' + id;
+    if (typeof window.navigatePage === 'function') window.navigatePage('inbox.html?conv=' + encodeURIComponent(convId));
+    else location.href = 'inbox.html?conv=' + encodeURIComponent(convId);
+  } catch (e) { toast('خطأ: ' + (e.message || ''), 'err'); }
+};
+
+// ── Quick Note ──
+window.quickNote = async function(id) {
+  const note = prompt('أضف ملاحظة على الأوردر:', '');
+  if (note === null) return;
+  if (!note.trim()) return toast('الملاحظة فارغة', 'err');
+  try {
+    const r = await orderActions.updateOrderNotes({ db, orderId: id, notes: note.trim(), userId: currentUser?.uid || '', userName });
+    if (!r.ok) return toast((r.errors || []).join(' · ') || 'فشل الحفظ', 'err');
+    toast('تم حفظ الملاحظة', 'ok');
+  } catch (e) { toast('خطأ: ' + (e.message || ''), 'err'); }
+};
+
+// ── Quick Incident ──
+let _incidentCtx = null;
+window.quickIncident = function(orderId, empId, empName, clientName) {
+  _incidentCtx = { orderId, empId, empName, clientName };
+  const modal = $('ov-incident');
+  if (!modal) return;
+  $('inc-emp-name').textContent = empName || '—';
+  $('inc-order-id').textContent = orderId?.slice(-8) || '';
+  // populate reasons dropdown
+  const sel = $('inc-reason');
+  if (sel) {
+    const grouped = {};
+    DEFAULT_INCIDENT_REASONS.forEach(r => { const g = REASON_TYPE_META[r.type]?.lbl || r.type; if (!grouped[g]) grouped[g] = []; grouped[g].push(r); });
+    sel.innerHTML = '<option value="">— اختر السبب —</option>' + Object.entries(grouped).map(([g, items]) => '<optgroup label="' + esc(g) + '">' + items.map(r => '<option value="' + esc(r.code) + '">' + esc(r.label) + '</option>').join('') + '</optgroup>').join('');
+  }
+  $('inc-severity').value = 'low';
+  $('inc-desc').value = '';
+  modal.classList.add('open');
+};
+window.closeIncidentModal = function() { const m = $('ov-incident'); if (m) m.classList.remove('open'); _incidentCtx = null; };
+window.submitIncident = async function() {
+  if (!_incidentCtx) return;
+  const reasonCode = $('inc-reason')?.value || '';
+  const severity = $('inc-severity')?.value || 'low';
+  const desc = $('inc-desc')?.value?.trim() || '';
+  if (!reasonCode) return toast('اختر سبب الإخفاق', 'err');
+  const reason = DEFAULT_INCIDENT_REASONS.find(r => r.code === reasonCode);
+  const typeMeta = reason ? REASON_TYPE_META[reason.type] : null;
+  try {
+    const r = await addIncident({
+      db, employeeId: _incidentCtx.empId, employeeName: _incidentCtx.empName,
+      authUid: currentUser?.uid || '', date: new Date().toISOString().slice(0, 10),
+      type: reason?.type || 'other', severity, reasonCode, reasonLabel: reason?.label || reasonCode,
+      title: (typeMeta?.lbl || 'إخفاق') + ' — أوردر ' + (_incidentCtx.orderId?.slice(-8) || ''),
+      description: desc, orderId: _incidentCtx.orderId, clientName: _incidentCtx.clientName || '',
+      userId: currentUser?.uid || '', userName,
+    });
+    if (!r.ok) return toast((r.errors || []).join(' · ') || 'فشل التسجيل', 'err');
+    toast('تم تسجيل الإخفاق' + (r.escalated ? ' ⚠️ تصعيد' : ''), 'ok');
+    closeIncidentModal();
+  } catch (e) { toast('خطأ: ' + (e.message || ''), 'err'); }
 };
 
 window.doLogout = async function () {
