@@ -6,7 +6,7 @@
 <link rel="manifest" href="manifest.json">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0f1e">
-<title>Business2Card — مساحة الطباعة</title>
+<title>Business2Card — الطباعة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -102,16 +102,15 @@
   <div class="nav-scroll" id="nav-links"></div>
   <div class="nav-foot"><div class="nav-user" onclick="doLogout()"><div class="nav-avatar" id="nav-av">A</div><div><div class="nav-user-name" id="nav-name">—</div><div class="nav-user-role">تسجيل خروج</div></div></div></div>
 </aside>
-<app-sidebar active current="print.html"></app-sidebar>
+<app-sidebar active current="print-workspace.html"></app-sidebar>
 
 <div class="main" style="overflow:hidden;padding:0;display:flex;flex-direction:column">
   <div class="topbar" style="flex-shrink:0">
     <div class="topbar-left">
       <button type="button" class="mob-menu-btn" onclick="toggleNav()">☰</button>
-      <div><h1 style="font-size:17px;font-weight:var(--fw-heavy)">🖨️ مساحة الطباعة</h1><p id="sub" class="txt-meta-sm">جاري التحميل...</p></div>
+      <div><h1 style="font-size:17px;font-weight:var(--fw-heavy)">🖨️ الطباعة</h1><p id="sub" class="txt-meta-sm">جاري التحميل...</p></div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
-      <a href="print.html" style="padding:7px 13px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);text-decoration:none">← قائمة الطباعة</a>
     </div>
   </div>
 
@@ -238,6 +237,26 @@
   </div>
 </div>
 
+<!-- edit-amounts (admin only) -->
+<div class="overlay" id="ov-edit-amounts">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-head"><span class="modal-title">💰 تعديل المبالغ</span><button type="button" class="modal-x" onclick="cM('edit-amounts')">✕</button></div>
+    <div class="modal-body">
+      <div class="fg"><label>المبلغ الكلي للأوردر (ج)</label><input class="inp" id="ea-sale" type="number" min="0" step="0.01" placeholder="0" oninput="updateEaPreview()"></div>
+      <div class="fg"><label>المبلغ المقدم / المحصّل (ج)</label><input class="inp" id="ea-paid" type="number" min="0" step="0.01" placeholder="0" oninput="updateEaPreview()"><div id="ea-paid-hint" style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px"></div></div>
+      <div class="fg" id="ea-wallet-fg" style="display:none">
+        <label>طريقة الدفع (مزامنة المحفظة) <span style="color:var(--r);font-weight:var(--fw-heavy)">*</span></label>
+        <div id="ea-wallets" style="display:flex;gap:var(--space-sm);flex-wrap:wrap"></div>
+        <input type="hidden" id="ea-wid"><input type="hidden" id="ea-wname">
+        <div style="font-size:var(--fs-xs);color:var(--dim2);margin-top:4px">فرق المقدم سيُسجَّل دفعة/استرداداً على هذه المحفظة.</div>
+      </div>
+      <div class="fg"><label>سبب التعديل (اختياري)</label><input class="inp" id="ea-reason" type="text" placeholder="مثال: تصحيح سعر · خصم متفق عليه..."></div>
+      <div id="ea-summary" style="background:var(--bg3);border-radius:var(--rad);padding:var(--space-md);font-size:var(--fs-base)"></div>
+    </div>
+    <div class="modal-foot"><button type="button" class="btn btn-ghost" onclick="cM('edit-amounts')">إلغاء</button><button type="button" class="btn btn-g" onclick="saveEditAmounts()">✓ حفظ المبالغ</button></div>
+  </div>
+</div>
+
 <!-- pick-prod -->
 <div class="overlay" id="ov-pick-prod">
   <div class="modal" style="max-width:380px">
@@ -295,7 +314,7 @@ import { masterListsActions } from "./master-lists-actions.js";
 import { initPageShortcuts, updatePageShortcuts } from './core/page-shortcuts.js';
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 
-function buildSidebar(ud){ B2CSidebar.build(ud,'print.html'); }
+function buildSidebar(ud){ B2CSidebar.build(ud,'print-workspace.html'); }
 
 const FC=window.FinanceCore||window.FC||null;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
@@ -998,11 +1017,14 @@ function renderFooter(o){
   const el=document.getElementById('pw-footer-actions');if(!el)return;
   const sale=getNet(o),rem=getRem(o);
   const isAdm=['admin','operation_manager','customer_service'].includes(currentRole);
+  const noOwner=!o.printerId;
   el.innerHTML=`
     <button type="button" onclick="openProductionSheet('${o._id}')" class="pw-btn pw-btn-b" style="padding:8px 14px">🖨️ ملخص تنفيذ</button>
     <button type="button" onclick="window.open('waybill.html?id=${o._id}','_blank')" class="pw-btn" style="padding:8px 14px">🧾 البوليصة</button>
+    ${noOwner?`<button type="button" onclick="pickupOrder('${o._id}')" class="pw-btn pw-btn-p" style="padding:8px 14px">📥 التقط</button>`:''}
     ${sale>0&&rem>0?`<button type="button" onclick="openCollect()" class="pw-btn pw-btn-g" style="padding:8px 14px">💰 تحصيل</button>`:''}
     ${sale>0&&rem>0?`<button type="button" onclick="openPrintAdvance()" class="pw-btn" style="padding:8px 14px">💵 مقدم</button>`:''}
+    ${isAdm?`<button type="button" onclick="openEditAmounts()" class="pw-btn" style="padding:8px 14px">💰 تعديل المبالغ</button>`:''}
     ${isAdm?`<button type="button" onclick="openReject()" class="pw-btn pw-btn-r" style="padding:8px 14px">↩️ رفض</button>`:''}`;
 }
 
@@ -1434,6 +1456,85 @@ window.savePrintAdvance=async function(){
   cM('print-advance');toast(`✅ مقدم ${fn(amt)} ج`,'ok');window.__paReceiptFile=null;
 };
 
+// ── Pickup (assign self as printer) ──
+window.pickupOrder=async function(orderId){
+  const o=orders.find(x=>x._id===orderId);if(!o)return;
+  if(o.printerId)return toast('⚠️ هذا الأوردر له مالك بالفعل','err');
+  if(!confirm(`التقاط أوردر ${o.orderId||orderId.slice(-6)} (${o.clientName||''})؟`))return;
+  const uid=auth?.currentUser?.uid||'';
+  const r=await orderActions.assignPrinter({db,orderId,printerId:uid,printerName:userName,userId:uid,userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('✅ تم الالتقاط','ok');
+};
+
+// ── Edit Amounts (admin only) ──
+window.openEditAmounts=function(){
+  if(!activeOrder)return;const o=activeOrder;
+  const sale=parseFloat(o.salePrice)||0;const paid=parseFloat(o.totalPaid)||0;
+  window.__eaOrig={sale,paid};
+  const saleInp=document.getElementById('ea-sale');if(saleInp)saleInp.value=sale||'';
+  const paidInp=document.getElementById('ea-paid');if(paidInp)paidInp.value=paid||'';
+  const reasonInp=document.getElementById('ea-reason');if(reasonInp)reasonInp.value='';
+  const wid=document.getElementById('ea-wid');if(wid)wid.value='';
+  const wname=document.getElementById('ea-wname');if(wname)wname.value='';
+  renderEaWallets();updateEaPreview();
+  document.getElementById('ov-edit-amounts')?.classList.add('open');
+};
+function renderEaWallets(){
+  const el=document.getElementById('ea-wallets');if(!el)return;
+  el.innerHTML=wallets.map(w=>`<button type="button" onclick="selectEaWallet('${w._id}','${(w.name||'محفظة').replace(/'/g,"\\'")}')" id="ew-${w._id}" style="padding:6px 14px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${w.name||'محفظة'} · ${fn(w.balance)} ج</button>`).join('');
+}
+window.selectEaWallet=function(id,name){
+  document.getElementById('ea-wid').value=id;document.getElementById('ea-wname').value=name;
+  document.querySelectorAll('[id^="ew-"]').forEach(b=>{b.style.background='var(--bg3)';b.style.color='var(--dim2)';b.style.borderColor='var(--line)';});
+  const b=document.getElementById('ew-'+id);if(b){b.style.background='rgba(0,217,126,.12)';b.style.color='var(--g)';b.style.borderColor='var(--g)';}
+};
+window.updateEaPreview=function(){
+  if(!activeOrder)return;const o=activeOrder;
+  const orig=window.__eaOrig||{sale:0,paid:0};
+  const newSale=parseFloat(document.getElementById('ea-sale')?.value)||0;
+  const newPaid=parseFloat(document.getElementById('ea-paid')?.value)||0;
+  const disc=parseFloat(o.discount)||0;const cFee=parseFloat(o.customerShipFee)||0;
+  const newRem=Math.max(0,newSale+cFee-disc-newPaid);
+  const paidDiff=newPaid-orig.paid;const paidChanged=Math.abs(paidDiff)>0.01;
+  const walletFg=document.getElementById('ea-wallet-fg');if(walletFg)walletFg.style.display=paidChanged?'':'none';
+  const hint=document.getElementById('ea-paid-hint');
+  if(hint){
+    if(!paidChanged){hint.style.color='var(--dim2)';hint.textContent='';}
+    else if(paidDiff>0){hint.style.color='var(--g)';hint.textContent=`▲ دفعة جديدة ${fn(paidDiff)} ج تُضاف للمحفظة`;}
+    else{hint.style.color='var(--r)';hint.textContent=`▼ استرداد ${fn(Math.abs(paidDiff))} ج يُخصم من المحفظة`;}
+  }
+  const sum=document.getElementById('ea-summary');
+  if(sum)sum.innerHTML=`
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">الإجمالي الجديد</span><span style="font-weight:var(--fw-extra)">${fn(newSale)} ج</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">المحصّل الجديد</span><span style="font-weight:var(--fw-extra);color:var(--g)">${fn(newPaid)} ج</span></div>
+    ${disc>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">خصم</span><span style="font-weight:var(--fw-extra)">${fn(disc)} ج</span></div>`:''}
+    ${cFee>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">شحن على العميل</span><span style="font-weight:var(--fw-extra)">${fn(cFee)} ج</span></div>`:''}
+    <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:${newRem>0?'var(--r)':'var(--g)'};font-weight:var(--fw-extra)">${newRem>0?'الباقي':'مكتمل ✅'}</span><span style="font-weight:var(--fw-heavy);color:${newRem>0?'var(--r)':'var(--g)'};font-size:15px">${fn(newRem)} ج</span></div>`;
+};
+window.saveEditAmounts=async function(){
+  if(!activeId||!activeOrder)return;const o=activeOrder;
+  const origSale=parseFloat(o.salePrice)||0;const origPaid=parseFloat(o.totalPaid)||0;
+  const newSale=parseFloat(document.getElementById('ea-sale')?.value)||0;
+  const newPaid=parseFloat(document.getElementById('ea-paid')?.value)||0;
+  if(newSale<0||newPaid<0){toast('⚠️ مبالغ غير صالحة','err');return;}
+  const changes={};
+  if(Math.abs(newSale-origSale)>0.01)changes.salePrice=newSale;
+  if(Math.abs(newPaid-origPaid)>0.01)changes.totalPaid=newPaid;
+  if(!Object.keys(changes).length){toast('لا يوجد تغيير على المبالغ');return;}
+  let walletId='',walletName='';
+  if('totalPaid' in changes){
+    walletId=document.getElementById('ea-wid')?.value||'';walletName=document.getElementById('ea-wname')?.value||'';
+    if(!walletId){toast('⚠️ اختر طريقة الدفع لمزامنة المحفظة','err');return;}
+  }
+  const reason=(document.getElementById('ea-reason')?.value||'').trim();
+  const btn=document.querySelector('#ov-edit-amounts .btn-g');if(btn){btn.disabled=true;btn.textContent='جاري الحفظ...';}
+  const r=await orderActions.editOrderPayment({db,orderId:activeId,changes,walletId,walletName,changesLabel:`💰 تعديل المبالغ — كلي ${fn(newSale)} ج · مقدم ${fn(newPaid)} ج`,editReason:reason,userId:auth?.currentUser?.uid||'',userName});
+  if(btn){btn.disabled=false;btn.textContent='✓ حفظ المبالغ';}
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  cM('edit-amounts');toast('✅ تم تحديث المبالغ','ok');
+};
+
 // ── Action sheet (⋯ المزيد) ──
 window.pwOpenActionSheet=function(){
   if(!activeOrder)return;
@@ -1447,6 +1548,7 @@ window.pwOpenActionSheet=function(){
     opts.push(`<button onclick="cM('as-inline');openCollect()" class="pw-btn" style="width:100%;text-align:right;padding:12px 16px">💰 تحصيل</button>`);
     opts.push(`<button onclick="cM('as-inline');openPrintAdvance()" class="pw-btn" style="width:100%;text-align:right;padding:12px 16px">💵 مقدم</button>`);
   }
+  if(isAdm)opts.push(`<button onclick="cM('as-inline');openEditAmounts()" class="pw-btn" style="width:100%;text-align:right;padding:12px 16px">💰 تعديل المبالغ</button>`);
   if(isAdm)opts.push(`<button onclick="cM('as-inline');openReject()" class="pw-btn pw-btn-r" style="width:100%;text-align:right;padding:12px 16px">↩️ إعادة للتصميم</button>`);
   opts.push(`<button onclick="cM('as-inline')" class="pw-btn" style="width:100%;text-align:center;padding:12px 16px;color:var(--dim2)">إلغاء</button>`);
   // Simple overlay
