@@ -1241,10 +1241,15 @@ window.switchPanelTab=function(tab,btn){
 // God-page decomp PR-3: builder body extracted to clients-render.js
 // (window.panelOrdersHTML). Thin wrapper delegates with the page-scoped
 // constants + helpers.
+function _canDeleteOrder(){
+  if(userPerms?.capabilities?.delete_orders!==undefined) return !!userPerms.capabilities.delete_orders;
+  return ['admin','operation_manager','customer_service'].includes(currentRole);
+}
 function renderPanelOrders(ords, filter){
   return panelOrdersHTML({
     orders: ords, filter, calcRem, fn,
     STAGE_COL, STAGE_HREF, STAGE_AR,
+    canDelete: _canDeleteOrder(),
   });
 }
 // Helpers: open inbox.html with a pending share / open order thread.
@@ -2961,6 +2966,32 @@ window.cgridDeleteOrder=async function(orderId){
   }
   if(r.idempotent&&!r.pending)return toast('ℹ️ الأوردر محذوف مسبقاً','ok');
   toast(`✅ تم الحذف النهائي${r.refundedAmount>0?` — استرداد ${fn(r.refundedAmount)} ج`:''}`,'ok');
+};
+
+window.deleteClientPanelOrder=async function(orderId){
+  if(!_canDeleteOrder()){toast('❌ ليس لديك صلاحية حذف الأوردرات','err');return;}
+  const o=(window.__panelOrds||[]).find(x=>x._id===orderId)||allOrders.find(x=>x._id===orderId);
+  if(!o)return;
+  const reason=prompt(`⚠️ مسح أوردر "${o.product||o.orderId||orderId.slice(-6)}" نهائياً\nسيُحذف من كل السجلات ولا يمكن التراجع.\n\nاكتب سبب المسح:`);
+  if(!reason)return;
+  if(!confirm('تأكيد المسح النهائي؟ لا يمكن التراجع عن هذه العملية.'))return;
+  const r=await window.orderActions.purgeOrder({
+    orderId,
+    reason,
+    role:currentRole||'',
+    userId:currentUser?.uid||'',
+    userName:userName||'',
+  });
+  if(!r.ok){
+    const handled=window.financialGuard?.(new Error(r.errors?.[0]||'فشل المسح'),{operation:'مسح أوردر نهائي',clientName:o.clientName,orderId});
+    if(!handled)toast('❌ '+(r.errors||[]).join(' · '),'err');
+    return;
+  }
+  if(r.idempotent&&!r.pending)return toast('ℹ️ الأوردر محذوف مسبقاً','ok');
+  toast('✅ تم مسح الأوردر نهائياً من كل السجلات','ok');
+  if(window.__panelOrds) window.__panelOrds=window.__panelOrds.filter(x=>x._id!==orderId);
+  const listEl=document.getElementById('panel-orders-list');
+  if(listEl&&window.__panelOrds) listEl.innerHTML=renderPanelOrders(window.__panelOrds,'all');
 };
 
 // ── setStatusTab — handles normal, legacy, and cgrid tabs ──
