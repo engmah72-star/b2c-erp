@@ -115,6 +115,7 @@ import { setText } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
 import { dedupEmployees } from "./orders.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
@@ -183,56 +184,49 @@ function scheduleRender(){
 function startListeners(){
   setText('sub','جاري التحميل...');
 
-  // Orders — cache-first
-  dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
-    allOrders=docs;
-    scheduleRender();
-    setText('sub',allOrders.filter(o=>o.stage!=='archived').length+' أوردر نشط');
-  });
-
-  // Tasks
-  dataCache.subscribe(cachedQuery('tasks').where('assignedTo','==',uid).limit(100).build(),(docs)=>{
-    myTasks=docs.filter(t=>t.status==='pending')
-      .sort((a,b)=>({urgent:0,normal:1,low:2}[a.priority]||1)-({urgent:0,normal:1,low:2}[b.priority]||1));
-    scheduleRender();
-  });
-
-  // Attendance (personal)
-  dataCache.subscribe(cachedQuery('attendance').where('employeeUid','==',uid).limit(365).build(),(docs)=>{
-    todayAtt=docs.find(a=>a.date===todayStr());
-    myAttendance=docs;
-    scheduleRender();
-  });
-
-  // Employees + nested goals/evaluations
-  let __empSubAdded=false;
-  dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
-    allEmployees=dedupEmployees(docs);
-    if(!__empSubAdded){
-      const me=allEmployees.find(e=>e.authUid===uid||e.email===currentUser?.email);
-      if(me?._id){
-        __empSubAdded=true;myEmpIdOps=me._id;
-        dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpIdOps).where('month','==',monthKey()).limit(5).build(),(gDocs)=>{
-          myGoalOps=gDocs.length?gDocs[0]:null;scheduleRender();
-        });
-        dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpIdOps).limit(60).build(),(eDocs)=>{
-          const sv=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-          myLastEvalOps=sv[0]||null;scheduleRender();
-        });
-      }
-    }
-    scheduleRender();
-  });
-
-  // Today's attendance (all staff)
-  dataCache.subscribe(cachedQuery('attendance').where('date','==',todayStr()).limit(500).build(),(docs)=>{
-    todaysAttendance=docs;scheduleRender();
-  });
-
-  // Employee payments
-  dataCache.subscribe(cachedQuery('employee_payments').limit(1000).build(),(docs)=>{
-    empPaymentsAll=docs;scheduleRender();
-  });
+  staggerSubs([
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+      allOrders=docs;
+      scheduleRender();
+      setText('sub',allOrders.filter(o=>o.stage!=='archived').length+' أوردر نشط');
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('tasks').where('assignedTo','==',uid).limit(100).build(),(docs)=>{
+      myTasks=docs.filter(t=>t.status==='pending')
+        .sort((a,b)=>({urgent:0,normal:1,low:2}[a.priority]||1)-({urgent:0,normal:1,low:2}[b.priority]||1));
+      scheduleRender();
+    })},
+    { priority:1, fn:()=>{
+      let __empSubAdded=false;
+      dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+        allEmployees=dedupEmployees(docs);
+        if(!__empSubAdded){
+          const me=allEmployees.find(e=>e.authUid===uid||e.email===currentUser?.email);
+          if(me?._id){
+            __empSubAdded=true;myEmpIdOps=me._id;
+            dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpIdOps).where('month','==',monthKey()).limit(5).build(),(gDocs)=>{
+              myGoalOps=gDocs.length?gDocs[0]:null;scheduleRender();
+            });
+            dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpIdOps).limit(60).build(),(eDocs)=>{
+              const sv=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+              myLastEvalOps=sv[0]||null;scheduleRender();
+            });
+          }
+        }
+        scheduleRender();
+      });
+    }},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('attendance').where('employeeUid','==',uid).limit(365).build(),(docs)=>{
+      todayAtt=docs.find(a=>a.date===todayStr());
+      myAttendance=docs;
+      scheduleRender();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('attendance').where('date','==',todayStr()).limit(500).build(),(docs)=>{
+      todaysAttendance=docs;scheduleRender();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('employee_payments').limit(1000).build(),(docs)=>{
+      empPaymentsAll=docs;scheduleRender();
+    })},
+  ]);
 }
 
 function render(){

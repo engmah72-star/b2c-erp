@@ -343,6 +343,7 @@ import { gv } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { doc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
 import { recordLedger, editLedgerEntry, deleteLedgerEntry, LC, checkLedgerAccess }
   from "./finance-engine.js";
 // ══ STATE ══
@@ -419,39 +420,41 @@ window.checkFinancePerms=()=>checkLedgerAccess(db,auth).then(r=>console.table(r.
 // التقارير التاريخية الأقدم تستخدم reports.html بفلتر صريح بالتاريخ.
 const FEED_LIMIT = 2000;
 function startListeners(){
-  dataCache.subscribe(cachedQuery('financial_ledger').orderBy('createdAt','desc').limit(FEED_LIMIT).build(),(docs)=>{
-    allLedger=docs;
-    renderAll();
-  });
-  dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(FEED_LIMIT).build(),(docs)=>{
-    allTxV2=docs;
-    renderKPIs();
-  });
-  dataCache.subscribe(cachedQuery('orders').where('stage','in',['shipping','archived']).limit(3000).build(),(docs)=>{
-    allOrders=docs;
-    renderKPIs();
-  });
-  dataCache.subscribe(cachedQuery('suppliers_v2').limit(500).build(),(docs)=>{
-    allSuppliers=docs;
-    renderVendorBalances();
-  });
-  dataCache.subscribe(cachedQuery('supplier_payments').limit(2000).build(),(docs)=>{
-    allSupplierPayments=docs;
-    renderVendorBalances();
-  });
-  dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
-    allEmployees=docs;
-    renderPayroll();
-  });
-  dataCache.subscribe(cachedQuery('transactions_v2').where('category','==','salary').limit(2000).build(),(docs)=>{
-    allEmpPayments=docs;
-    renderPayroll();
-    renderKPIs();
-  });
-  dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{
-    allWallets=docs;
-    populateWalletSelect();
-  });
+  staggerSubs([
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('financial_ledger').orderBy('createdAt','desc').limit(FEED_LIMIT).build(),(docs)=>{
+      allLedger=docs;
+      renderAll();
+    })},
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(FEED_LIMIT).build(),(docs)=>{
+      allTxV2=docs;
+      renderKPIs();
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('orders').where('stage','in',['shipping','archived']).limit(3000).build(),(docs)=>{
+      allOrders=docs;
+      renderKPIs();
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{
+      allWallets=docs;
+      populateWalletSelect();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('suppliers_v2').limit(500).build(),(docs)=>{
+      allSuppliers=docs;
+      renderVendorBalances();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('supplier_payments').limit(2000).build(),(docs)=>{
+      allSupplierPayments=docs;
+      renderVendorBalances();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+      allEmployees=docs;
+      renderPayroll();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('transactions_v2').where('category','==','salary').limit(2000).build(),(docs)=>{
+      allEmpPayments=docs;
+      renderPayroll();
+      renderKPIs();
+    })},
+  ]);
 }
 
 // ══ PERIOD FILTER ══

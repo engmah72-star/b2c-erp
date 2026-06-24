@@ -182,6 +182,7 @@ import { setText, gv } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, getDoc, getDocs, query, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 import { orderActions } from "./order-actions.js";
@@ -229,39 +230,40 @@ onAuthStateChanged(auth,async u=>{
   const isAdm=['admin','operation_manager'].includes(ud.role);
   currentRole=ud.role||'production_agent';
 
-  // Orders — cache-first
-  dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
-    allOrders=docs;
-    const prodOrders=allOrders.filter(o=>o.stage==='production');
-    myOrders=isAdm?prodOrders:prodOrders.filter(o=>o.productionAgent===u.uid||(!o.productionAgent));
-    updateKPIs();
-    renderOrders();
-    renderUrgentBanner();
-    if(activeOrderId){
-      const fresh=myOrders.find(o=>o._id===activeOrderId);
-      if(fresh)renderPanel(fresh);
-    }
-  });
-
-  // Employee record → goals + evaluation
-  let __empSubAdded=false;
-  dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
-    const emp=docs.find(e=>e.authUid===u.uid||e.email===u.email);
-    myEmpId=emp?._id||'';
-    if(myEmpId&&!__empSubAdded){
-      __empSubAdded=true;
-      const mk=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-      dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpId).where('month','==',mk).limit(5).build(),(gDocs)=>{
-        myGoal=gDocs.length?gDocs[0]:null;
-        renderGoalCard();
+  staggerSubs([
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+      allOrders=docs;
+      const prodOrders=allOrders.filter(o=>o.stage==='production');
+      myOrders=isAdm?prodOrders:prodOrders.filter(o=>o.productionAgent===u.uid||(!o.productionAgent));
+      updateKPIs();
+      renderOrders();
+      renderUrgentBanner();
+      if(activeOrderId){
+        const fresh=myOrders.find(o=>o._id===activeOrderId);
+        if(fresh)renderPanel(fresh);
+      }
+    })},
+    { priority:1, fn:()=>{
+      let __empSubAdded=false;
+      dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+        const emp=docs.find(e=>e.authUid===u.uid||e.email===u.email);
+        myEmpId=emp?._id||'';
+        if(myEmpId&&!__empSubAdded){
+          __empSubAdded=true;
+          const mk=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+          dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpId).where('month','==',mk).limit(5).build(),(gDocs)=>{
+            myGoal=gDocs.length?gDocs[0]:null;
+            renderGoalCard();
+          });
+          dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpId).limit(60).build(),(eDocs)=>{
+            const evs=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+            myLastEval=evs[0]||null;
+            renderGoalCard();
+          });
+        }
       });
-      dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpId).limit(60).build(),(eDocs)=>{
-        const evs=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-        myLastEval=evs[0]||null;
-        renderGoalCard();
-      });
-    }
-  });
+    }},
+  ]);
 
   // نقطة الحضور/الانصراف/الإجازات المركزية — widget موحّد، مركّب مرة واحدة
   try{ mountAttendanceSelf({ container:document.getElementById('att-self-host'), db, user:u }); }catch(_){}

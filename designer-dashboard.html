@@ -185,6 +185,7 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 // ══ STATE ══
@@ -244,62 +245,57 @@ onAuthStateChanged(auth,async u=>{
   let _renderTimer=null;
   function scheduleRender(){if(_renderTimer)return;_renderTimer=requestAnimationFrame(()=>{_renderTimer=null;render();});}
 
-  // بيانات الموظف + goals/evaluations/payments
-  let __empSubAdded=false;
-  dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
-    const emp=docs.find(e=>e.authUid===uid||e.email===u.email);
-    myEmployee=emp||{baseSalary:0,commissionPct:0};
-    myEmpId=emp?._id||'';
-    if(myEmpId&&!__empSubAdded){
-      __empSubAdded=true;
-      dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpId).where('month','==',monthKey()).limit(5).build(),(gDocs)=>{
-        myGoal=gDocs.length?gDocs[0]:null;
+  staggerSubs([
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').where('designerId','==',uid).where('stage','==','design').limit(200).build(),(docs)=>{
+      window.__myUid=uid;
+      const unassigned=(window.__allDesignOrders||[]).filter(o=>!o.designerId);
+      myOrders=[...docs,...unassigned];
+      scheduleRender();
+    })},
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').where('stage','==','design').orderBy('createdAt','desc').limit(500).build(),(docs)=>{
+      window.__allDesignOrders=docs;
+      const assigned=myOrders.filter(o=>o.designerId===uid||o.designerId===myEmpId);
+      const unassigned=docs.filter(o=>!o.designerId);
+      const ids=new Set(assigned.map(o=>o._id));
+      myOrders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))];
+      scheduleRender();
+    })},
+    { priority:1, fn:()=>{
+      let __empSubAdded=false;
+      dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+        const emp=docs.find(e=>e.authUid===uid||e.email===u.email);
+        myEmployee=emp||{baseSalary:0,commissionPct:0};
+        myEmpId=emp?._id||'';
+        if(myEmpId&&!__empSubAdded){
+          __empSubAdded=true;
+          dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpId).where('month','==',monthKey()).limit(5).build(),(gDocs)=>{
+            myGoal=gDocs.length?gDocs[0]:null;
+            scheduleRender();
+          });
+          dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpId).limit(60).build(),(eDocs)=>{
+            const evals=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+            myLastEval=evals[0]||null;
+            scheduleRender();
+          });
+          dataCache.subscribe(cachedQuery('employee_payments').where('employeeId','==',myEmpId).limit(500).build(),(pDocs)=>{
+            myPayments=pDocs;
+            scheduleRender();
+          });
+        }
         scheduleRender();
       });
-      dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpId).limit(60).build(),(eDocs)=>{
-        const evals=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-        myLastEval=evals[0]||null;
-        scheduleRender();
-      });
-      dataCache.subscribe(cachedQuery('employee_payments').where('employeeId','==',myEmpId).limit(500).build(),(pDocs)=>{
-        myPayments=pDocs;
-        scheduleRender();
-      });
-    }
-    scheduleRender();
-  });
-
-  // الأوردرات — أوردرات المصمم المكلّف بيها
-  dataCache.subscribe(cachedQuery('orders').where('designerId','==',uid).where('stage','==','design').limit(200).build(),(docs)=>{
-    window.__myUid=uid;
-    const unassigned=(window.__allDesignOrders||[]).filter(o=>!o.designerId);
-    myOrders=[...docs,...unassigned];
-    scheduleRender();
-  });
-
-  // أوردرات التصميم الكلية (للـ unassigned)
-  dataCache.subscribe(cachedQuery('orders').where('stage','==','design').orderBy('createdAt','desc').limit(500).build(),(docs)=>{
-    window.__allDesignOrders=docs;
-    const assigned=myOrders.filter(o=>o.designerId===uid||o.designerId===myEmpId);
-    const unassigned=docs.filter(o=>!o.designerId);
-    const ids=new Set(assigned.map(o=>o._id));
-    myOrders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))];
-    scheduleRender();
-  });
-
-  // المهام
-  dataCache.subscribe(cachedQuery('tasks').where('assignedTo','==',uid).limit(100).build(),(docs)=>{
-    myTasks=docs.filter(t=>t.status==='pending')
-      .sort((a,b)=>{const p={urgent:0,normal:1,low:2};return(p[a.priority]||1)-(p[b.priority]||1);});
-    scheduleRender();
-  });
-
-  // الحضور
-  dataCache.subscribe(cachedQuery('attendance').where('employeeUid','==',uid).limit(365).build(),(docs)=>{
-    todayAtt=docs.find(a=>a.date===todayStr());
-    myAttendance=docs;
-    scheduleRender();
-  });
+    }},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('tasks').where('assignedTo','==',uid).limit(100).build(),(docs)=>{
+      myTasks=docs.filter(t=>t.status==='pending')
+        .sort((a,b)=>{const p={urgent:0,normal:1,low:2};return(p[a.priority]||1)-(p[b.priority]||1);});
+      scheduleRender();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('attendance').where('employeeUid','==',uid).limit(365).build(),(docs)=>{
+      todayAtt=docs.find(a=>a.date===todayStr());
+      myAttendance=docs;
+      scheduleRender();
+    })},
+  ]);
 });
 
 // ══ RENDER ══
