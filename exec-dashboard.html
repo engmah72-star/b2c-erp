@@ -136,7 +136,8 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { delayDays } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { collection, doc, getDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
 import { dedupEmployees, resolveDesigner, isDelivered } from "./orders.js";
 import { mountDateRangePicker } from "./date-range-picker.js";
 import { calcRem } from "./core/order-math.js";
@@ -225,38 +226,36 @@ function scheduleRenderAll(){
 }
 
 function startListeners(){
-  // Limit recent N records — exec dashboard shows live activity, not full history.
-  // For full history use reports.html (unbounded).
   const onErr=(name)=>(err)=>{console.error(`[${name}]`,err);showDashError(`فشل تحميل ${name}`);};
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    _ordersReady=true;__dataVer++;scheduleRenderAll();
-  }, onErr('orders'));
-  onSnapshot(query(collection(db,'clients'),limit(2000)),snap=>{
-    clients=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
-  }, onErr('clients'));
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
-  }, onErr('wallets'));
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    _txReady=true;__dataVer++;scheduleRenderAll();
-  }, onErr('transactions'));
-  onSnapshot(query(collection(db,'supplier_payments'),limit(2000)),snap=>{
-    supPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
-  }, onErr('supplier_payments'));
+
+  dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+    orders=docs;_ordersReady=true;__dataVer++;scheduleRenderAll();
+  });
+  dataCache.subscribe(cachedQuery('clients').limit(2000).build(),(docs)=>{
+    clients=docs;__dataVer++;scheduleRenderAll();
+  });
+  dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{
+    wallets=docs;__dataVer++;scheduleRenderAll();
+  });
+  dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+    transactions=docs;_txReady=true;__dataVer++;scheduleRenderAll();
+  });
+  dataCache.subscribe(cachedQuery('supplier_payments').limit(2000).build(),(docs)=>{
+    supPayments=docs;__dataVer++;scheduleRenderAll();
+  });
+
+  // users — one-time fetch (kept as getDocs since rarely changes)
   getDocs(query(collection(db,'users'),limit(500))).then(snap=>{
     users=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
   });
-  // employees مع dedup — يُستخدم في توحيد إحصائيات المصممين/الموظفين
   getDocs(query(collection(db,'employees'),limit(500))).then(snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     employees=dedupEmployees(raw);scheduleRenderAll();
   });
-  // suppliers (suppliers_v2) — لقياس "موردون جدد" في صحة الشبكة
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),snap=>{
-    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
-  }, onErr('suppliers'));
+
+  dataCache.subscribe(cachedQuery('suppliers_v2').limit(500).build(),(docs)=>{
+    suppliers=docs;scheduleRenderAll();
+  });
 }
 
 // ── Mount the date-range picker (after auth has revealed the page) ──

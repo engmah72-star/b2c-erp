@@ -180,7 +180,8 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { setText, gv } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { collection, doc, getDoc, getDocs, query, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 import { orderActions } from "./order-actions.js";
@@ -228,15 +229,14 @@ onAuthStateChanged(auth,async u=>{
   const isAdm=['admin','operation_manager'].includes(ud.role);
   currentRole=ud.role||'production_agent';
 
-  // Orders — limit recent 2000 for dashboard (full history via reports.html).
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  // Orders — cache-first
+  dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+    allOrders=docs;
     const prodOrders=allOrders.filter(o=>o.stage==='production');
     myOrders=isAdm?prodOrders:prodOrders.filter(o=>o.productionAgent===u.uid||(!o.productionAgent));
     updateKPIs();
     renderOrders();
     renderUrgentBanner();
-    // refresh active panel if open
     if(activeOrderId){
       const fresh=myOrders.find(o=>o._id===activeOrderId);
       if(fresh)renderPanel(fresh);
@@ -244,17 +244,19 @@ onAuthStateChanged(auth,async u=>{
   });
 
   // Employee record → goals + evaluation
-  onSnapshot(query(collection(db,'employees'),limit(200)),snap=>{
-    const emp=snap.docs.map(d=>({...d.data(),_id:d.id})).find(e=>e.authUid===u.uid||e.email===u.email);
+  let __empSubAdded=false;
+  dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+    const emp=docs.find(e=>e.authUid===u.uid||e.email===u.email);
     myEmpId=emp?._id||'';
-    if(myEmpId){
+    if(myEmpId&&!__empSubAdded){
+      __empSubAdded=true;
       const mk=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-      onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpId),where('month','==',mk),limit(5)),sn=>{
-        myGoal=sn.docs.length?sn.docs[0].data():null;
+      dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpId).where('month','==',mk).limit(5).build(),(gDocs)=>{
+        myGoal=gDocs.length?gDocs[0]:null;
         renderGoalCard();
       });
-      onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpId),limit(60)),sn=>{
-        const evs=sn.docs.map(d=>d.data()).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+      dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpId).limit(60).build(),(eDocs)=>{
+        const evs=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
         myLastEval=evs[0]||null;
         renderGoalCard();
       });

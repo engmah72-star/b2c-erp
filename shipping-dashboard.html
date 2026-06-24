@@ -210,7 +210,8 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 // buildSidebar / guardPage / initSidebar توفّرها sidebar.js كـ window globals
 // ══════════════════════
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 let allOrders=[],todayAtt=null,currentUser=null,userName='',uid='',activeTab='ready',myGoal=null,myLastEvalShip=null,myEmpIdShip='';
@@ -238,24 +239,25 @@ onAuthStateChanged(auth,async u=>{
   setText('sub',MONTHS[now.getMonth()]+' '+now.getFullYear());
   // Step 6.3 — capability-based per RULE P1.3
   const isAdminShip=canDo('view_all_shipments', d.role, d.permissions||{});
-  onSnapshot(query(collection(db,'orders'),where('stage','in',['shipping','archived','production']),limit(3000)),snap=>{
-    const all=snap.docs.map(x=>({...x.data(),_id:x.id}));
-    // KPIs تُحسب للشخص الحالي فقط (ما لم يكن أدمن)
-    allOrders=isAdminShip?all:all.filter(o=>o.shippingOfficer===uid||o.shippingOfficerId===uid||o.shippingOfficer===userName||!o.shippingOfficer);
+  dataCache.subscribe(cachedQuery('orders').where('stage','in',['shipping','archived','production']).limit(3000).build(),(docs)=>{
+    allOrders=isAdminShip?docs:docs.filter(o=>o.shippingOfficer===uid||o.shippingOfficerId===uid||o.shippingOfficer===userName||!o.shippingOfficer);
     updateKPIs();renderAlerts();renderOrders();
-  },err=>{console.error('shipping-dashboard orders:',err);});
+  });
+
   // الأهداف
-  onSnapshot(query(collection(db,'employees'),limit(200)),sn=>{
-    const emp=sn.docs.map(d=>({...d.data(),_id:d.id})).find(e=>e.authUid===uid||e.email===u.email);
+  let __empSubAdded=false;
+  dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+    const emp=docs.find(e=>e.authUid===uid||e.email===u.email);
     myEmpIdShip=emp?._id||'';
-    if(myEmpIdShip){
+    if(myEmpIdShip&&!__empSubAdded){
+      __empSubAdded=true;
       const mk=new Date().getFullYear()+'-'+String(new Date().getMonth()+1).padStart(2,'0');
-      onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpIdShip),where('month','==',mk),limit(5)),gsn=>{
-        myGoal=gsn.docs.length?gsn.docs[0].data():null;
+      dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpIdShip).where('month','==',mk).limit(5).build(),(gDocs)=>{
+        myGoal=gDocs.length?gDocs[0]:null;
         renderShipGoalCard();
       });
-      onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpIdShip),limit(60)),esn=>{
-        const evs=esn.docs.map(d=>d.data()).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+      dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpIdShip).limit(60).build(),(eDocs)=>{
+        const evs=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
         myLastEvalShip=evs[0]||null;
         renderShipGoalCard();
       });

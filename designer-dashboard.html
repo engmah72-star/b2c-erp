@@ -183,7 +183,8 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 // buildSidebar / guardPage / initSidebar توفّرها sidebar.js كـ window globals
 // ══════════════════════
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 // ══ STATE ══
@@ -240,67 +241,64 @@ onAuthStateChanged(auth,async u=>{
   // نقطة الحضور/الانصراف/الإجازات المركزية — widget موحّد، مركّب مرة واحدة
   try{ mountAttendanceSelf({ container:document.getElementById('att-self-host'), db, user:u }); }catch(_){}
 
-  // جيب بيانات الموظف
-  onSnapshot(query(collection(db,'employees'),limit(200)),snap=>{
-    const emp=snap.docs.map(d=>({...d.data(),_id:d.id})).find(e=>e.authUid===uid||e.email===u.email);
+  let _renderTimer=null;
+  function scheduleRender(){if(_renderTimer)return;_renderTimer=requestAnimationFrame(()=>{_renderTimer=null;render();});}
+
+  // بيانات الموظف + goals/evaluations/payments
+  let __empSubAdded=false;
+  dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+    const emp=docs.find(e=>e.authUid===uid||e.email===u.email);
     myEmployee=emp||{baseSalary:0,commissionPct:0};
     myEmpId=emp?._id||'';
-    if(myEmpId){
-      // أهداف الشهر
-      onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpId),where('month','==',monthKey()),limit(5)),snap=>{
-        myGoal=snap.docs.length?snap.docs[0].data():null;
-        render();
+    if(myEmpId&&!__empSubAdded){
+      __empSubAdded=true;
+      dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpId).where('month','==',monthKey()).limit(5).build(),(gDocs)=>{
+        myGoal=gDocs.length?gDocs[0]:null;
+        scheduleRender();
       });
-      // آخر تقييم
-      onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpId),limit(60)),snap=>{
-        const evals=snap.docs.map(d=>d.data()).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+      dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpId).limit(60).build(),(eDocs)=>{
+        const evals=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
         myLastEval=evals[0]||null;
-        render();
+        scheduleRender();
       });
-      // الدخل الفعلي المدفوع (RULE 1)
-      onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',myEmpId),limit(500)),snap=>{
-        myPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));
-        render();
+      dataCache.subscribe(cachedQuery('employee_payments').where('employeeId','==',myEmpId).limit(500).build(),(pDocs)=>{
+        myPayments=pDocs;
+        scheduleRender();
       });
     }
-    render();
+    scheduleRender();
   });
 
-  // الأوردرات — query محددة للمصمم
-  // 1. أوردرات مكلّف بيها (designerId = uid) في مرحلة التصميم فقط — لا يجب أن يرى المؤرشف/الملغي
-  onSnapshot(query(collection(db,'orders'),where('designerId','==',uid),where('stage','==','design'),limit(200)),snap=>{
-    const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  // الأوردرات — أوردرات المصمم المكلّف بيها
+  dataCache.subscribe(cachedQuery('orders').where('designerId','==',uid).where('stage','==','design').limit(200).build(),(docs)=>{
     window.__myUid=uid;
-    // 2. أوردرات stage=design بدون مصمم (متاحة للكل)
     const unassigned=(window.__allDesignOrders||[]).filter(o=>!o.designerId);
-    myOrders=[...assigned,...unassigned];
-    render();
+    myOrders=[...docs,...unassigned];
+    scheduleRender();
   });
+
   // أوردرات التصميم الكلية (للـ unassigned)
-  // C7: limit(500) — stage=design عادة <100، لكن نحمي من بقايا متراكمة.
-  onSnapshot(query(collection(db,'orders'),where('stage','==','design'),orderBy('createdAt','desc'),limit(500)),snap=>{
-    window.__allDesignOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('orders').where('stage','==','design').orderBy('createdAt','desc').limit(500).build(),(docs)=>{
+    window.__allDesignOrders=docs;
     const assigned=myOrders.filter(o=>o.designerId===uid||o.designerId===myEmpId);
-    const unassigned=window.__allDesignOrders.filter(o=>!o.designerId);
-    // دمج بدون تكرار
+    const unassigned=docs.filter(o=>!o.designerId);
     const ids=new Set(assigned.map(o=>o._id));
     myOrders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))];
-    render();
+    scheduleRender();
   });
 
   // المهام
-  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',uid),limit(100)),snap=>{
-    myTasks=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(t=>t.status==='pending')
+  dataCache.subscribe(cachedQuery('tasks').where('assignedTo','==',uid).limit(100).build(),(docs)=>{
+    myTasks=docs.filter(t=>t.status==='pending')
       .sort((a,b)=>{const p={urgent:0,normal:1,low:2};return(p[a.priority]||1)-(p[b.priority]||1);});
-    render();
+    scheduleRender();
   });
 
   // الحضور
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid),limit(365)),snap=>{
-    const atts=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    todayAtt=atts.find(a=>a.date===todayStr());
-    myAttendance=atts;
-    render();
+  dataCache.subscribe(cachedQuery('attendance').where('employeeUid','==',uid).limit(365).build(),(docs)=>{
+    todayAtt=docs.find(a=>a.date===todayStr());
+    myAttendance=docs;
+    scheduleRender();
   });
 });
 

@@ -191,7 +191,8 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { delayDays } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 import { orderActions } from "./order-actions.js";
@@ -260,43 +261,38 @@ onAuthStateChanged(auth,async u=>{
   buildSidebar(uid);
   const isAdmin=['admin','operation_manager'].includes(role);
 
-  // Orders listener — limit recent 2000 for dashboard (history via reports.html).
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    myOrders=isAdmin?all:all.filter(o=>o.createdBy===uid||!o.createdBy);
-    render();
+  let _renderTimer=null;
+  function scheduleRender(){if(_renderTimer)return;_renderTimer=requestAnimationFrame(()=>{_renderTimer=null;render();});}
+
+  // Orders — cache-first: يعرض من IndexedDB فوراً ثم يحدّث من Firestore
+  dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+    myOrders=isAdmin?docs:docs.filter(o=>o.createdBy===uid||!o.createdBy);
+    scheduleRender();
   });
 
-  // Clients listener
-  onSnapshot(query(collection(db,'clients'),limit(1500)),snap=>{
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  // Clients
+  dataCache.subscribe(cachedQuery('clients').limit(1500).build(),(docs)=>{
+    const all=docs;
     myClients=isAdmin?all:all.filter(c=>c.createdBy===uid||!c.createdBy);
-    render();
+    scheduleRender();
   });
 
-  // Wallets listener
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  // Wallets
+  dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{
+    wallets=docs;
     buildWalletSelect();
   });
 
-  // (الحضور/الانصراف انتقل للـ widget المركزي #att-self-host)
-
-  // Conversations listener (inbox mini — أرسل رسائل لم يُرد عليها)
-  onSnapshot(query(collection(db,'conversations'),where('participants','array-contains',uid),limit(200)),snap=>{
-    myConvs=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  // Conversations (inbox mini)
+  dataCache.subscribe(cachedQuery('conversations').where('participants','array-contains',uid).limit(200).build(),(docs)=>{
+    myConvs=docs;
     renderInboxMini();
-  },err=>{
-    // فشل القراءة لا يكسر باقي الصفحة — فقط نخفي الـ widget
-    console.warn('[cs] conversations listener:',err.message);
   });
 
-  // Order-requests listener — طلبات بوابة جديدة بانتظار التحويل لأوردر (G3: limit)
-  onSnapshot(query(collection(db,'order_requests'),where('status','==','new'),orderBy('createdAt','desc'),limit(50)),snap=>{
-    portalReqs=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  // Order-requests — طلبات بوابة جديدة
+  dataCache.subscribe(cachedQuery('order_requests').where('status','==','new').orderBy('createdAt','desc').limit(50).build(),(docs)=>{
+    portalReqs=docs;
     renderRequests();
-  },err=>{
-    console.warn('[cs] order_requests listener:',err.message);
   });
 });
 
