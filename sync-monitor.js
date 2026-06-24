@@ -1,6 +1,7 @@
 // ══ Sync Monitor - يراقب الاتصال الفعلي بالإنترنت ══
 (function(){
   let syncBanner = null;
+  let _isOffline = !navigator.onLine;
 
   function showBanner(){
     if(syncBanner) return;
@@ -13,7 +14,7 @@
       font-family:IBM Plex Sans Arabic,sans-serif;
     `;
     syncBanner.innerHTML = `
-      ⚠️ انقطع الاتصال — البيانات قد لا تكون محدّثة
+      ⚠️ وضع بدون إنترنت — قراءة فقط (البيانات من الكاش)
       <button type="button" onclick="location.reload()" style="margin-right:12px;padding:4px 12px;border:none;border-radius:6px;background:#fff;color:var(--r);cursor:pointer;font-weight:var(--fw-bold)">🔄 تحديث</button>
     `;
     document.body.prepend(syncBanner);
@@ -24,19 +25,33 @@
   }
 
   // لو الصفحة اتفتحت وهي offline
-  if(!navigator.onLine) showBanner();
+  if(_isOffline) showBanner();
 
   window.addEventListener('online', function(){
+    _isOffline = false;
     hideBanner();
     location.reload();
   });
 
   window.addEventListener('offline', function(){
+    _isOffline = true;
     showBanner();
   });
 
   // متاح للصفحات اللي بتستخدمه
   window.markSynced = function(){ hideBanner(); };
+
+  window.isAppOffline = function(){ return _isOffline; };
+
+  window.guardOnline = function(actionName){
+    if(!_isOffline) return true;
+    const msg = actionName
+      ? `⚠️ لا يمكن تنفيذ "${actionName}" بدون اتصال بالإنترنت`
+      : '⚠️ هذا الإجراء يحتاج اتصال بالإنترنت';
+    if(typeof window.toast === 'function') window.toast(msg, 'err');
+    else alert(msg);
+    return false;
+  };
 
   // ── مؤشر حالة الكاش — يظهر عند عرض بيانات من الكاش وينتهي عند المزامنة ──
   let cacheBadge = null;

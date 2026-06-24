@@ -441,6 +441,7 @@ import { clientActions } from "./client-actions.js";
 import { masterListsActions } from "./master-lists-actions.js";
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 import { initPageShortcuts, updatePageShortcuts } from './core/page-shortcuts.js';
+import { getSettings, getMasterList } from './core/static-store.js';
 // Sidebar — موحَّد عبر sidebar.js
 function buildSidebar(ud){ B2CSidebar.build(ud, 'print.html'); }
 
@@ -567,13 +568,9 @@ function startListeners(){
     cachedQuery('shippers_v2').limit(200).build(),
     (list) => { shippers = list || []; if(activeOrder) renderPanel(activeOrder); }
   );
-  dataCache.getDoc('settings', 'main').then(r => { if(r.data) appSettings = r.data; });
-  onSnapshot(doc(db,'settings','main'),snap=>{if(snap.exists())appSettings=snap.data();});
-  dataCache.getDoc('master_lists', 'supplier_categories').then(r => {
-    if(r.data) productionServices = (r.data.items||[]).filter(s=>s.isActive!==false);
-  });
-  onSnapshot(doc(db,'master_lists','supplier_categories'),snap=>{
-    productionServices=snap.exists()?(snap.data()?.items||[]).filter(s=>s.isActive!==false):[];
+  getSettings(data => { if (data) appSettings = data; });
+  getMasterList('supplier_categories', data => {
+    productionServices = (data?.items || []).filter(s => s.isActive !== false);
   });
   dataCache.subscribe(
     cachedQuery('employees').where('role','==','production_agent').limit(100).build(),
@@ -2429,10 +2426,10 @@ let printBriefTemplates = [];
 dataCache.getDoc('master_lists', 'print_brief_templates').then(r => {
   if(r.data) printBriefTemplates = r.data.items || [];
 });
-onSnapshot(doc(db,'master_lists','print_brief_templates'), snap => {
-  printBriefTemplates = snap.exists() ? (snap.data().items || []) : [];
+getMasterList('print_brief_templates', data => {
+  printBriefTemplates = data?.items || [];
   if(activeOrder) renderPanel(activeOrder);
-}, err => console.warn('templates listener:', err?.message||err));
+});
 
 // المطابع المؤهلة لـ dropdown (Option B — offset/digital/both)
 function getPressOptions(){

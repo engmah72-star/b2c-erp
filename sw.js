@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v311';
+const CACHE = 'b2c-v315';
 const IMAGE_CACHE = 'b2c-images-v1';
 const MAX_IMAGE_CACHE = 200;
 
@@ -140,6 +140,38 @@ const NETWORK_FIRST_SUFFIXES = [
   '/error-reporter-init.js',
   '/bug-reporter.js',
   '/core/error-report-actions.js',
+  // ── Offline-critical core modules — must stay fresh ──
+  '/core/data-cache.js',
+  '/core/firebase-init.js',
+  '/core/permissions-matrix.js',
+  '/core/collection-registry.js',
+  '/core/query-limits.js',
+  '/core/lazy-subs.js',
+  '/core/virtual-scroll.js',
+  '/core/prefetch-map.js',
+  '/core/image-cache.js',
+  '/core/page-state.js',
+  '/core/storage-helpers.js',
+  '/core/auth-reset.js',
+  '/core/client-orders-index.js',
+  '/core/searchable-select.js',
+  '/core/bottom-sheet.js',
+  '/core/approvals-utils.js',
+  '/core/page-shortcuts.js',
+  '/core/offline-warmup.js',
+  '/core/static-store.js',
+  '/core/live-kpis.js',
+  '/sidebar.js',
+  '/sidebar-config.js',
+  '/clients-data.js',
+  '/clients-shell.js',
+  '/clients-constants.js',
+  '/accounts-render.js',
+  '/accounts-kpi-panel.js',
+  '/design-control-center.js',
+  '/print-control-center.js',
+  '/production-actions.js',
+  '/supplier-actions.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.
@@ -153,17 +185,66 @@ const PRECACHE = [
   './shared.js',
   './theme.js',
   './financial-sync-engine.js',
-  // Role-landing dashboards (HTML)
+  // Role-landing dashboards (HTML + CSS)
   './cs-dashboard.html',
+  './cs-dashboard.css',
   './ops-dashboard.html',
   './designer-dashboard.html',
-  './production-dashboard.html',
-  './shipping-dashboard.html',
-  // Their dedicated CSS (Phase-2D extracts) — so the role-landing page
-  // renders styled on offline first-launch, not just unstyled HTML.
-  './cs-dashboard.css',
   './designer-dashboard.css',
+  './production-dashboard.html',
   './production-dashboard.css',
+  './shipping-dashboard.html',
+  './exec-dashboard.html',
+  './exec-dashboard.css',
+  './financial-dashboard.html',
+  './accounts.html',
+  './clients.html',
+  './clients.css',
+  // Operational pages — full offline app shell
+  './design.html',
+  './design.css',
+  './order.html',
+  './shipping.html',
+  './shipping.css',
+  './shipping-accounts.html',
+  './shipping-accounts.css',
+  './production.html',
+  './production.css',
+  './print.html',
+  './print.css',
+  './approvals.html',
+  './approvals.css',
+  './reports.html',
+  './reports.css',
+  './returns.html',
+  './employees.html',
+  './employees.css',
+  './employee-profile.html',
+  './employee-profile.css',
+  './suppliers.html',
+  './suppliers.css',
+  './products.html',
+  './products.css',
+  './settings.html',
+  './settings.css',
+  './inbox.html',
+  './inbox.css',
+  './my-profile.html',
+  './my-profile.css',
+  './my-home.html',
+  './ledger.html',
+  // Core modules (offline-critical)
+  './core/firebase-init.js',
+  './core/data-cache.js',
+  './core/permissions-matrix.js',
+  './core/lazy-subs.js',
+  './core/offline-warmup.js',
+  './orders.js',
+  './order-actions.js',
+  './sync-monitor.js',
+  // Design system
+  './design-system/components.css',
+  './design-system/tokens.css',
 ];
 
 // Third-party hosts that serve immutable / near-immutable assets.

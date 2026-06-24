@@ -269,7 +269,7 @@ export function panelOrdersHTML({
     return `<div class="ord-row" style="margin-bottom:8px;border-radius:var(--rad);overflow:hidden">
       <div onclick="location.href='${href}'" style="cursor:pointer">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad)">
-          ${thumb ? `<img src="${thumb}" alt="" style="width:44px;height:44px;border-radius:8px;object-fit:cover;margin-left:10px;flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
+          ${thumb ? `<img src="${thumb}" alt="" loading="lazy" decoding="async" style="width:44px;height:44px;border-radius:8px;object-fit:cover;margin-left:10px;flex-shrink:0;background:var(--bg3)" onerror="this.style.display='none'">` : ''}
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
               <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);padding:2px 7px;border-radius:20px;background:${sc}15;color:${sc}">${STAGE_AR[o.stage] || o.stage}</span>

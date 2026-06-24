@@ -14,6 +14,8 @@
 <link rel="dns-prefetch" href="https://firestore.googleapis.com">
 <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="modulepreload" href="./core/firebase-init.js">
+<link rel="modulepreload" href="./core/data-cache.js">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <script src="sidebar-config.js"></script>
@@ -113,11 +115,16 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { setText } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
 import { dedupEmployees } from "./orders.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 import { calcRem } from "./core/order-math.js";
+import { warmupForRole } from "./core/offline-warmup.js";
+import { warmImages, extractOrderImageUrls } from "./core/image-cache.js";
+import { subscribeKPIs } from "./core/live-kpis.js";
 let allOrders=[],myTasks=[],myAttendance=[],todayAtt=null;
 let allEmployees=[],todaysAttendance=[],empPaymentsAll=[],myGoalOps=null,myLastEvalOps=null,myEmpIdOps='';
 let currentUser=null,userName='',uid='',activeTab='late';
@@ -162,12 +169,14 @@ onAuthStateChanged(auth,async u=>{
     if(!snap.exists()){window.location.href='login.html';return;}
     const d=snap.data();
     if(!['admin','operation_manager'].includes(d.role)){window.location.href='login.html';return;}
+    warmupForRole(d.role);
     userName=d.name||u.email;
     setText('nav-name',userName);
     {const _av=document.getElementById('nav-av'); if(_av)_av.textContent=((userName||'؟')[0]||'؟').toUpperCase();}
     try{ mountAttendanceSelf({ container:document.getElementById('att-self-host'), db, user:u }); }catch(_){}
     buildSidebar(d);
     buildMobNav();
+    subscribeKPIs(kpi => { if(!allOrders.length) renderKPIsFromAgg(kpi); });
     startListeners();
   }catch(e){console.error(e);window.location.href='login.html';}
 });
@@ -181,49 +190,63 @@ function scheduleRender(){
 
 function startListeners(){
   setText('sub','جاري التحميل...');
-  // Limit to recent 2000 orders — covers months of activity for live dashboard.
-  // For full history, use reports.html or archive.html (unbounded).
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    scheduleRender();
-    setText('sub',allOrders.filter(o=>o.stage!=='archived').length+' أوردر نشط');
-  });
-  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',uid),limit(100)),snap=>{
-    myTasks=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(t=>t.status==='pending')
-      .sort((a,b)=>({urgent:0,normal:1,low:2}[a.priority]||1)-({urgent:0,normal:1,low:2}[b.priority]||1));
-    scheduleRender();
-  });
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',uid),limit(365)),snap=>{
-    const atts=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    todayAtt=atts.find(a=>a.date===todayStr());
-    myAttendance=atts;
-    scheduleRender();
-  });
-  let __empSubAdded=false;
-  onSnapshot(query(collection(db,'employees'),limit(200)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    allEmployees=dedupEmployees(raw);
-    if(!__empSubAdded){
-      const me=allEmployees.find(e=>e.authUid===uid||e.email===currentUser?.email);
-      if(me?._id){
-        __empSubAdded=true;myEmpIdOps=me._id;
-        onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpIdOps),where('month','==',monthKey()),limit(5)),gs=>{
-          myGoalOps=gs.docs.length?gs.docs[0].data():null;scheduleRender();
-        });
-        onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpIdOps),limit(60)),es=>{
-          const sv=es.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-          myLastEvalOps=sv[0]||null;scheduleRender();
-        });
-      }
-    }
-    scheduleRender();
-  });
-  onSnapshot(query(collection(db,'attendance'),where('date','==',todayStr()),limit(500)),snap=>{
-    todaysAttendance=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();
-  });
-  onSnapshot(query(collection(db,'employee_payments'),limit(1000)),snap=>{
-    empPaymentsAll=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();
-  });
+
+  staggerSubs([
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+      allOrders=docs;
+      warmImages(extractOrderImageUrls(allOrders));
+      scheduleRender();
+      setText('sub',allOrders.filter(o=>o.stage!=='archived').length+' أوردر نشط');
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('tasks').where('assignedTo','==',uid).limit(100).build(),(docs)=>{
+      myTasks=docs.filter(t=>t.status==='pending')
+        .sort((a,b)=>({urgent:0,normal:1,low:2}[a.priority]||1)-({urgent:0,normal:1,low:2}[b.priority]||1));
+      scheduleRender();
+    })},
+    { priority:1, fn:()=>{
+      let __empSubAdded=false;
+      dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+        allEmployees=dedupEmployees(docs);
+        if(!__empSubAdded){
+          const me=allEmployees.find(e=>e.authUid===uid||e.email===currentUser?.email);
+          if(me?._id){
+            __empSubAdded=true;myEmpIdOps=me._id;
+            dataCache.subscribe(cachedQuery('employee_goals').where('employeeId','==',myEmpIdOps).where('month','==',monthKey()).limit(5).build(),(gDocs)=>{
+              myGoalOps=gDocs.length?gDocs[0]:null;scheduleRender();
+            });
+            dataCache.subscribe(cachedQuery('employee_evaluations').where('employeeId','==',myEmpIdOps).limit(60).build(),(eDocs)=>{
+              const sv=eDocs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+              myLastEvalOps=sv[0]||null;scheduleRender();
+            });
+          }
+        }
+        scheduleRender();
+      });
+    }},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('attendance').where('employeeUid','==',uid).limit(365).build(),(docs)=>{
+      todayAtt=docs.find(a=>a.date===todayStr());
+      myAttendance=docs;
+      scheduleRender();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('attendance').where('date','==',todayStr()).limit(500).build(),(docs)=>{
+      todaysAttendance=docs;scheduleRender();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('employee_payments').limit(1000).build(),(docs)=>{
+      empPaymentsAll=docs;scheduleRender();
+    })},
+  ]);
+}
+
+function renderKPIsFromAgg(kpi){
+  if(!kpi?.pipeline)return;
+  const p=kpi.pipeline,m=kpi.monthly||{},f=kpi.financials||{};
+  const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
+  const grid=document.querySelector('.kpi-grid');
+  if(grid) grid.innerHTML=`
+    <div class="kpi-box" style="--kc:var(--b)"><div class="kpi-val">${p.active||0}</div><div class="kpi-lbl">نشط</div></div>
+    <div class="kpi-box" style="--kc:var(--r)"><div class="kpi-val">—</div><div class="kpi-lbl">⏰ متأخر</div></div>
+    <div class="kpi-box" style="--kc:var(--g)"><div class="kpi-val">${fn(m.revenue||0)}</div><div class="kpi-lbl">إيرادات ج</div></div>
+    <div class="kpi-box" style="--kc:var(--y)"><div class="kpi-val">${fn(f.totalRemaining||0)}</div><div class="kpi-lbl">باقي تحصيل ج</div></div>`;
 }
 
 function render(){

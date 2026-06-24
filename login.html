@@ -196,9 +196,22 @@ onAuthStateChanged(auth, async user => {
 });
 
 async function getUserData(uid) {
-  const snap = await getDoc(doc(db, 'users', uid));
-  if(!snap.exists()) throw new Error('المستخدم غير موجود في النظام');
-  return snap.data();
+  try {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if(!snap.exists()) throw new Error('المستخدم غير موجود في النظام');
+    const data = snap.data();
+    try { localStorage.setItem('b2c_user_cache', JSON.stringify({uid, role:data.role, name:data.name, isActive:data.isActive, mustChangePassword:data.mustChangePassword, ts:Date.now()})); } catch(_){}
+    return data;
+  } catch(e) {
+    if (!navigator.onLine) {
+      const cached = localStorage.getItem('b2c_user_cache');
+      if (cached) {
+        const c = JSON.parse(cached);
+        if (c.uid === uid) return c;
+      }
+    }
+    throw e;
+  }
 }
 
 function routeUser(data, uid){
@@ -211,10 +224,6 @@ function routeUser(data, uid){
     window.location.href = 'change-password.html';
     return;
   }
-  // Route each role to its standalone landing page (legacy sidebar layout).
-  // Reverted per product decision: the Runtime Shell (shell.html) had mobile
-  // issues, so it's no longer the default entry. It stays available by direct
-  // URL for future work — this is fully reversible (restore the line below).
   const home = ROLE_PAGES[data.role] || 'accounts.html';
   window.location.href = home;
 }

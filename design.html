@@ -12,6 +12,9 @@
 <link rel="dns-prefetch" href="https://firestore.googleapis.com">
 <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="modulepreload" href="./core/firebase-init.js">
+<link rel="modulepreload" href="./core/data-cache.js">
+<link rel="modulepreload" href="./orders.js">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <script src="core/page-state.js"></script>
@@ -484,6 +487,10 @@ window.addEventListener('unhandledrejection', e=>{
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { initNotifications } from "./notifications.js";
 import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
+import { warmupForRole } from "./core/offline-warmup.js";
+import { warmImages, extractOrderImageUrls } from "./core/image-cache.js";
 import { buildStageRevert, validatePayment, stageSlaBadge, stageProgressBar, productStatusBadge, PRODUCT_STATUS, buildOrderSplit, dedupEmployees, resolveDesigner } from "./orders.js";
 import { orderActions } from "./order-actions.js";
 import { publishGalleryItem } from "./core/gallery-actions.js";
@@ -690,6 +697,7 @@ onAuthStateChanged(auth,async u=>{
     /* sidebar: central mount */
     const r=ROLES[d.role||'admin']||ROLES.admin;
     currentRole=d.role||'admin';
+    warmupForRole(currentRole);
     userName=d.name||u.email;
     setText('nav-name',userName);
     {const _av=document.getElementById('nav-av'); if(_av){_av.textContent=((userName||'؟')[0]||'؟').toUpperCase();_av.style.cssText=`background:${r.col}20;color:${r.col}`;}}
@@ -830,80 +838,69 @@ function startListeners(){
   const isCS=['customer_service','design_operator'].includes(currentRole);
   const currentUid=auth.currentUser?.uid;
 
+  const orderSubs = [];
   if(isAdmin2){
-    // Admin — كل أوردرات التصميم (RULE G3: cap design queue at 500;
-    // a healthy design pipeline rarely exceeds 100 active orders).
-    __dsUnsubs.push(onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
-      orders=snap.docs.map(d=>({...d.data(),_id:d.id}))
-        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    orderSubs.push({ priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').where('stage','==','design').limit(500).build(),(docs)=>{
+      orders=docs.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      warmImages(extractOrderImageUrls(orders));
       scheduleRender();
-    }));
+    })});
   } else if(isCS){
-    // CS — الأوردرات اللي هي عملتها (limit 500 — same cap as admin view)
-    __dsUnsubs.push(onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
+    orderSubs.push({ priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').where('stage','==','design').limit(500).build(),(docs)=>{
       window.markSynced&&window.markSynced();_ps.markFresh();
-      const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
-      orders=all.filter(o=>o.createdBy===currentUid||!o.designerId)
+      orders=docs.filter(o=>o.createdBy===currentUid||!o.designerId)
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      warmImages(extractOrderImageUrls(orders));
       scheduleRender();
-    }));
+    })});
   } else {
-    // المصمم — أوردراته المكلّف بيها (limit 200 — per-designer cap)
-    __dsUnsubs.push(onSnapshot(query(collection(db,'orders'),where('designerId','==',currentUid),where('stage','==','design'),limit(200)),snap=>{
-      const assigned=snap.docs.map(d=>({...d.data(),_id:d.id}));
-      window.__assignedDesign=assigned;
+    orderSubs.push({ priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').where('designerId','==',currentUid).where('stage','==','design').limit(200).build(),(docs)=>{
+      window.__assignedDesign=docs;
       const unassigned=(window.__unassignedDesign||[]);
-      const ids=new Set(assigned.map(o=>o._id));
-      orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
+      const ids=new Set(docs.map(o=>o._id));
+      orders=[...docs,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      warmImages(extractOrderImageUrls(orders));
       scheduleRender();
-    }));
-    // أوردرات التصميم بدون مصمم (للسحب) — cap matches admin/CS view
-    __dsUnsubs.push(onSnapshot(query(collection(db,'orders'),where('stage','==','design'),limit(500)),snap=>{
-      window.__unassignedDesign=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(o=>!o.designerId);
+    })});
+    orderSubs.push({ priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').where('stage','==','design').limit(500).build(),(docs)=>{
+      window.__unassignedDesign=docs.filter(o=>!o.designerId);
       const assigned=(window.__assignedDesign||[]);
       const unassigned=window.__unassignedDesign;
       const ids=new Set(assigned.map(o=>o._id));
       orders=[...assigned,...unassigned.filter(o=>!ids.has(o._id))]
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       scheduleRender();
-    }));
+    })});
   }
 
-  // clients — bounded to recent 1500 by createdAt. Used for the "new order"
-  // client picker. Older clients can be linked manually via search.
-  __dsUnsubs.push(onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc'),limit(1500)),
-    snap=>{clients=snap.docs.map(d=>({...d.data(),_id:d.id}));},
-    err=>console.warn('[design] clients snapshot failed:',err)
-  ));
-  __dsUnsubs.push(onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
-    products=snap.docs.map(d=>({...d.data(),_id:d.id}));refreshProdSelects();
-  }));
-  // جيب المصممين من employees — مصدر وحيد + dedup مركزي (orders.js)
-  __dsUnsubs.push(onSnapshot(query(collection(db,'employees'),where('role','in',['graphic_designer','design_operator']),limit(100)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    designers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    const s=document.getElementById('np-des');if(!s)return;
-    s.innerHTML='<option value="">— بدون مصمم —</option>'+designers.map(d=>`<option value="${d.authUid||d._id}">${d.name}</option>`).join('');
-  }));
-  // مرحلة الطباعة = تجهيز الأوردر قبل التنفيذ → مسؤوليتها للـ operation_manager
-  // (مسؤول التشغيل)، وليس production_agent (التنفيذ).
-  // production_agent مسؤوليته تبدأ من مرحلة التنفيذ، مش الطباعة.
-  // Note: window.__printers اسم محتفظ به عشان compat مع الـ confirmApproveWithPrinter
-  // — هو dropdown مسؤولي التشغيل دلوقتي.
-  __dsUnsubs.push(onSnapshot(query(collection(db,'employees'),where('role','==','operation_manager'),limit(100)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    window.__printers=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    const s=document.getElementById('pick-printer-sel');if(!s)return;
-    const cur=s.value;
-    s.innerHTML='<option value="">— أول مسؤول تشغيل متاح —</option>'+(window.__printers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
-    if(cur)s.value=cur;
-  }));
-  __dsUnsubs.push(onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    const s=document.getElementById('np-dep-wallet');if(!s)return;
-    s.innerHTML='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'} ${w.name}</option>`).join('');
-  }));
+  const _subs = staggerSubs([
+    ...orderSubs,
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('clients').orderBy('createdAt','desc').limit(1500).build(),(docs)=>{
+      clients=docs;
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('products_v2').limit(500).build(),(docs)=>{
+      products=docs;refreshProdSelects();
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('employees').where('role','in',['graphic_designer','design_operator']).limit(100).build(),(docs)=>{
+      designers=dedupEmployees(docs).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+      const s=document.getElementById('np-des');if(!s)return;
+      s.innerHTML='<option value="">— بدون مصمم —</option>'+designers.map(d=>`<option value="${d.authUid||d._id}">${d.name}</option>`).join('');
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('employees').where('role','==','operation_manager').limit(100).build(),(docs)=>{
+      window.__printers=dedupEmployees(docs).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+      const s=document.getElementById('pick-printer-sel');if(!s)return;
+      const cur=s.value;
+      s.innerHTML='<option value="">— أول مسؤول تشغيل متاح —</option>'+(window.__printers||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
+      if(cur)s.value=cur;
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{
+      wallets=docs;
+      const s=document.getElementById('np-dep-wallet');if(!s)return;
+      s.innerHTML='<option value="">— اختر المحفظة —</option>'+wallets.map(w=>`<option value="${w._id}">${w.type==='cash'?'💵':w.type==='bank'?'🏦':'💳'} ${w.name}</option>`).join('');
+    })},
+  ]);
+  _subs.forEach(u=>__dsUnsubs.push(u));
   window.addEventListener('beforeunload',stopListeners,{once:true});
 }
 

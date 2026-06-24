@@ -73,6 +73,9 @@ async function _advanceFromStage({
   nextAssigneeId = '', nextAssigneeName = '',
   bypassWarnings = false, extraFields = {},
 }) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { ok: false, errors: ['لا يوجد اتصال بالإنترنت — يرجى المحاولة لاحقاً'], warnings: [], orderId };
+  }
   // Pre-flight — اكتشاف الـ warnings بدون كتابة
   const order = await _loadOrder(db, orderId);
   if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
