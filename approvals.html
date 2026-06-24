@@ -340,6 +340,8 @@ import { canDo } from "./core/permissions-matrix.js";
 import { requiresStrictSeparation, resolveFinancialPolicy } from "./core/financial-policy.js";
 import { syncWorkspaceCtx, openWorkspace, closeWorkspace, wsSetTab } from './approval-workspace.js';
 import { initPageShortcuts } from './core/page-shortcuts.js';
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { getMasterList } from './core/static-store.js';
 
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let searchQuery = '';
@@ -521,21 +523,15 @@ function startListeners(){
   // يسري أي تعديل من الأدمن فوراً على الجلسات المفتوحة (نقطة التطبيق الفعلية).
   // غيابها = الافتراضي (advisory) → لا تصعيد، backward-compatible. single doc
   // ref → مُستثنى من قاعدة limit() (G3).
-  onSnapshot(doc(db,'master_lists','financial_policy'),
-    s=>{ financialPolicy = s.exists() ? s.data() : null; },
-    err=>console.warn('[approvals] financial_policy:', err));
+  getMasterList('financial_policy', data => { financialPolicy = data || null; });
 
-  // RULE G3: cap the remaining unbounded subscriptions on this page.
-  onSnapshot(query(collection(db,'wallets'),limit(100)),
-    snap=>{
-      walletsMap.clear();
-      walletsArr = snap.docs.map(d=>({...d.data(),_id:d.id}));
-      walletsArr.forEach(w=>walletsMap.set(w._id, w.name||w._id));
-      updateWalletsStrip();
-      updateKPIs();
-    },
-    err=>console.error('[approvals] wallets:', err)
-  );
+  dataCache.subscribe(cachedQuery('wallets').limit(100).build(), (docs) => {
+    walletsMap.clear();
+    walletsArr = docs;
+    walletsArr.forEach(w => walletsMap.set(w._id, w.name || w._id));
+    updateWalletsStrip();
+    updateKPIs();
+  });
 
   // Bounded — approvals page only needs orders for the ordersMap lookup
   // (display order code/client name on each approval row). Older archived

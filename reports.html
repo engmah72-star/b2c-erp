@@ -243,6 +243,8 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { getSettings } from "./core/static-store.js";
 import { setText, fmtNum, fmtTime } from "./core/dom-utils.js";
 // ══ Sidebar ══
 const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clients'},{file:'design.html',label:'التصميم',ico:'✏️',perm:'design'},{file:'print.html',label:'الطباعة',ico:'🖨️',perm:'print'},{file:'production.html',label:'التنفيذ',ico:'🏭',perm:'production'},{file:'shipping.html',label:'الشحن',ico:'🚚',perm:'shipping'},{file:'shipping-accounts.html',label:'حسابات الشحن',ico:'📦',perm:'shipping-accounts'},{file:'archive.html',label:'الأرشيف',ico:'📁',perm:'archive'},{file:'accounts.html',label:'الحسابات',ico:'💰',perm:'accounts'},{file:'approvals.html',label:'الاعتمادات',ico:'🔐',perm:'approvals'},{file:'suppliers.html',label:'الموردين',ico:'▣',perm:'suppliers'},{file:'products.html',label:'المنتجات',ico:'◈',perm:'products'},{file:'employees.html',label:'الموظفين',ico:'👥',adminOnly:true},{file:'reports.html',label:'التقارير',ico:'📊',perm:'reports'},{file:'design-workspace.html',label:'مساحة التصميم',ico:'🖥️',group:'orders',perm:'design'},{file:'client-login.html',label:'بوابة العميل',ico:'🔗',group:'main',public:true},{file:'gallery.html',label:'المعرض',ico:'🖼️',group:'main',public:true},{file:'settings.html',label:'الإعدادات',ico:'⚙️',adminOnly:true}];
@@ -626,11 +628,11 @@ onAuthStateChanged(auth,async u=>{
   // deeper historical analysis uses one-shot getDocs() with date filters.
   // T3: Core listeners — reduced from 10K → 5K (orders + transactions)
   stopListeners();
-  __rptUnsubs.push(onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(5000)),s=>{window.markSynced&&window.markSynced();orders=s.docs.map(d=>({...d.data(),_id:d.id}));__ordersVer++;__loaded.orders=true;scheduleRender();}));
-  __rptUnsubs.push(onSnapshot(query(collection(db,'clients'),limit(5000)),s=>{clients=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.clients=true;scheduleRender();}));
-  __rptUnsubs.push(onSnapshot(query(collection(db,'wallets'),limit(100)),s=>{wallets=s.docs.map(d=>({...d.data(),_id:d.id}));}));
-  __rptUnsubs.push(onSnapshot(doc(db,'settings','main'),s=>{appSettings=s.exists()?s.data():{};scheduleRender();}));
-  __rptUnsubs.push(onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(5000)),s=>{transactions=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.transactions=true;scheduleRender();}));
+  __rptUnsubs.push(dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(5000).build(),(docs)=>{window.markSynced&&window.markSynced();orders=docs;__ordersVer++;__loaded.orders=true;scheduleRender();}));
+  __rptUnsubs.push(dataCache.subscribe(cachedQuery('clients').limit(5000).build(),(docs)=>{clients=docs;__loaded.clients=true;scheduleRender();}));
+  __rptUnsubs.push(dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{wallets=docs;}));
+  getSettings(data => { appSettings = data || {}; scheduleRender(); });
+  __rptUnsubs.push(dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(5000).build(),(docs)=>{transactions=docs;__loaded.transactions=true;scheduleRender();}));
   window.addEventListener('beforeunload', stopListeners, { once: true });
   // ابدأ بقراءة الـ URL state بعد ما الـ auth ينجح
   readUrlState();
