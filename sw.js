@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v312';
+const CACHE = 'b2c-v313';
 const IMAGE_CACHE = 'b2c-images-v1';
 const MAX_IMAGE_CACHE = 200;
 
