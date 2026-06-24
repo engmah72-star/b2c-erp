@@ -6,7 +6,7 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v311';
+const CACHE = 'b2c-v312';
 const IMAGE_CACHE = 'b2c-images-v1';
 const MAX_IMAGE_CACHE = 200;
 
@@ -159,6 +159,10 @@ const PRECACHE = [
   './designer-dashboard.html',
   './production-dashboard.html',
   './shipping-dashboard.html',
+  './exec-dashboard.html',
+  './financial-dashboard.html',
+  './accounts.html',
+  './clients.html',
   // Their dedicated CSS (Phase-2D extracts) — so the role-landing page
   // renders styled on offline first-launch, not just unstyled HTML.
   './cs-dashboard.css',
