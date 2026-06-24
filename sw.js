@@ -7,6 +7,8 @@
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
 const CACHE = 'b2c-v311';
+const IMAGE_CACHE = 'b2c-images-v1';
+const MAX_IMAGE_CACHE = 200;
 
 // Files we ALWAYS want fresh when online — code paths that change between
 // deploys. Match by URL suffix.
@@ -177,7 +179,6 @@ const NEVER_CACHE_HOSTS = [
   'firebaseinstallations.googleapis.com',
   'identitytoolkit.googleapis.com',
   'securetoken.googleapis.com',
-  'firebasestorage.googleapis.com',
   'fcm.googleapis.com',
   'firebase.googleapis.com',
   'firebaseio.com',
@@ -198,7 +199,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== IMAGE_CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -210,6 +211,14 @@ self.addEventListener('fetch', e => {
 
   let url;
   try { url = new URL(req.url); } catch { return; }
+
+  // Firebase Storage download URLs (alt=media) → cache-first (immutable, token-addressed)
+  const isStorageDownload = url.hostname === 'firebasestorage.googleapis.com'
+    && url.searchParams.get('alt') === 'media';
+  if (isStorageDownload) {
+    e.respondWith(cacheFirstImage(req));
+    return;
+  }
 
   if (NEVER_CACHE_HOSTS.some(h => url.hostname.endsWith(h))) return;
 
@@ -281,6 +290,29 @@ self.addEventListener('message', e => {
       const toRemove = imgKeys.slice(0, imgKeys.length - Math.floor(MAX_CACHE_ENTRIES * 0.3));
       for (const r of toRemove) await cache.delete(r).catch(() => {});
     });
+    caches.open(IMAGE_CACHE).then(async cache => {
+      const keys = await cache.keys();
+      if (keys.length <= MAX_IMAGE_CACHE) return;
+      const toRemove = keys.slice(0, keys.length - MAX_IMAGE_CACHE);
+      for (const r of toRemove) await cache.delete(r).catch(() => {});
+    });
+  }
+
+  if (e.data === 'PURGE_IMAGE_CACHE') {
+    caches.delete(IMAGE_CACHE).catch(() => {});
+  }
+
+  if (e.data?.type === 'WARM_IMAGES' && Array.isArray(e.data.urls)) {
+    caches.open(IMAGE_CACHE).then(async cache => {
+      for (const u of e.data.urls.slice(0, 50)) {
+        if (await cache.match(u)) continue;
+        fetch(u).then(res => {
+          if (res.ok && (res.headers.get('content-type') || '').startsWith('image/')) {
+            cache.put(u, res).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    });
   }
 });
 
@@ -299,4 +331,24 @@ async function staleWhileRevalidate(req) {
     return cached;
   });
   return cached || network;
+}
+
+// Cache-First for Firebase Storage images.
+// Download URLs are immutable (token-addressed) — safe to serve from cache indefinitely.
+async function cacheFirstImage(req) {
+  const cache = await caches.open(IMAGE_CACHE);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  try {
+    const res = await fetch(req);
+    if (res && res.status === 200) {
+      const ct = res.headers.get('content-type') || '';
+      if (ct.startsWith('image/')) {
+        cache.put(req, res.clone()).catch(() => {});
+      }
+    }
+    return res;
+  } catch (_) {
+    return Response.error();
+  }
 }
