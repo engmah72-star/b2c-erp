@@ -234,6 +234,7 @@ export function panelOrdersHTML({
   STAGE_COL = {},
   STAGE_HREF = {},
   STAGE_AR = {},
+  canDelete = false,
 } = {}) {
   let data = orders.slice().sort(
     (a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)
@@ -296,6 +297,7 @@ export function panelOrdersHTML({
         ${canSee('design_data') && (Array.isArray(o.designFiles) && o.designFiles.length > 0 || o.designFileUrl || o.designImageUrl) ? `<a href="${href}" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(6,182,212,.3);background:rgba(6,182,212,.08);color:var(--cyan,#06b6d4);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">📁 ملفات${Array.isArray(o.designFiles) && o.designFiles.length > 1 ? ' (' + o.designFiles.length + ')' : ''}</a>` : ''}
         ${['shipping', 'archived'].includes(o.stage) && !o.hasReturn ? `<a href="returns.html?newTicket=${o._id}" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,170,0,.3);background:rgba(255,170,0,.08);color:var(--y);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">↩️ مرتجع</a>` : ''}
         ${o.hasReturn ? `<a href="returns.html" onclick="event.stopPropagation()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);text-decoration:none">↩️ له مرتجع</a>` : ''}
+        ${canDelete ? `<button type="button" onclick="event.stopPropagation();deleteClientPanelOrder('${o._id}')" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,61,110,.4);background:rgba(255,61,110,.08);color:var(--r);font-size:var(--fs-xs);font-weight:var(--fw-extra);cursor:pointer;font-family:inherit">🗑 مسح</button>` : ''}
       </div>
     </div>`;
   }).join('');
