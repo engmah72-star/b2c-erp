@@ -146,6 +146,7 @@ import { mountDateRangePicker } from "./date-range-picker.js";
 import { calcRem } from "./core/order-math.js";
 import { warmupForRole } from "./core/offline-warmup.js";
 import { warmImages, extractOrderImageUrls } from "./core/image-cache.js";
+import { subscribeKPIs } from "./core/live-kpis.js";
 
 const RANGE_STORAGE_KEY = 'exec-dash:range';
 // Current resolved range — updated by the picker's onChange.
@@ -207,6 +208,7 @@ onAuthStateChanged(auth,async u=>{
     // Role confirmed → reveal page.
     document.body.classList.remove('auth-gate');
     initRangePicker();
+    subscribeKPIs(kpi => { if(!_ordersReady) renderFromAggregation(kpi); });
     try { startListeners(); }
     catch(err){ console.error('startListeners:',err); showDashError(err.message); }
   }catch(e){console.error(e);location.href='login.html';}
@@ -276,6 +278,39 @@ function initRangePicker(){
 }
 
 window.manualRefresh=()=>{toast('🔄 البيانات محدّثة في الوقت الحقيقي','');};
+
+function renderFromAggregation(kpi){
+  if(!kpi?.pipeline)return;
+  const p=kpi.pipeline,m=kpi.monthly||{},f=kpi.financials||{};
+  const card=(ico,val,lbl,col,href,late)=>`
+    <div class="ekpi" onclick="navigatePage('${href}')">
+      <div class="ekpi-top" style="background:${col}"></div>
+      <div class="ekpi-ico">${ico}</div>
+      <div class="ekpi-val" style="color:${col}">${val}</div>
+      <div class="ekpi-lbl">${lbl}</div>
+      ${late>0?`<div class="ekpi-sub text-r">⚠️ ${late} متأخر</div>`:'<div class="ekpi-sub text-muted"> </div>'}
+    </div>`;
+  document.getElementById('ops-grid').innerHTML=
+    card('📋',p.active||0,'إجمالي النشطة','var(--b)','clients.html',0)+
+    card('✏️',p.design||0,'تحت التصميم','var(--p)','design.html',0)+
+    card('🖨️',p.printing||0,'تحت الطباعة','var(--y)','print.html',0)+
+    card('🏭',p.production||0,'تحت التنفيذ','var(--o)','production.html',0)+
+    card('🚚',p.shipping||0,'جاهزة للشحن','var(--c)','shipping.html',0);
+  const fCard=(ico,lbl,val,col,sub)=>`
+    <div class="fkpi" onclick="navigatePage('accounts.html')">
+      <div class="fkpi-top" style="background:${col}"></div>
+      <div class="fkpi-ico">${ico}</div>
+      <div class="fkpi-val" style="color:${col}">${fn(val)} <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold)">ج</span></div>
+      <div class="fkpi-lbl">${lbl}</div>
+      ${sub?`<div style="font-size:8px;color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">${sub}</div>`:''}
+    </div>`;
+  document.getElementById('fin-grid').innerHTML=
+    fCard('🛒','مبيعات الشهر',m.revenue||0,'var(--b)','هذا الشهر')+
+    fCard('📥','تحصيل الشهر',m.collected||0,'var(--g)','هذا الشهر')+
+    fCard('⏳','المتبقي للتحصيل',f.totalRemaining||0,'var(--r)','إجمالي')+
+    fCard('📤','مصروفات الشهر',m.expenses||0,'var(--y)','هذا الشهر')+
+    fCard('📈','صافي الشهر',m.cashflowNet||0,((m.cashflowNet||0)>=0?'var(--g)':'var(--r)'),'هذا الشهر');
+}
 
 // ═══════════════════════════════════════
 //  RENDER ALL

@@ -160,6 +160,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/core/page-shortcuts.js',
   '/core/offline-warmup.js',
   '/core/static-store.js',
+  '/core/live-kpis.js',
   '/sidebar.js',
   '/sidebar-config.js',
   '/clients-data.js',
