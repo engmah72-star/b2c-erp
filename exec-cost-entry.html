@@ -251,7 +251,10 @@
                 <div class="ws-client-name" id="ws-client">—</div>
                 <div class="ws-order-meta" id="ws-meta">—</div>
               </div>
-              <span class="stage-chip" id="ws-stage-chip"></span>
+              <div class="ws-order-actions">
+                <span class="stage-chip" id="ws-stage-chip"></span>
+                <button type="button" class="ws-cancel-btn" id="ws-cancel-btn" hidden onclick="cancelCurrentOrder()" title="إلغاء الأوردر">✕ إلغاء</button>
+              </div>
             </div>
             <div class="drawer-profit" id="drawer-profit"></div>
           </div>
@@ -1047,6 +1050,38 @@ window.closeWorkspace=function(){
   renderList();
 };
 
+window.cancelCurrentOrder=async function(){
+  if(!activeId){ toast('⚠️ لا يوجد أوردر مفتوح','err'); return; }
+  const o=orders.find(x=>x._id===activeId);
+  if(!o){ toast('⚠️ الأوردر غير موجود','err'); return; }
+  if(o.stage==='cancelled'){ toast('الأوردر ملغي بالفعل',''); return; }
+  if(o.stage==='archived'){ toast('لا يمكن إلغاء أوردر مؤرشف','err'); return; }
+
+  const reason=prompt('سبب الإلغاء:');
+  if(!reason||!reason.trim()) return;
+  if(!confirm(`⚠️ هل أنت متأكد من إلغاء الأوردر #${o.orderId||o._id.slice(-6)}؟\n\nالسبب: ${reason.trim()}`)) return;
+
+  const btn=document.getElementById('ws-cancel-btn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ جاري...'; }
+  try {
+    const res=await orderActions.cancelOrder({
+      db, orderId:activeId,
+      reason:reason.trim(),
+      userId:currentUser?.uid||'', userName,
+    });
+    if(res.ok){
+      toast('✅ تم إلغاء الأوردر','ok');
+      closeWorkspace();
+    } else {
+      toast('⛔ '+(res.errors?.[0]||'فشل الإلغاء'),'err');
+    }
+  } catch(e){
+    toast('⛔ '+(e.message||'خطأ'),'err');
+  } finally {
+    if(btn){ btn.disabled=false; btn.textContent='✕ إلغاء'; }
+  }
+};
+
 function _populateWorkspace(o){
   // Header
   const SM={design:{cls:'st-design',lbl:'✏️ تصميم'},printing:{cls:'st-printing',lbl:'🖨️ طباعة'},production:{cls:'st-production',lbl:'🏭 تنفيذ'},shipping:{cls:'st-shipping',lbl:'🚚 شحن'},archived:{cls:'st-archived',lbl:'📁 أرشيف'}};
@@ -1056,6 +1091,12 @@ function _populateWorkspace(o){
   setText('ws-meta',meta);
   const chip=document.getElementById('ws-stage-chip');
   if(chip){chip.className='stage-chip '+stg.cls;chip.textContent=stg.lbl;}
+
+  // Cancel button — show for non-archived, non-cancelled orders
+  const cancelBtn=document.getElementById('ws-cancel-btn');
+  if(cancelBtn){
+    cancelBtn.hidden = o.stage==='archived' || o.stage==='cancelled';
+  }
 
   // Profitability bar
   renderDrawerProfit(o);
