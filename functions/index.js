@@ -22,7 +22,7 @@ const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { initializeApp } = require('firebase-admin/app');
-const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { getFirestore, FieldValue, AggregateField } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { getMessaging } = require('firebase-admin/messaging');
 const { renderProfileHtml } = require('./public-profile');
@@ -4076,4 +4076,200 @@ exports.setupStorageCors = onCall(CALL_OPTS, async (req) => {
     responseHeader: ['Content-Type', 'Content-Length'],
   }]);
   return { ok: true, message: 'CORS configured on storage bucket' };
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//   LIVE KPI AGGREGATION — pre-computes dashboard metrics server-side
+// ════════════════════════════════════════════════════════════════════════════
+// Instead of 7 dashboards each pulling 5000 orders + 5000 transactions to
+// compute counts and sums client-side, this function uses Firestore
+// count()/sum() aggregation queries (zero doc reads) and writes one doc
+// that all dashboards read.
+//
+// Runs every 5 minutes. Dashboards read aggregations/live_kpis (one doc).
+// Callable refreshKPIs available for on-demand recomputation.
+// ════════════════════════════════════════════════════════════════════════════
+
+const ACTIVE_STAGES = ['design', 'printing', 'production', 'shipping'];
+const ALL_STAGES = ['design', 'printing', 'production', 'shipping', 'archived', 'cancelled'];
+
+async function buildLiveKPIs() {
+  const db = getFirestore();
+  const now = new Date();
+  const tz = 'Africa/Cairo';
+  const monthStart = new Date(now.toLocaleDateString('en-CA', { timeZone: tz }).slice(0, 7) + '-01T00:00:00+02:00');
+
+  // ── 1. Pipeline counts by stage (count queries — zero doc reads) ──
+  const stageCounts = {};
+  const stageCountPs = ALL_STAGES.map(async (stage) => {
+    const snap = await db.collection('orders')
+      .where('stage', '==', stage)
+      .count().get()
+      .catch(() => ({ data: () => ({ count: 0 }) }));
+    stageCounts[stage] = snap.data().count;
+  });
+
+  // ── 2. Monthly order count + revenue (created this month) ──
+  const monthlyOrderCountP = db.collection('orders')
+    .where('createdAt', '>=', monthStart)
+    .count().get()
+    .catch(() => ({ data: () => ({ count: 0 }) }));
+
+  const monthlyRevenueP = db.collection('orders')
+    .where('createdAt', '>=', monthStart)
+    .aggregate({ total: AggregateField.sum('salePrice') })
+    .get()
+    .catch(() => ({ data: () => ({ total: 0 }) }));
+
+  // ── 3. Active orders financial sums ──
+  const activeFinPs = ACTIVE_STAGES.map(async (stage) => {
+    const snap = await db.collection('orders')
+      .where('stage', '==', stage)
+      .aggregate({
+        salePrice: AggregateField.sum('salePrice'),
+        paid: AggregateField.sum('paid'),
+        discount: AggregateField.sum('discount'),
+        customerShippingFee: AggregateField.sum('customerShippingFee'),
+      })
+      .get()
+      .catch(() => ({ data: () => ({ salePrice: 0, paid: 0, discount: 0, customerShippingFee: 0 }) }));
+    return { stage, ...snap.data() };
+  });
+
+  // ── 4. Monthly transactions (in/out) ──
+  const txInP = db.collection('transactions_v2')
+    .where('createdAt', '>=', monthStart)
+    .where('type', '==', 'in')
+    .aggregate({
+      total: AggregateField.sum('amount'),
+      count: AggregateField.count(),
+    })
+    .get()
+    .catch(() => ({ data: () => ({ total: 0, count: 0 }) }));
+
+  const txOutP = db.collection('transactions_v2')
+    .where('createdAt', '>=', monthStart)
+    .where('type', '==', 'out')
+    .aggregate({
+      total: AggregateField.sum('amount'),
+      count: AggregateField.count(),
+    })
+    .get()
+    .catch(() => ({ data: () => ({ total: 0, count: 0 }) }));
+
+  // ── 5. Returns this month ──
+  const returnsP = db.collection('returns_tickets')
+    .where('createdAt', '>=', monthStart)
+    .count().get()
+    .catch(() => ({ data: () => ({ count: 0 }) }));
+
+  // ── 6. Client count ──
+  const clientCountP = db.collection('clients')
+    .count().get()
+    .catch(() => ({ data: () => ({ count: 0 }) }));
+
+  const newClientsP = db.collection('clients')
+    .where('createdAt', '>=', monthStart)
+    .count().get()
+    .catch(() => ({ data: () => ({ count: 0 }) }));
+
+  // ── 7. Wallet balances ──
+  const walletSumP = db.collection('wallets')
+    .aggregate({ total: AggregateField.sum('balance') })
+    .get()
+    .catch(() => ({ data: () => ({ total: 0 }) }));
+
+  // ── Execute all in parallel ──
+  const [
+    , // stageCountPs resolved via stageCounts
+    monthlyOrderCount, monthlyRevenue,
+    activeFin,
+    txIn, txOut,
+    returnsCount, clientCount, newClients, walletSum,
+  ] = await Promise.all([
+    Promise.all(stageCountPs),
+    monthlyOrderCountP, monthlyRevenueP,
+    Promise.all(activeFinPs),
+    txInP, txOutP,
+    returnsP, clientCountP, newClientsP, walletSumP,
+  ]);
+
+  // ── Derive totals ──
+  const activeCount = ACTIVE_STAGES.reduce((s, st) => s + (stageCounts[st] || 0), 0);
+
+  const activeFinTotals = { salePrice: 0, paid: 0, discount: 0, customerShippingFee: 0 };
+  activeFin.forEach(f => {
+    activeFinTotals.salePrice += f.salePrice || 0;
+    activeFinTotals.paid += f.paid || 0;
+    activeFinTotals.discount += f.discount || 0;
+    activeFinTotals.customerShippingFee += f.customerShippingFee || 0;
+  });
+  const totalRemaining = Math.max(0,
+    activeFinTotals.salePrice + activeFinTotals.customerShippingFee
+    - activeFinTotals.discount - activeFinTotals.paid
+  );
+
+  const perStageFin = {};
+  activeFin.forEach(f => {
+    const rem = Math.max(0, (f.salePrice || 0) + (f.customerShippingFee || 0) - (f.discount || 0) - (f.paid || 0));
+    perStageFin[f.stage] = {
+      salePrice: +(f.salePrice || 0).toFixed(2),
+      paid: +(f.paid || 0).toFixed(2),
+      remaining: +rem.toFixed(2),
+    };
+  });
+
+  const txInData = txIn.data();
+  const txOutData = txOut.data();
+  const collectedIn = txInData.total || 0;
+  const expensesOut = txOutData.total || 0;
+
+  return {
+    pipeline: {
+      ...stageCounts,
+      active: activeCount,
+      total: ALL_STAGES.reduce((s, st) => s + (stageCounts[st] || 0), 0),
+    },
+    monthly: {
+      orders: monthlyOrderCount.data().count,
+      revenue: +(monthlyRevenue.data().total || 0).toFixed(2),
+      collected: +collectedIn.toFixed(2),
+      expenses: +expensesOut.toFixed(2),
+      cashflowNet: +(collectedIn - expensesOut).toFixed(2),
+      txInCount: txInData.count || 0,
+      txOutCount: txOutData.count || 0,
+      returns: returnsCount.data().count,
+      newClients: newClients.data().count,
+    },
+    financials: {
+      totalRemaining: +totalRemaining.toFixed(2),
+      perStage: perStageFin,
+      walletBalance: +(walletSum.data().total || 0).toFixed(2),
+    },
+    clients: {
+      total: clientCount.data().count,
+      newThisMonth: newClients.data().count,
+    },
+    monthKey: now.toLocaleDateString('en-CA', { timeZone: tz }).slice(0, 7),
+    computedAt: FieldValue.serverTimestamp(),
+    _v: 1,
+  };
+}
+
+exports.computeLiveKPIs = onSchedule(
+  { schedule: 'every 5 minutes', timeZone: 'Africa/Cairo', timeoutSeconds: 120, maxInstances: 1 },
+  async () => {
+    const db = getFirestore();
+    const kpis = await buildLiveKPIs();
+    await db.collection('aggregations').doc('live_kpis').set(kpis, { merge: true });
+    console.log('[computeLiveKPIs] updated:', JSON.stringify(kpis.pipeline));
+  }
+);
+
+exports.refreshKPIs = onCall(CALL_OPTS, async (req) => {
+  if (!req.auth) throw new HttpsError('unauthenticated', 'Login required');
+  const db = getFirestore();
+  const kpis = await buildLiveKPIs();
+  await db.collection('aggregations').doc('live_kpis').set(kpis, { merge: true });
+  return { ok: true, kpis };
 });

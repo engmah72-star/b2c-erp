@@ -859,6 +859,9 @@ const HANDLERS = {
 // كل الشاشات ترسل events هنا — المحرك يُنفذ كل الكتابات ذريًا
 // ══════════════════════════════════════════════════════════════════
 export async function dispatchFinancialEvent(db, eventType, payload) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('لا يوجد اتصال بالإنترنت — يرجى المحاولة لاحقاً');
+  }
   console.log('[FSE] 📥 event received:', eventType, { amount: payload.amount });
   const handler = HANDLERS[eventType];
   if (!handler) throw new Error(`[FSE] Unknown event type: ${eventType}`);

@@ -14,6 +14,8 @@
 <link rel="dns-prefetch" href="https://firestore.googleapis.com">
 <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="modulepreload" href="./core/firebase-init.js">
+<link rel="modulepreload" href="./core/data-cache.js">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <script src="sidebar-config.js"></script>
@@ -128,7 +130,7 @@
       <button type="button" class="cs-tab" onclick="switchTab('rem',this)">💰 باقي</button>
       <button type="button" class="cs-tab" onclick="switchTab('done',this)">✅ منجزة</button>
     </div>
-    <div id="orders-list">
+    <div id="orders-list" style="height:min(420px,50vh)">
       <div style="padding:var(--space-xl);text-align:center;color:var(--dim2);font-size:var(--fs-base)">جاري التحميل...</div>
     </div>
 
@@ -191,11 +193,17 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { delayDays } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
+import { VirtualList } from "./core/virtual-scroll.js";
 import { employeeActions } from "./employee-actions.js";
 import { mountAttendanceSelf } from "./core/attendance-self-widget.js";
 import { orderActions } from "./order-actions.js";
 import { calcRem } from "./core/order-math.js";
+import { warmupForRole } from "./core/offline-warmup.js";
+import { warmImages, extractOrderImageUrls, extractClientImageUrls } from "./core/image-cache.js";
+import { subscribeKPIs } from "./core/live-kpis.js";
 // ── Utils ──
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -252,52 +260,43 @@ onAuthStateChanged(auth,async u=>{
   const role=d.role||'customer_service';currentRole=role;
   const RDASH={graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html',admin:'accounts.html',operation_manager:'ops-dashboard.html'};
   if(role!=='admin'&&role!=='operation_manager'&&role!=='customer_service'){location.href=RDASH[role]||'login.html';return;}
+  warmupForRole(role);
   userName=d.name||u.email;
   set('nav-name',userName);set('role-badge',role==='admin'?'أدمن':role==='operation_manager'?'تشغيل':'خدمة عملاء');
   try{ mountAttendanceSelf({ container:document.getElementById('att-self-host'), db, user:u }); }catch(_){}
   {const _av=document.getElementById('nav-av'); if(_av)_av.textContent=((userName||'؟')[0]||'؟').toUpperCase();}
   set('cs-greeting',`${greet}، ${userName.split(' ')[0]} 👋`);
   buildSidebar(uid);
+  subscribeKPIs(kpi => { if(!myOrders.length) renderStripFromAgg(kpi); });
   const isAdmin=['admin','operation_manager'].includes(role);
 
-  // Orders listener — limit recent 2000 for dashboard (history via reports.html).
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    myOrders=isAdmin?all:all.filter(o=>o.createdBy===uid||!o.createdBy);
-    render();
-  });
+  let _renderTimer=null;
+  function scheduleRender(){if(_renderTimer)return;_renderTimer=requestAnimationFrame(()=>{_renderTimer=null;render();});}
 
-  // Clients listener
-  onSnapshot(query(collection(db,'clients'),limit(1500)),snap=>{
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    myClients=isAdmin?all:all.filter(c=>c.createdBy===uid||!c.createdBy);
-    render();
-  });
-
-  // Wallets listener
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    buildWalletSelect();
-  });
-
-  // (الحضور/الانصراف انتقل للـ widget المركزي #att-self-host)
-
-  // Conversations listener (inbox mini — أرسل رسائل لم يُرد عليها)
-  onSnapshot(query(collection(db,'conversations'),where('participants','array-contains',uid),limit(200)),snap=>{
-    myConvs=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderInboxMini();
-  },err=>{
-    // فشل القراءة لا يكسر باقي الصفحة — فقط نخفي الـ widget
-    console.warn('[cs] conversations listener:',err.message);
-  });
-
-  // Order-requests listener — طلبات بوابة جديدة بانتظار التحويل لأوردر (G3: limit)
-  onSnapshot(query(collection(db,'order_requests'),where('status','==','new'),orderBy('createdAt','desc'),limit(50)),snap=>{
-    portalReqs=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderRequests();
-  },err=>{
-    console.warn('[cs] order_requests listener:',err.message);
-  });
+  staggerSubs([
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+      myOrders=isAdmin?docs:docs.filter(o=>o.createdBy===uid||!o.createdBy);
+      warmImages(extractOrderImageUrls(myOrders));
+      scheduleRender();
+    })},
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('clients').limit(1500).build(),(docs)=>{
+      myClients=isAdmin?docs:docs.filter(c=>c.createdBy===uid||!c.createdBy);
+      warmImages(extractClientImageUrls(myClients));
+      scheduleRender();
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{
+      wallets=docs;
+      buildWalletSelect();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('conversations').where('participants','array-contains',uid).limit(200).build(),(docs)=>{
+      myConvs=docs;
+      renderInboxMini();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('order_requests').where('status','==','new').orderBy('createdAt','desc').limit(50).build(),(docs)=>{
+      portalReqs=docs;
+      renderRequests();
+    })},
+  ]);
 });
 
 
@@ -315,6 +314,23 @@ function render(){
   renderReadyForDelivery();
   renderFollowUp(active,withRem,late);
   renderOrders(activeTab);
+}
+
+function renderStripFromAgg(kpi){
+  if(!kpi?.pipeline)return;
+  const el=document.getElementById('today-strip');if(!el)return;
+  const p=kpi.pipeline,m=kpi.monthly||{},f=kpi.financials||{};
+  const btn=(ico,val,lbl,col,href)=>`
+    <a class="today-btn" href="${href||'#'}" ${href?'':'onclick="return false"'}>
+      <div class="today-btn-ico">${ico}</div>
+      <div class="today-btn-val" style="color:${col}">${val}</div>
+      <div class="today-btn-lbl">${lbl}</div>
+    </a>`;
+  el.innerHTML=
+    btn('📋',p.active||0,'أوردر نشط','var(--b)','clients.html')+
+    btn('💰',fn(f.totalRemaining||0)+' ج','باقي تحصيل','var(--r)','#')+
+    btn('👤',m.newClients||0,'عميل جديد','var(--g)','clients.html')+
+    btn('📈',fn(m.revenue||0)+' ج','مبيعات الشهر','var(--p)','accounts.html');
 }
 
 // ── Today strip ──
@@ -412,22 +428,12 @@ function renderFollowUp(active,withRem,late){
   }).join('');
 }
 
-// ── Orders tab ──
-function renderOrders(tab){
-  const el=document.getElementById('orders-list');if(!el)return;
-  const active=myOrders.filter(o=>!['archived','delivered'].includes(o.stage));
-  const withRem=myOrders.filter(o=>calcRem(o)>0);
-  const done=myOrders.filter(o=>['archived','delivered'].includes(o.stage)&&isThisMonth(o.createdAt));
-  const data=(tab==='active'?active:tab==='rem'?withRem:done)
-    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))
-    .slice(0,20);
-
-  if(!data.length){
-    el.innerHTML='<div class="cs-empty"><div class="cs-empty-ico">📭</div><div class="cs-empty-txt">لا توجد أوردرات</div></div>';
-    return;
-  }
-
-  el.innerHTML=data.map(o=>{
+// ── Orders tab (virtual scroll) ──
+const ordersVL=new VirtualList({
+  container:document.getElementById('orders-list'),
+  rowHeight:72,
+  emptyHtml:'<div class="cs-empty"><div class="cs-empty-ico">📭</div><div class="cs-empty-txt">لا توجد أوردرات</div></div>',
+  renderRow:(o)=>{
     const rem=calcRem(o);
     const col=STAGE_COL[o.stage]||'var(--dim2)';
     const prods=(o.products||[]).map(p=>p.name).join(' + ')||o.product||'—';
@@ -445,7 +451,16 @@ function renderOrders(tab){
         ${rem>0?`<span style="color:var(--r);font-weight:var(--fw-extra);flex-shrink:0;margin-right:8px">${fn(rem)} ج</span>`:'<span style="color:var(--g);font-size:var(--fs-xs);font-weight:var(--fw-extra);flex-shrink:0;margin-right:8px">✓ محصّل</span>'}
       </div>
     </div>`;
-  }).join('');
+  }
+});
+
+function renderOrders(tab){
+  const active=myOrders.filter(o=>!['archived','delivered'].includes(o.stage));
+  const withRem=myOrders.filter(o=>calcRem(o)>0);
+  const done=myOrders.filter(o=>['archived','delivered'].includes(o.stage)&&isThisMonth(o.createdAt));
+  const data=(tab==='active'?active:tab==='rem'?withRem:done)
+    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  ordersVL.update(data);
 }
 
 // ── 🚚 Ready for delivery (جاهز للتسليم — كلّمهم) ──

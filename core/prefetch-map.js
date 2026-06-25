@@ -7,6 +7,7 @@
  */
 
 import { prefetch, cachedQuery } from './data-cache.js';
+import { warmImages, extractOrderImageUrls, extractClientImageUrls } from './image-cache.js';
 
 const PAGE_COLLECTIONS = {
   'shipping.html': [
@@ -86,7 +87,16 @@ export function prefetchForPage(url) {
   }
 }
 
+export function prefetchImagesFromDocs(docs) {
+  if (!docs?.length || typeof window === 'undefined') return;
+  const orderUrls = extractOrderImageUrls(docs);
+  const clientUrls = extractClientImageUrls(docs);
+  const all = [...new Set([...orderUrls, ...clientUrls])];
+  if (all.length) warmImages(all);
+}
+
 // تسجيل الـ hook العالمي — shell-navigate.js يستدعيه عند التنقل
 if (typeof window !== 'undefined') {
   window.__prefetchForPage = prefetchForPage;
+  window.__prefetchImagesFromDocs = prefetchImagesFromDocs;
 }

@@ -6,7 +6,9 @@
 //   - Stale-While-Revalidate for static assets (CSS, images, fonts, CDN libs).
 //   - Firebase API endpoints are never intercepted (data must stay live).
 // Cache name is auto-bumped to b2c-<commit-sha> by deploy.yml on every release.
-const CACHE = 'b2c-v311';
+const CACHE = 'b2c-v315';
+const IMAGE_CACHE = 'b2c-images-v1';
+const MAX_IMAGE_CACHE = 200;
 
 // Files we ALWAYS want fresh when online — code paths that change between
 // deploys. Match by URL suffix.
@@ -138,6 +140,38 @@ const NETWORK_FIRST_SUFFIXES = [
   '/error-reporter-init.js',
   '/bug-reporter.js',
   '/core/error-report-actions.js',
+  // ── Offline-critical core modules — must stay fresh ──
+  '/core/data-cache.js',
+  '/core/firebase-init.js',
+  '/core/permissions-matrix.js',
+  '/core/collection-registry.js',
+  '/core/query-limits.js',
+  '/core/lazy-subs.js',
+  '/core/virtual-scroll.js',
+  '/core/prefetch-map.js',
+  '/core/image-cache.js',
+  '/core/page-state.js',
+  '/core/storage-helpers.js',
+  '/core/auth-reset.js',
+  '/core/client-orders-index.js',
+  '/core/searchable-select.js',
+  '/core/bottom-sheet.js',
+  '/core/approvals-utils.js',
+  '/core/page-shortcuts.js',
+  '/core/offline-warmup.js',
+  '/core/static-store.js',
+  '/core/live-kpis.js',
+  '/sidebar.js',
+  '/sidebar-config.js',
+  '/clients-data.js',
+  '/clients-shell.js',
+  '/clients-constants.js',
+  '/accounts-render.js',
+  '/accounts-kpi-panel.js',
+  '/design-control-center.js',
+  '/print-control-center.js',
+  '/production-actions.js',
+  '/supplier-actions.js',
 ];
 
 // App shell — fetched on install. Relative paths so the SW works at any scope.
@@ -151,17 +185,66 @@ const PRECACHE = [
   './shared.js',
   './theme.js',
   './financial-sync-engine.js',
-  // Role-landing dashboards (HTML)
+  // Role-landing dashboards (HTML + CSS)
   './cs-dashboard.html',
+  './cs-dashboard.css',
   './ops-dashboard.html',
   './designer-dashboard.html',
-  './production-dashboard.html',
-  './shipping-dashboard.html',
-  // Their dedicated CSS (Phase-2D extracts) — so the role-landing page
-  // renders styled on offline first-launch, not just unstyled HTML.
-  './cs-dashboard.css',
   './designer-dashboard.css',
+  './production-dashboard.html',
   './production-dashboard.css',
+  './shipping-dashboard.html',
+  './exec-dashboard.html',
+  './exec-dashboard.css',
+  './financial-dashboard.html',
+  './accounts.html',
+  './clients.html',
+  './clients.css',
+  // Operational pages — full offline app shell
+  './design.html',
+  './design.css',
+  './order.html',
+  './shipping.html',
+  './shipping.css',
+  './shipping-accounts.html',
+  './shipping-accounts.css',
+  './production.html',
+  './production.css',
+  './print.html',
+  './print.css',
+  './approvals.html',
+  './approvals.css',
+  './reports.html',
+  './reports.css',
+  './returns.html',
+  './employees.html',
+  './employees.css',
+  './employee-profile.html',
+  './employee-profile.css',
+  './suppliers.html',
+  './suppliers.css',
+  './products.html',
+  './products.css',
+  './settings.html',
+  './settings.css',
+  './inbox.html',
+  './inbox.css',
+  './my-profile.html',
+  './my-profile.css',
+  './my-home.html',
+  './ledger.html',
+  // Core modules (offline-critical)
+  './core/firebase-init.js',
+  './core/data-cache.js',
+  './core/permissions-matrix.js',
+  './core/lazy-subs.js',
+  './core/offline-warmup.js',
+  './orders.js',
+  './order-actions.js',
+  './sync-monitor.js',
+  // Design system
+  './design-system/components.css',
+  './design-system/tokens.css',
 ];
 
 // Third-party hosts that serve immutable / near-immutable assets.
@@ -177,7 +260,6 @@ const NEVER_CACHE_HOSTS = [
   'firebaseinstallations.googleapis.com',
   'identitytoolkit.googleapis.com',
   'securetoken.googleapis.com',
-  'firebasestorage.googleapis.com',
   'fcm.googleapis.com',
   'firebase.googleapis.com',
   'firebaseio.com',
@@ -198,7 +280,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== IMAGE_CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -210,6 +292,14 @@ self.addEventListener('fetch', e => {
 
   let url;
   try { url = new URL(req.url); } catch { return; }
+
+  // Firebase Storage download URLs (alt=media) → cache-first (immutable, token-addressed)
+  const isStorageDownload = url.hostname === 'firebasestorage.googleapis.com'
+    && url.searchParams.get('alt') === 'media';
+  if (isStorageDownload) {
+    e.respondWith(cacheFirstImage(req));
+    return;
+  }
 
   if (NEVER_CACHE_HOSTS.some(h => url.hostname.endsWith(h))) return;
 
@@ -281,6 +371,29 @@ self.addEventListener('message', e => {
       const toRemove = imgKeys.slice(0, imgKeys.length - Math.floor(MAX_CACHE_ENTRIES * 0.3));
       for (const r of toRemove) await cache.delete(r).catch(() => {});
     });
+    caches.open(IMAGE_CACHE).then(async cache => {
+      const keys = await cache.keys();
+      if (keys.length <= MAX_IMAGE_CACHE) return;
+      const toRemove = keys.slice(0, keys.length - MAX_IMAGE_CACHE);
+      for (const r of toRemove) await cache.delete(r).catch(() => {});
+    });
+  }
+
+  if (e.data === 'PURGE_IMAGE_CACHE') {
+    caches.delete(IMAGE_CACHE).catch(() => {});
+  }
+
+  if (e.data?.type === 'WARM_IMAGES' && Array.isArray(e.data.urls)) {
+    caches.open(IMAGE_CACHE).then(async cache => {
+      for (const u of e.data.urls.slice(0, 50)) {
+        if (await cache.match(u)) continue;
+        fetch(u).then(res => {
+          if (res.ok && (res.headers.get('content-type') || '').startsWith('image/')) {
+            cache.put(u, res).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    });
   }
 });
 
@@ -299,4 +412,24 @@ async function staleWhileRevalidate(req) {
     return cached;
   });
   return cached || network;
+}
+
+// Cache-First for Firebase Storage images.
+// Download URLs are immutable (token-addressed) — safe to serve from cache indefinitely.
+async function cacheFirstImage(req) {
+  const cache = await caches.open(IMAGE_CACHE);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  try {
+    const res = await fetch(req);
+    if (res && res.status === 200) {
+      const ct = res.headers.get('content-type') || '';
+      if (ct.startsWith('image/')) {
+        cache.put(req, res.clone()).catch(() => {});
+      }
+    }
+    return res;
+  } catch (_) {
+    return Response.error();
+  }
 }

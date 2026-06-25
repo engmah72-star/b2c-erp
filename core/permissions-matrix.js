@@ -210,7 +210,7 @@ export const CAPABILITIES = Object.freeze({
 export const DEFAULT_CAPABILITIES = {
   admin: {
     execute_payments:true, final_approve_payments:true,
-    view_orders:true, create_orders:true, edit_orders:true, archive_orders:true,
+    view_orders:true, create_orders:true, edit_orders:true, delete_orders:true, archive_orders:true,
     view_clients:true, edit_clients:true,
     upload_designs:true, approve_designs:true,
     manage_printing:true, manage_shipping:true, view_all_shipments:true,
@@ -219,7 +219,7 @@ export const DEFAULT_CAPABILITIES = {
   },
   operation_manager: {
     execute_payments:true, final_approve_payments:false,
-    view_orders:true, create_orders:true, edit_orders:true, archive_orders:true,
+    view_orders:true, create_orders:true, edit_orders:true, delete_orders:true, archive_orders:true,
     view_clients:true, edit_clients:true,
     upload_designs:true, approve_designs:true,
     manage_printing:true, manage_shipping:true, view_all_shipments:true,
@@ -228,7 +228,7 @@ export const DEFAULT_CAPABILITIES = {
   },
   customer_service: {
     execute_payments:false, final_approve_payments:false,
-    view_orders:true, create_orders:true, edit_orders:true, archive_orders:false,
+    view_orders:true, create_orders:true, edit_orders:true, delete_orders:true, archive_orders:false,
     view_clients:true, edit_clients:true,
     upload_designs:true, approve_designs:false,
     manage_printing:false, manage_shipping:false, view_all_shipments:false,

@@ -13,6 +13,8 @@
 <link rel="dns-prefetch" href="https://firestore.googleapis.com">
 <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="modulepreload" href="./core/firebase-init.js">
+<link rel="modulepreload" href="./core/data-cache.js">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <script src="sidebar-config.js"></script>
@@ -136,10 +138,15 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { delayDays } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { collection, doc, getDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
 import { dedupEmployees, resolveDesigner, isDelivered } from "./orders.js";
 import { mountDateRangePicker } from "./date-range-picker.js";
 import { calcRem } from "./core/order-math.js";
+import { warmupForRole } from "./core/offline-warmup.js";
+import { warmImages, extractOrderImageUrls } from "./core/image-cache.js";
+import { subscribeKPIs } from "./core/live-kpis.js";
 
 const RANGE_STORAGE_KEY = 'exec-dash:range';
 // Current resolved range — updated by the picker's onChange.
@@ -192,6 +199,7 @@ onAuthStateChanged(auth,async u=>{
       const RDASH={customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
       location.href=RDASH[role]||'login.html';return;
     }
+    warmupForRole(role);
     set('nav-name',ud.name||u.email);
     set('role-badge',ud.role||'admin');
     const av=document.getElementById('nav-av');
@@ -200,6 +208,7 @@ onAuthStateChanged(auth,async u=>{
     // Role confirmed → reveal page.
     document.body.classList.remove('auth-gate');
     initRangePicker();
+    subscribeKPIs(kpi => { if(!_ordersReady) renderFromAggregation(kpi); });
     try { startListeners(); }
     catch(err){ console.error('startListeners:',err); showDashError(err.message); }
   }catch(e){console.error(e);location.href='login.html';}
@@ -225,38 +234,35 @@ function scheduleRenderAll(){
 }
 
 function startListeners(){
-  // Limit recent N records — exec dashboard shows live activity, not full history.
-  // For full history use reports.html (unbounded).
-  const onErr=(name)=>(err)=>{console.error(`[${name}]`,err);showDashError(`فشل تحميل ${name}`);};
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    _ordersReady=true;__dataVer++;scheduleRenderAll();
-  }, onErr('orders'));
-  onSnapshot(query(collection(db,'clients'),limit(2000)),snap=>{
-    clients=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
-  }, onErr('clients'));
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
-  }, onErr('wallets'));
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    transactions=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    _txReady=true;__dataVer++;scheduleRenderAll();
-  }, onErr('transactions'));
-  onSnapshot(query(collection(db,'supplier_payments'),limit(2000)),snap=>{
-    supPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));__dataVer++;scheduleRenderAll();
-  }, onErr('supplier_payments'));
+  staggerSubs([
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+      orders=docs;_ordersReady=true;__dataVer++;warmImages(extractOrderImageUrls(orders));scheduleRenderAll();
+    })},
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('clients').limit(2000).build(),(docs)=>{
+      clients=docs;__dataVer++;scheduleRenderAll();
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{
+      wallets=docs;__dataVer++;scheduleRenderAll();
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(2000).build(),(docs)=>{
+      transactions=docs;_txReady=true;__dataVer++;scheduleRenderAll();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('supplier_payments').limit(2000).build(),(docs)=>{
+      supPayments=docs;__dataVer++;scheduleRenderAll();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('suppliers_v2').limit(500).build(),(docs)=>{
+      suppliers=docs;scheduleRenderAll();
+    })},
+  ]);
+
+  // users/employees — one-time fetch (kept as getDocs since rarely changes)
   getDocs(query(collection(db,'users'),limit(500))).then(snap=>{
     users=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
   });
-  // employees مع dedup — يُستخدم في توحيد إحصائيات المصممين/الموظفين
   getDocs(query(collection(db,'employees'),limit(500))).then(snap=>{
     const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
     employees=dedupEmployees(raw);scheduleRenderAll();
   });
-  // suppliers (suppliers_v2) — لقياس "موردون جدد" في صحة الشبكة
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),snap=>{
-    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));scheduleRenderAll();
-  }, onErr('suppliers'));
 }
 
 // ── Mount the date-range picker (after auth has revealed the page) ──
@@ -272,6 +278,39 @@ function initRangePicker(){
 }
 
 window.manualRefresh=()=>{toast('🔄 البيانات محدّثة في الوقت الحقيقي','');};
+
+function renderFromAggregation(kpi){
+  if(!kpi?.pipeline)return;
+  const p=kpi.pipeline,m=kpi.monthly||{},f=kpi.financials||{};
+  const card=(ico,val,lbl,col,href,late)=>`
+    <div class="ekpi" onclick="navigatePage('${href}')">
+      <div class="ekpi-top" style="background:${col}"></div>
+      <div class="ekpi-ico">${ico}</div>
+      <div class="ekpi-val" style="color:${col}">${val}</div>
+      <div class="ekpi-lbl">${lbl}</div>
+      ${late>0?`<div class="ekpi-sub text-r">⚠️ ${late} متأخر</div>`:'<div class="ekpi-sub text-muted"> </div>'}
+    </div>`;
+  document.getElementById('ops-grid').innerHTML=
+    card('📋',p.active||0,'إجمالي النشطة','var(--b)','clients.html',0)+
+    card('✏️',p.design||0,'تحت التصميم','var(--p)','design.html',0)+
+    card('🖨️',p.printing||0,'تحت الطباعة','var(--y)','print.html',0)+
+    card('🏭',p.production||0,'تحت التنفيذ','var(--o)','production.html',0)+
+    card('🚚',p.shipping||0,'جاهزة للشحن','var(--c)','shipping.html',0);
+  const fCard=(ico,lbl,val,col,sub)=>`
+    <div class="fkpi" onclick="navigatePage('accounts.html')">
+      <div class="fkpi-top" style="background:${col}"></div>
+      <div class="fkpi-ico">${ico}</div>
+      <div class="fkpi-val" style="color:${col}">${fn(val)} <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold)">ج</span></div>
+      <div class="fkpi-lbl">${lbl}</div>
+      ${sub?`<div style="font-size:8px;color:var(--dim2);font-weight:var(--fw-bold);margin-top:2px">${sub}</div>`:''}
+    </div>`;
+  document.getElementById('fin-grid').innerHTML=
+    fCard('🛒','مبيعات الشهر',m.revenue||0,'var(--b)','هذا الشهر')+
+    fCard('📥','تحصيل الشهر',m.collected||0,'var(--g)','هذا الشهر')+
+    fCard('⏳','المتبقي للتحصيل',f.totalRemaining||0,'var(--r)','إجمالي')+
+    fCard('📤','مصروفات الشهر',m.expenses||0,'var(--y)','هذا الشهر')+
+    fCard('📈','صافي الشهر',m.cashflowNet||0,((m.cashflowNet||0)>=0?'var(--g)':'var(--r)'),'هذا الشهر');
+}
 
 // ═══════════════════════════════════════
 //  RENDER ALL

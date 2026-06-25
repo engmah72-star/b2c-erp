@@ -18,6 +18,10 @@
 <link rel="dns-prefetch" href="https://firestore.googleapis.com">
 <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="modulepreload" href="./core/firebase-init.js">
+<link rel="modulepreload" href="./core/data-cache.js">
+<link rel="modulepreload" href="./orders.js">
+<link rel="modulepreload" href="./order-actions.js">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <script src="core/page-state.js"></script>
@@ -221,6 +225,10 @@ const ROLE_HOME_MAP = window.ROLE_HOME;
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit, startAt, endAt, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
+import { warmupForRole } from "./core/offline-warmup.js";
+import { warmImages, extractOrderImageUrls, extractClientImageUrls } from "./core/image-cache.js";
 import { initPageShortcuts } from './core/page-shortcuts.js';
 
 // ══ Global Error Handler ══
@@ -405,6 +413,7 @@ onAuthStateChanged(auth, async u=>{
     const d=snap.data();
     if(window.buildDynamicSidebar)window.buildDynamicSidebar(u.uid,'clients.html');
     currentRole=d.role||'customer_service'; userName=d.name||u.email; userPerms=d.permissions||{};
+    warmupForRole(currentRole);
     const ROLES={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Mgr',col:'var(--b)'},customer_service:{label:'CS',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet',col:'var(--g)'}};
     const r=ROLES[currentRole]||ROLES.customer_service;
     setText('nav-name',userName);
@@ -467,140 +476,136 @@ onAuthStateChanged(auth, async u=>{
     );
   };
 
-  // Listeners — Performance PR-26: tiered loading
-  //   T1 (immediate): clients, orders, wallets, settings — needed for first paint
-  //   T2 (defer 500ms): products, designers (employees), master_lists/egypt_admin
-  //   T3 (defer 1500ms): followups, segments, transactions_v2 — only used in panel/cgrid
-  // Limits reduced — old docs still readable on-demand via direct getDoc.
+  // Listeners — Performance: cache-first via dataCache + staggered priorities
+  //   P0 (immediate): clients, orders — needed for first paint (cache-first from IndexedDB)
+  //   P1 (after first paint): wallets, settings, products, designers, egypt_admin
+  //   P2 (deferred ~1s): followups, segments, transactions_v2 — only used in panel/cgrid
   stopClientListeners();
-  const CLIENTS_LIMIT = 1000;    // تحميل كل العملاء (بدون قيد تاريخي)
-  const ORDERS_LIMIT  = 1500;    // was 3000
-  const TX_LIMIT      = 1500;    // was 3000
-  const FU_LIMIT      = 800;     // was 1500
-  __clUnsubs.push(onSnapshot(query(collection(db,'clients'),orderBy('createdAt','desc'),limit(CLIENTS_LIMIT)),snap=>{
-    __clientsListenerFired = true;_ps.markFresh();
-    clearTimeout(__loadWatchdog);
-    const all=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(c=>!c.isDeleted);
-    const base=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
-    // أعِد دمج نتائج بحث السيرفر (العملاء القدامى) كي لا يمحوها الـ snapshot.
-    clients=mergeSearchExtras(base);
-    scheduleStatsAndGrid();
-    if(!window.__clientsStateRestored && _restored && !new URLSearchParams(window.location.search).get('openClient')){
-      window.__clientsStateRestored=true;
-      if(_restored.quickFilter && _restored.quickFilter!=='all' && window.setQuickFilter){
-        setTimeout(()=>{
-          const chip=document.querySelector(`.f-chip[onclick*="setQuickFilter('${_restored.quickFilter}'"]`);
-          window.setQuickFilter(_restored.quickFilter,chip);
-        },150);
-      }
-      if(_restored._search){setTimeout(()=>{const si=document.getElementById('q');if(si){si.value=_restored._search;window.onClientSearchInput&&window.onClientSearchInput(_restored._search);}},180);}
-      _ps.restoreUI(()=>{
-        // Skip restore if user already opened a different client (race guard)
-        if(activeId && activeId !== _restored.activeId) return;
-        if(clients.find(c=>c._id===_restored.activeId))window.openClient&&window.openClient(_restored.activeId);
-      });
-    }
-    // Skip secondary banner/strip rebuilds while the add/edit modal is open
-    // to keep the form responsive; closeClientModal() flushes them.
-    if(!isClientModalOpen()){
-      renderOccasionsBanner();
-      renderSegmentStrip();
-    }
-    if(activeId) renderPanel(activeId);
-    // Deep-link: ?openClient={id}[&tab=followups|&newOrder=1]
-    if(!window.__deepLinked){
-      const qs=new URLSearchParams(window.location.search);
-      const oc=qs.get('openClient');
-      if(oc){
-        const found = clients.some(c=>c._id===oc);
-        // Helper: after openClient resolves, optionally trigger the new-order modal.
-        // Centralized — reuses existing openNewOrder() (which respects all
-        // validators, RULE A1, RULE V1). No duplicate logic.
-        const triggerNewOrderIfRequested = () => {
-          if(qs.get('newOrder')==='1' || qs.get('newOrder')==='true'){
-            // Small delay so the panel finishes painting first.
-            setTimeout(()=>{ try{ window.openNewOrder?.(); }catch(_){ } }, 120);
-          }
-        };
-        if(found){
-          window.__deepLinked=true;
-          openClient(oc);
-          triggerNewOrderIfRequested();
-          if(qs.get('tab')==='followups'){
+  const CLIENTS_LIMIT = 1000;
+  const ORDERS_LIMIT  = 1500;
+  const TX_LIMIT      = 1500;
+  const FU_LIMIT      = 800;
+
+  const _allUnsubs = staggerSubs([
+    // ── P0: clients (cache-first → instant grid) ──
+    { priority:0, fn:()=>dataCache.subscribe(
+      cachedQuery('clients').orderBy('createdAt','desc').limit(CLIENTS_LIMIT).build(),
+      (docs)=>{
+        __clientsListenerFired = true;_ps.markFresh();
+        clearTimeout(__loadWatchdog);
+        const all=docs.filter(c=>!c.isDeleted);
+        const base=isAdmin?all:all.filter(c=>c.createdBy===u.uid);
+        clients=mergeSearchExtras(base);
+        warmImages(extractClientImageUrls(clients));
+        scheduleStatsAndGrid();
+        if(!window.__clientsStateRestored && _restored && !new URLSearchParams(window.location.search).get('openClient')){
+          window.__clientsStateRestored=true;
+          if(_restored.quickFilter && _restored.quickFilter!=='all' && window.setQuickFilter){
             setTimeout(()=>{
-              const btn=document.getElementById('ptab-followups');
-              if(btn)window.switchPanelTab('followups',btn);
-            },50);
+              const chip=document.querySelector(`.f-chip[onclick*="setQuickFilter('${_restored.quickFilter}'"]`);
+              window.setQuickFilter(_restored.quickFilter,chip);
+            },150);
           }
-        } else {
-          // Client not in the recent window — fetch directly and prepend to the in-memory list.
-          getDoc(doc(db,'clients',oc)).then(docSnap=>{
-            if(!docSnap.exists())return;
-            const c={...docSnap.data(),_id:docSnap.id};
-            if(!c.isDeleted && (isAdmin || c.createdBy===u.uid)){
-              // أضِف لـ searchExtras أيضاً حتى تبقى بعد أي snapshot مستقبلي
-              if(!searchExtras.some(x=>x._id===c._id)) searchExtras.push(c);
-              clients = [c, ...clients.filter(x=>x._id!==oc)];
+          if(_restored._search){setTimeout(()=>{const si=document.getElementById('q');if(si){si.value=_restored._search;window.onClientSearchInput&&window.onClientSearchInput(_restored._search);}},180);}
+          _ps.restoreUI(()=>{
+            if(activeId && activeId !== _restored.activeId) return;
+            if(clients.find(c=>c._id===_restored.activeId))window.openClient&&window.openClient(_restored.activeId);
+          });
+        }
+        if(!isClientModalOpen()){
+          renderOccasionsBanner();
+          renderSegmentStrip();
+        }
+        if(activeId) renderPanel(activeId);
+        if(!window.__deepLinked){
+          const qs=new URLSearchParams(window.location.search);
+          const oc=qs.get('openClient');
+          if(oc){
+            const found = clients.some(c=>c._id===oc);
+            const triggerNewOrderIfRequested = () => {
+              if(qs.get('newOrder')==='1' || qs.get('newOrder')==='true'){
+                setTimeout(()=>{ try{ window.openNewOrder?.(); }catch(_){ } }, 120);
+              }
+            };
+            if(found){
               window.__deepLinked=true;
               openClient(oc);
               triggerNewOrderIfRequested();
+              if(qs.get('tab')==='followups'){
+                setTimeout(()=>{
+                  const btn=document.getElementById('ptab-followups');
+                  if(btn)window.switchPanelTab('followups',btn);
+                },50);
+              }
+            } else {
+              getDoc(doc(db,'clients',oc)).then(docSnap=>{
+                if(!docSnap.exists())return;
+                const c={...docSnap.data(),_id:docSnap.id};
+                if(!c.isDeleted && (isAdmin || c.createdBy===u.uid)){
+                  if(!searchExtras.some(x=>x._id===c._id)) searchExtras.push(c);
+                  clients = [c, ...clients.filter(x=>x._id!==oc)];
+                  window.__deepLinked=true;
+                  openClient(oc);
+                  triggerNewOrderIfRequested();
+                }
+              }).catch(()=>{});
             }
-          }).catch(()=>{});
+          }
         }
-      }
-    }
-  }, err=>__reportListenerError('العملاء', err)));
-  __clUnsubs.push(onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(ORDERS_LIMIT)),snap=>{
-    __ordersListenerFired = true;
-    clearTimeout(__loadWatchdog);
-    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    scheduleStatsAndGrid();
-    if(activeId) renderPanel(activeId);
-  }, err=>__reportListenerError('الأوردرات', err)));
-  // T1: wallets — needed for new-order modal (which can open early)
-  __clUnsubs.push(onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    wallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
-  }));
-  // T1: settings — affects fillGovSelect (governorate dropdown)
-  __clUnsubs.push(onSnapshot(doc(db,'settings','main'),snap=>{
-    if(snap.exists()) settings=snap.data();
-    fillGovSelect();
-  }));
-
-  // T2: secondary data (products + designers + master_lists) — defer 500ms
-  setTimeout(()=>{
-    __clUnsubs.push(onSnapshot(query(collection(db,'products_v2'),limit(500)),snap=>{
-      products=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    }));
-    // ── المصممون: المصدر الوحيد هو `employees` ──
-    __clUnsubs.push(onSnapshot(query(collection(db,'employees'),limit(500)),snap=>{
-      const raw = snap.docs
-        .map(d=>({...d.data(),_id:d.id}))
-        .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
-        .map(e=>({...e,_id:e.authUid||e._id,fromEmployee:true}));
-      // dedup متعدد المستويات: authUid → phone → name+phone (نفس منطق orders.js#dedupEmployees)
-      const normPhone=p=>(p||'').toString().replace(/\D/g,'');
-      const normName =n=>(n||'').toString().trim().toLowerCase();
-      const out=[];const byAuth=new Map(),byPhone=new Map(),byName=new Map();
-      raw.forEach(e=>{
-        const auth=e.authUid||'',phone=normPhone(e.phone),nameKey=normName(e.name)+'|'+phone;
-        let i=-1;
-        if(auth && byAuth.has(auth)) i=byAuth.get(auth);
-        if(i<0 && phone && byPhone.has(phone)) i=byPhone.get(phone);
-        if(i<0 && phone && byName.has(nameKey)) i=byName.get(nameKey);
-        if(i>=0){
-          const cur=out[i];
-          if(!cur.authUid && auth){ out[i]={...cur,...e}; byAuth.set(auth,i); }
-          return;
-        }
-        out.push(e); const idx=out.length-1;
-        if(auth) byAuth.set(auth,idx);
-        if(phone){ byPhone.set(phone,idx); byName.set(nameKey,idx); }
-      });
-      designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
-    }));
-    // Admin override للتقسيم الإداري — لو الوثيقة موجودة في master_lists/egypt_admin
-    __clUnsubs.push(onSnapshot(doc(db,'master_lists','egypt_admin'),snap=>{
+      })},
+    // ── P0: orders (cache-first) ──
+    { priority:0, fn:()=>dataCache.subscribe(
+      cachedQuery('orders').orderBy('createdAt','desc').limit(ORDERS_LIMIT).build(),
+      (docs)=>{
+        __ordersListenerFired = true;
+        clearTimeout(__loadWatchdog);
+        allOrders=docs;
+        warmImages(extractOrderImageUrls(allOrders));
+        scheduleStatsAndGrid();
+        if(activeId) renderPanel(activeId);
+      })},
+    // ── P1: wallets (for new-order modal) ──
+    { priority:1, fn:()=>dataCache.subscribe(
+      cachedQuery('wallets').limit(100).build(),
+      (docs)=>{ wallets=docs; })},
+    // ── P1: settings (for governorate dropdown) — single doc, raw onSnapshot ──
+    { priority:1, fn:()=>onSnapshot(doc(db,'settings','main'),snap=>{
+      if(snap.exists()) settings=snap.data();
+      fillGovSelect();
+    })},
+    // ── P1: products ──
+    { priority:1, fn:()=>dataCache.subscribe(
+      cachedQuery('products_v2').limit(500).build(),
+      (docs)=>{ products=docs.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar')); })},
+    // ── P1: designers (employees filtered) ──
+    { priority:1, fn:()=>dataCache.subscribe(
+      cachedQuery('employees').limit(500).build(),
+      (docs)=>{
+        const raw = docs
+          .filter(e=>['graphic_designer','design_operator'].includes(e.role||e.jobRole||''))
+          .map(e=>({...e,_id:e.authUid||e._id,fromEmployee:true}));
+        const normPhone=p=>(p||'').toString().replace(/\D/g,'');
+        const normName =n=>(n||'').toString().trim().toLowerCase();
+        const out=[];const byAuth=new Map(),byPhone=new Map(),byName=new Map();
+        raw.forEach(e=>{
+          const auth=e.authUid||'',phone=normPhone(e.phone),nameKey=normName(e.name)+'|'+phone;
+          let i=-1;
+          if(auth && byAuth.has(auth)) i=byAuth.get(auth);
+          if(i<0 && phone && byPhone.has(phone)) i=byPhone.get(phone);
+          if(i<0 && phone && byName.has(nameKey)) i=byName.get(nameKey);
+          if(i>=0){
+            const cur=out[i];
+            if(!cur.authUid && auth){ out[i]={...cur,...e}; byAuth.set(auth,i); }
+            return;
+          }
+          out.push(e); const idx=out.length-1;
+          if(auth) byAuth.set(auth,idx);
+          if(phone){ byPhone.set(phone,idx); byName.set(nameKey,idx); }
+        });
+        designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+      })},
+    // ── P1: egypt_admin (single doc, raw onSnapshot) ──
+    { priority:1, fn:()=>onSnapshot(doc(db,'master_lists','egypt_admin'),snap=>{
       if(snap.exists()){
         const data=snap.data();
         const items=data?.items;
@@ -614,56 +619,49 @@ onAuthStateChanged(auth, async u=>{
       }
       fillGovSelect();
       fillFilters();
-    },err=>{ console.warn('egypt_admin listener:',err?.message||err); }));
-  }, 500);
-
-  // T3: tertiary data (followups + segments + transactions_v2) — defer 1500ms
-  // These only show in panel/cgrid; main grid render doesn't need them.
-  setTimeout(()=>{
-    __clUnsubs.push(onSnapshot(query(collection(db,'client_followups'),orderBy('createdAt','desc'),limit(FU_LIMIT)),snap=>{
-      allFollowups=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(f=>!f.isDeleted);
-      followupsByClient.clear();
-      allFollowups.forEach(f=>{
-        if(!f.clientId)return;
-        if(!followupsByClient.has(f.clientId))followupsByClient.set(f.clientId,[]);
-        followupsByClient.get(f.clientId).push(f);
-      });
-      // refresh open panel followups list
-      if(activeId){
-        const list=document.getElementById('panel-followups-list');
-        if(list)list.innerHTML=renderClientFollowups(activeId);
-        updateFollowupsBadge(activeId);
-      }
-    },err=>{
-      console.warn('followups listener:',err?.message||err);
-      window.__followupsListenerError=err?.message||String(err);
-      if(activeId){
-        const list=document.getElementById('panel-followups-list');
-        if(list)list.innerHTML=renderClientFollowups(activeId);
-      }
-    }));
-
-    // RFM segments — written weekly by Cloud Function. Permission errors are
-    // silenced because non-CRM roles don't get read access.
-    __clUnsubs.push(onSnapshot(query(collection(db,'client_segments'),limit(CLIENTS_LIMIT)),snap=>{
-      clientSegments.clear();
-      snap.forEach(d=>clientSegments.set(d.id,d.data()));
-      scheduleStatsAndGrid();
-      if(!isClientModalOpen()) renderSegmentStrip();
-      if(activeId) renderPanel(activeId);
-    },err=>console.warn('client_segments listener:',err?.message||err)));
-
-    __clUnsubs.push(onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(TX_LIMIT)),snap=>{
-      allTx=snap.docs.map(d=>({...d.data(),_id:d.id}));
-      txByOrder.clear();
-      allTx.forEach(tx=>{
-        if(!tx.orderId)return;
-        if(!txByOrder.has(tx.orderId))txByOrder.set(tx.orderId,[]);
-        txByOrder.get(tx.orderId).push(tx);
-      });
-      if(window.__statusTab==='cgrid') renderControlGrid();
-    }));
-  }, 1500);
+    },err=>{ console.warn('egypt_admin listener:',err?.message||err); })},
+    // ── P2: followups ──
+    { priority:2, fn:()=>dataCache.subscribe(
+      cachedQuery('client_followups').orderBy('createdAt','desc').limit(FU_LIMIT).build(),
+      (docs)=>{
+        allFollowups=docs.filter(f=>!f.isDeleted);
+        followupsByClient.clear();
+        allFollowups.forEach(f=>{
+          if(!f.clientId)return;
+          if(!followupsByClient.has(f.clientId))followupsByClient.set(f.clientId,[]);
+          followupsByClient.get(f.clientId).push(f);
+        });
+        if(activeId){
+          const list=document.getElementById('panel-followups-list');
+          if(list)list.innerHTML=renderClientFollowups(activeId);
+          updateFollowupsBadge(activeId);
+        }
+      })},
+    // ── P2: RFM segments ──
+    { priority:2, fn:()=>dataCache.subscribe(
+      cachedQuery('client_segments').limit(CLIENTS_LIMIT).build(),
+      (docs)=>{
+        clientSegments.clear();
+        docs.forEach(d=>clientSegments.set(d._id,d));
+        scheduleStatsAndGrid();
+        if(!isClientModalOpen()) renderSegmentStrip();
+        if(activeId) renderPanel(activeId);
+      })},
+    // ── P2: transactions ──
+    { priority:2, fn:()=>dataCache.subscribe(
+      cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(TX_LIMIT).build(),
+      (docs)=>{
+        allTx=docs;
+        txByOrder.clear();
+        allTx.forEach(tx=>{
+          if(!tx.orderId)return;
+          if(!txByOrder.has(tx.orderId))txByOrder.set(tx.orderId,[]);
+          txByOrder.get(tx.orderId).push(tx);
+        });
+        if(window.__statusTab==='cgrid') renderControlGrid();
+      })},
+  ]);
+  _allUnsubs.forEach(u => __clUnsubs.push(u));
   window.addEventListener('beforeunload', stopClientListeners, { once: true });
 });
 
@@ -1241,10 +1239,15 @@ window.switchPanelTab=function(tab,btn){
 // God-page decomp PR-3: builder body extracted to clients-render.js
 // (window.panelOrdersHTML). Thin wrapper delegates with the page-scoped
 // constants + helpers.
+function _canDeleteOrder(){
+  if(userPerms?.capabilities?.delete_orders!==undefined) return !!userPerms.capabilities.delete_orders;
+  return ['admin','operation_manager','customer_service'].includes(currentRole);
+}
 function renderPanelOrders(ords, filter){
   return panelOrdersHTML({
     orders: ords, filter, calcRem, fn,
     STAGE_COL, STAGE_HREF, STAGE_AR,
+    canDelete: _canDeleteOrder(),
   });
 }
 // Helpers: open inbox.html with a pending share / open order thread.
@@ -2961,6 +2964,32 @@ window.cgridDeleteOrder=async function(orderId){
   }
   if(r.idempotent&&!r.pending)return toast('ℹ️ الأوردر محذوف مسبقاً','ok');
   toast(`✅ تم الحذف النهائي${r.refundedAmount>0?` — استرداد ${fn(r.refundedAmount)} ج`:''}`,'ok');
+};
+
+window.deleteClientPanelOrder=async function(orderId){
+  if(!_canDeleteOrder()){toast('❌ ليس لديك صلاحية حذف الأوردرات','err');return;}
+  const o=(window.__panelOrds||[]).find(x=>x._id===orderId)||allOrders.find(x=>x._id===orderId);
+  if(!o)return;
+  const reason=prompt(`⚠️ مسح أوردر "${o.product||o.orderId||orderId.slice(-6)}" نهائياً\nسيُحذف من كل السجلات ولا يمكن التراجع.\n\nاكتب سبب المسح:`);
+  if(!reason)return;
+  if(!confirm('تأكيد المسح النهائي؟ لا يمكن التراجع عن هذه العملية.'))return;
+  const r=await window.orderActions.purgeOrder({
+    orderId,
+    reason,
+    role:currentRole||'',
+    userId:currentUser?.uid||'',
+    userName:userName||'',
+  });
+  if(!r.ok){
+    const handled=window.financialGuard?.(new Error(r.errors?.[0]||'فشل المسح'),{operation:'مسح أوردر نهائي',clientName:o.clientName,orderId});
+    if(!handled)toast('❌ '+(r.errors||[]).join(' · '),'err');
+    return;
+  }
+  if(r.idempotent&&!r.pending)return toast('ℹ️ الأوردر محذوف مسبقاً','ok');
+  toast('✅ تم مسح الأوردر نهائياً من كل السجلات','ok');
+  if(window.__panelOrds) window.__panelOrds=window.__panelOrds.filter(x=>x._id!==orderId);
+  const listEl=document.getElementById('panel-orders-list');
+  if(listEl&&window.__panelOrds) listEl.innerHTML=renderPanelOrders(window.__panelOrds,'all');
 };
 
 // ── setStatusTab — handles normal, legacy, and cgrid tabs ──

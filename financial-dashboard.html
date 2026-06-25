@@ -341,7 +341,10 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { gv } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, addDoc, updateDoc, query, where, getDocs, orderBy, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from "./core/data-cache.js";
+import { staggerSubs } from "./core/lazy-subs.js";
+import { warmupForRole } from "./core/offline-warmup.js";
 import { recordLedger, editLedgerEntry, deleteLedgerEntry, LC, checkLedgerAccess }
   from "./finance-engine.js";
 // ══ STATE ══
@@ -388,6 +391,7 @@ onAuthStateChanged(auth, async user=>{
   } else {
     console.error('[financial-dashboard] ❌ No /users/'+user.uid+' document found — role will be empty');
   }
+  warmupForRole(userRole);
   if(!isAdmin&&userRole!=='wallet_manager'){
     // Show a standalone access-denied screen (body stays hidden behind it) and redirect.
     const denial=document.createElement('div');
@@ -418,63 +422,41 @@ window.checkFinancePerms=()=>checkLedgerAccess(db,auth).then(r=>console.table(r.
 // التقارير التاريخية الأقدم تستخدم reports.html بفلتر صريح بالتاريخ.
 const FEED_LIMIT = 2000;
 function startListeners(){
-  onSnapshot(query(collection(db,'financial_ledger'), orderBy('createdAt','desc'), limit(FEED_LIMIT)),
-    snap=>{
-      allLedger=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  staggerSubs([
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('financial_ledger').orderBy('createdAt','desc').limit(FEED_LIMIT).build(),(docs)=>{
+      allLedger=docs;
       renderAll();
-    },
-    err=>{
-      console.error('[financial-dashboard] ❌ financial_ledger read FAILED', {
-        code: err.code, message: err.message,
-        uid: currentUser?.uid,
-        role: userRole,
-        diagnosis: err.code==='permission-denied'
-          ? '⛔ Firestore rules not deployed yet — push to main triggers CI deploy of firestore.rules'
-          : err.message,
-      });
-      if(err.code==='permission-denied'){
-        const tbl=document.getElementById('ledger-tbody');
-        if(tbl) tbl.innerHTML=`<tr><td colspan="8" style="text-align:center;color:var(--r);padding:var(--space-2xl);">
-          ⛔ خطأ صلاحيات — قواعد Firestore لم تُنشر بعد<br>
-          <span style="font-size:var(--fs-sm);color:var(--dim2);">uid: ${currentUser?.uid||'—'} | role: ${userRole||'—'}</span><br>
-          <span style="font-size:var(--fs-sm);color:var(--dim2);">افتح الـ DevTools Console لمزيد من التفاصيل</span>
-        </td></tr>`;
-      }
-    }
-  );
-  onSnapshot(query(collection(db,'transactions_v2'), orderBy('createdAt','desc'), limit(FEED_LIMIT)),snap=>{
-    allTxV2=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderKPIs();
-  });
-  // FIX B1: حُذف 'delivered' — ليست قيمة order.stage صالحة (هي shipStage فقط).
-  // الـ query كان لا يطابق أي أوردر مع stage='delivered' — analytics معطلة بصمت.
-  // RULE G3: cap dashboard subscriptions. The KPIs read the most recent
-  // operational window; deep history lives in reports.html via getDocs.
-  onSnapshot(query(collection(db,'orders'),where('stage','in',['shipping','archived']),limit(3000)),snap=>{
-    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderKPIs();
-  });
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),snap=>{
-    allSuppliers=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderVendorBalances();
-  });
-  onSnapshot(query(collection(db,'supplier_payments'),limit(2000)),snap=>{
-    allSupplierPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderVendorBalances();
-  });
-  onSnapshot(query(collection(db,'employees'),limit(200)),snap=>{
-    allEmployees=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderPayroll();
-  });
-  onSnapshot(query(collection(db,'transactions_v2'),where('category','==','salary'),limit(2000)),snap=>{
-    allEmpPayments=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    renderPayroll();
-    renderKPIs();
-  });
-  onSnapshot(query(collection(db,'wallets'),limit(100)),snap=>{
-    allWallets=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    populateWalletSelect();
-  });
+    })},
+    { priority:0, fn:()=>dataCache.subscribe(cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(FEED_LIMIT).build(),(docs)=>{
+      allTxV2=docs;
+      renderKPIs();
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('orders').where('stage','in',['shipping','archived']).limit(3000).build(),(docs)=>{
+      allOrders=docs;
+      renderKPIs();
+    })},
+    { priority:1, fn:()=>dataCache.subscribe(cachedQuery('wallets').limit(100).build(),(docs)=>{
+      allWallets=docs;
+      populateWalletSelect();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('suppliers_v2').limit(500).build(),(docs)=>{
+      allSuppliers=docs;
+      renderVendorBalances();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('supplier_payments').limit(2000).build(),(docs)=>{
+      allSupplierPayments=docs;
+      renderVendorBalances();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('employees').limit(200).build(),(docs)=>{
+      allEmployees=docs;
+      renderPayroll();
+    })},
+    { priority:2, fn:()=>dataCache.subscribe(cachedQuery('transactions_v2').where('category','==','salary').limit(2000).build(),(docs)=>{
+      allEmpPayments=docs;
+      renderPayroll();
+      renderKPIs();
+    })},
+  ]);
 }
 
 // ══ PERIOD FILTER ══

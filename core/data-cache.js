@@ -546,6 +546,10 @@ export const dataCache = {
       const estimatedKB = Math.round(JSON.stringify(docs).length / 1024);
       collectionRegistry.markSynced(spec.collection, docs.length, estimatedKB);
 
+      if (source === 'server' && typeof window !== 'undefined' && window.hideCacheIndicator) {
+        window.hideCacheIndicator();
+      }
+
       _stats.serverSyncs++;
       _stats.lastSyncAt = Date.now();
 
@@ -601,6 +605,9 @@ export const dataCache = {
         _stats.cacheHits++;
         _setQueryState(queryKey, 'cached', { source: 'indexeddb', docCount: docs.length });
         collectionRegistry.touch(collectionName);
+        if (typeof window !== 'undefined' && window.showCacheIndicator) {
+          window.showCacheIndicator();
+        }
         callback(docs, 'cache');
         return;
       }
