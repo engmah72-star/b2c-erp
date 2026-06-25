@@ -1008,6 +1008,7 @@ import { masterListsActions } from "./master-lists-actions.js";
 import { resolveFinancialPolicy } from "./core/financial-policy.js";
 import { resolveReasons, REASON_TYPE_META } from "./core/incident-reasons.js";
 import { initPageShortcuts } from './core/page-shortcuts.js';
+import { dataCache, cachedQuery } from './core/data-cache.js';
 const functions = getFunctions(app);
 
 // Phase A #3 — settings.html legacy permissions projection.
@@ -1108,7 +1109,10 @@ onAuthStateChanged(auth, async u => {
   initPageShortcuts('settings', { role: isAdminUser ? 'admin' : '' });
 });
 
-// LOAD SETTINGS
+// Unsubscribe registry for dataCache listeners
+const _unsubs = [];
+
+// LOAD SETTINGS (single-doc — keep raw onSnapshot)
 onSnapshot(doc(db,'settings','main'), snap => {
   if(snap.exists()) {
     const d = snap.data();
@@ -1117,38 +1121,46 @@ onSnapshot(doc(db,'settings','main'), snap => {
   renderSettings();
 });
 
-// LOAD FINANCIAL POLICY (master_lists/financial_policy) — قراءة لأي مُصادَق
+// LOAD FINANCIAL POLICY (single-doc — keep raw onSnapshot)
 onSnapshot(doc(db,'master_lists','financial_policy'), snap => {
   financialPolicy = snap.exists() ? snap.data() : null;
   renderFinancialPolicy();
 }, err => console.warn('[settings] financial_policy:', err));
 
 // LOAD FINANCIAL POLICY AUDIT — آخر 10 تغييرات (append-only، قراءة فقط)
-onSnapshot(query(collection(db,'financial_policy_audit'), orderBy('changedAt','desc'), limit(10)), snap => {
-  const el = document.getElementById('fp-audit-log'); if(!el) return;
-  if(snap.empty){ el.textContent = 'لا تغييرات مسجَّلة بعد.'; return; }
-  el.innerHTML = snap.docs.map(d=>{
-    const x = d.data();
-    const dt = x.changedAt?.seconds ? new Date(x.changedAt.seconds*1000).toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'}) : '—';
-    const who = x.changedByName || x.changedBy || '—';
-    const mode = (x.after||{}).mode || '—';
-    const strict = ((x.after||{}).approval||{}).strictSeparation ? ' · فصل صارم✓' : '';
-    return `• <b>${who}</b> · ${dt} · وضع=${mode}${strict}`;
-  }).join('<br>');
-}, err => console.warn('[settings] policy_audit:', err));
+_unsubs.push(dataCache.subscribe(
+  cachedQuery('financial_policy_audit').orderBy('changedAt','desc').limit(10).build(),
+  (docs) => {
+    const el = document.getElementById('fp-audit-log'); if(!el) return;
+    if(!docs.length){ el.textContent = 'لا تغييرات مسجَّلة بعد.'; return; }
+    el.innerHTML = docs.map(x=>{
+      const dt = x.changedAt?.seconds ? new Date(x.changedAt.seconds*1000).toLocaleString('ar-EG',{dateStyle:'short',timeStyle:'short'}) : '—';
+      const who = x.changedByName || x.changedBy || '—';
+      const mode = (x.after||{}).mode || '—';
+      const strict = ((x.after||{}).approval||{}).strictSeparation ? ' · فصل صارم✓' : '';
+      return `• <b>${who}</b> · ${dt} · وضع=${mode}${strict}`;
+    }).join('<br>');
+  }
+));
 
 // LOAD USERS (RULE G3 — bounded for safety; org user count is small)
-onSnapshot(query(collection(db,'users'), orderBy('name','asc'), limit(500)), snap => {
-  users = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  renderUsers();
-  fillManagerSelect();
-});
+_unsubs.push(dataCache.subscribe(
+  cachedQuery('users').orderBy('name','asc').limit(500).build(),
+  (docs) => {
+    users = docs;
+    renderUsers();
+    fillManagerSelect();
+  }
+));
 
 // LOAD WALLETS
-onSnapshot(query(collection(db,'wallets'), orderBy('name','asc'), limit(100)), snap => {
-  wallets = snap.docs.map(d=>({...d.data(),_id:d.id}));
-  renderWallets();
-});
+_unsubs.push(dataCache.subscribe(
+  cachedQuery('wallets').orderBy('name','asc').limit(100).build(),
+  (docs) => {
+    wallets = docs;
+    renderWallets();
+  }
+));
 
 // RENDER SETTINGS
 function renderSettings() {
@@ -1634,11 +1646,10 @@ onSnapshot(doc(db,'settings','whatsapp'), snap => {
   renderWhatsApp();
 });
 
-onSnapshot(
-  query(collection(db,'whatsapp_logs'), orderBy('createdAt','desc'), limit(5)),
-  snap => renderWhatsAppLogs(snap.docs.map(d=>d.data())),
-  _err => { /* قبل ما تتعمل أول رسالة، الـ collection مش موجودة — تجاهل */ }
-);
+_unsubs.push(dataCache.subscribe(
+  cachedQuery('whatsapp_logs').orderBy('createdAt','desc').limit(5).build(),
+  (docs) => renderWhatsAppLogs(docs)
+));
 
 function renderWhatsApp(){
   if(!waSettings) return;
@@ -2221,6 +2232,9 @@ window.runBookletCalc=function(){
       </div>
     </div>`;
 };
+
+// Cleanup dataCache subscriptions on page unload
+window.addEventListener('beforeunload',()=>_unsubs.forEach(u=>u?.()),{once:true});
 
 </script>
 <nav class="mob-nav">
