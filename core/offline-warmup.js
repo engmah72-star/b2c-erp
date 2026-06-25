@@ -13,11 +13,13 @@ const ROLE_WARMUP = {
   admin: [
     'accounts.html', 'clients.html', 'orders', 'design.html',
     'shipping.html', 'production.html', 'reports.html', 'employees.html',
-    'approvals.html', 'suppliers.html', 'returns.html',
+    'approvals.html', 'suppliers.html', 'returns.html', 'print.html',
+    'exec-workspace.html', 'settings.html',
   ],
   operation_manager: [
     'clients.html', 'orders', 'design.html', 'shipping.html',
     'production.html', 'reports.html', 'employees.html', 'approvals.html',
+    'exec-workspace.html',
   ],
   customer_service: [
     'clients.html', 'orders', 'design.html', 'approvals.html',
@@ -29,7 +31,8 @@ const ROLE_WARMUP = {
     'design.html', 'orders',
   ],
   production_agent: [
-    'production.html', 'orders', 'suppliers.html',
+    'production.html', 'orders', 'suppliers.html', 'print.html',
+    'exec-workspace.html',
   ],
   shipping_officer: [
     'shipping.html', 'orders', 'shipping-accounts',
@@ -74,6 +77,16 @@ const COLLECTION_SPECS = {
   ],
   'shipping-accounts': [
     () => cachedQuery('shipping_settlements').orderBy('createdAt', 'desc').limit(500),
+  ],
+  'print.html': [
+    () => cachedQuery('products_v2').limit(500),
+    () => cachedQuery('shippers_v2').limit(200),
+  ],
+  'exec-workspace.html': [
+    () => cachedQuery('suppliers_v2').limit(500),
+  ],
+  'settings.html': [
+    () => cachedQuery('wallets').limit(100),
   ],
 };
 

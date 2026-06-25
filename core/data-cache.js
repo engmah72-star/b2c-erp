@@ -36,6 +36,20 @@ const STORE_QUERIES = 'queries';
 const STORE_META = 'meta';
 
 const DEFAULT_MAX_AGE = 30 * 60 * 1000;     // 30 دقيقة — بعدها الكاش stale (لا يُحذف، يُعرض مع revalidation)
+const COLLECTION_MAX_AGE = {
+  orders: 5 * 60 * 1000,
+  shipping_settlements: 5 * 60 * 1000,
+  returns_tickets: 10 * 60 * 1000,
+  transactions_v2: 10 * 60 * 1000,
+  clients: 15 * 60 * 1000,
+  employees: 30 * 60 * 1000,
+  wallets: 30 * 60 * 1000,
+  settings: 60 * 60 * 1000,
+  master_lists: 60 * 60 * 1000,
+  products_v2: 60 * 60 * 1000,
+  suppliers_v2: 30 * 60 * 1000,
+  shippers_v2: 60 * 60 * 1000,
+};
 const DEFAULT_QUERY_LIMIT = 200;             // RULE G3
 const DEDUP_WINDOW_MS = 2000;               // نافذة منع القراءات المكررة (2 ثانية)
 const MAX_MEMORY_ENTRIES = 500;             // أقصى عدد مدخلات في L1 قبل الـ eviction
@@ -397,7 +411,7 @@ export const dataCache = {
    */
   async getDoc(collectionName, docId, opts = {}) {
     const cacheKey = `${collectionName}/${docId}`;
-    const maxAge = opts.maxAge || DEFAULT_MAX_AGE;
+    const maxAge = opts.maxAge || COLLECTION_MAX_AGE[collectionName] || DEFAULT_MAX_AGE;
 
     // L1: Memory
     const memHit = memGet(cacheKey);
@@ -794,14 +808,25 @@ export const dataCache = {
    */
   async enforceIDBLimit() {
     try {
-      const allDocs = await idbGetAll(STORE_DOCS);
-      if (allDocs.length <= MAX_IDB_ENTRIES) return 0;
-      allDocs.sort((a, b) => (a._syncedAt || 0) - (b._syncedAt || 0));
-      const toRemove = allDocs.slice(0, allDocs.length - MAX_IDB_ENTRIES);
       let removed = 0;
-      for (const d of toRemove) {
-        await idbDelete(STORE_DOCS, d._cacheKey);
-        removed++;
+      const allDocs = await idbGetAll(STORE_DOCS);
+      if (allDocs.length > MAX_IDB_ENTRIES) {
+        allDocs.sort((a, b) => (a._syncedAt || 0) - (b._syncedAt || 0));
+        const toRemove = allDocs.slice(0, allDocs.length - MAX_IDB_ENTRIES);
+        for (const d of toRemove) {
+          await idbDelete(STORE_DOCS, d._cacheKey);
+          removed++;
+        }
+      }
+      const maxQueries = Math.floor(MAX_IDB_ENTRIES / 2);
+      const allQueries = await idbGetAll(STORE_QUERIES);
+      if (allQueries.length > maxQueries) {
+        allQueries.sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0));
+        const toRemoveQ = allQueries.slice(0, allQueries.length - maxQueries);
+        for (const q of toRemoveQ) {
+          await idbDelete(STORE_QUERIES, q.queryKey);
+          removed++;
+        }
       }
       _stats.evictions += removed;
       return removed;

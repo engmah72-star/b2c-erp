@@ -162,7 +162,11 @@
         el.textContent = `⏱ ${mins}:${String(secs).padStart(2,'0')}`;
       };
       updateCountdown();
-      setInterval(updateCountdown, 1000);
+      const _cdInterval = setInterval(()=>{
+        updateCountdown();
+        const remaining = expiresAt - Date.now();
+        if(remaining <= 0) clearInterval(_cdInterval);
+      }, 1000);
     }
   }
   function escHtml(s){return String(s||'').replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);}

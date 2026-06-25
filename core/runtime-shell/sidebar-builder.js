@@ -298,15 +298,18 @@ export function buildSidebar({ container, domain, config = {} }) {
       h += '</button>';
     }
     recentHost.innerHTML = h;
-    recentHost.querySelectorAll('[data-recent-url]').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+    if (!recentHost._delegated) {
+      recentHost._delegated = true;
+      recentHost.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-recent-url]');
+        if (!btn) return;
         e.preventDefault();
         const url = btn.dataset.recentUrl;
         if (!url) return;
         const shell = (window.top && window.top.B2CShell) || window.B2CShell;
         if (shell && typeof shell.openInWorkspace === 'function') shell.openInWorkspace(url);
       });
-    });
+    }
   }
   renderRecent();
   const unsubRecent = memory.onRecentChange((emittedDomain) => {

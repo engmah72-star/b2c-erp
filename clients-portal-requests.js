@@ -90,10 +90,11 @@ onAuthStateChanged(auth, async (u) => {
   } catch (_) { /* تجاهل */ }
   wire();
   try {
-    onSnapshot(
+    const _unsub = onSnapshot(
       query(collection(db, 'order_requests'), where('status', '==', 'new'), orderBy('createdAt', 'desc'), limit(50)),
       (snap) => { reqs = snap.docs.map((d) => ({ ...d.data(), _id: d.id })); render(); },
       (err) => { console.warn('[clients] order_requests listener:', err.message); const h = host(); if (h) h.hidden = true; },
     );
+    window.addEventListener('beforeunload', () => _unsub(), { once: true });
   } catch (err) { console.warn('[clients] portal-requests init failed', err.message); }
 });

@@ -9,6 +9,7 @@
 import { auth, db } from '../../core/firebase-init.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { collection, doc, getDoc, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { getMasterList } from '../../core/static-store.js';
 import { canDo } from '../../core/permissions-matrix.js';
 import { isFeatureEnabled } from '../../core/feature-flags.js';
 import { renderKpiBar, renderGroups } from './render.js';
@@ -240,10 +241,10 @@ function startListeners() {
     state.incidents = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
     if (state.employees.length) scheduleRender();
   }));
-  // أسباب الإخفاقات المُدارة — لتوحيد مودال «تسجيل إخفاق» مع البروفايل
-  __ecUnsubs.push(onSnapshot(doc(db, 'master_lists', 'incident_reasons'), snap => {
-    state.incidentReasons = snap.exists() ? (snap.data().items || []) : [];
-  }));
+  // أسباب الإخفاقات — cached one-shot (rarely changes)
+  getMasterList('incident_reasons', (data) => {
+    state.incidentReasons = data?.items || [];
+  });
   // attendance permissions (today) + leaves — for the accurate day-status summary
   __ecUnsubs.push(onSnapshot(query(collection(db, 'attendance_permissions'), where('date', '==', todayStr()), limit(800)), snap => {
     state.permsToday = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
