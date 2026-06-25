@@ -176,7 +176,8 @@
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, getDoc, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
 import { approvalActions } from "./approval-actions.js";
 import { employeeActions } from "./employee-actions.js";
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
@@ -326,44 +327,41 @@ onAuthStateChanged(auth, async u=>{
 
 function startListeners(){
   // طلباتي فقط (RULE G3: bounded per user — 500 historical requests max).
-  onSnapshot(query(collection(db,'payment_requests'), where('requestedBy','==',currentUid), limit(500)),
-    snap=>{
-      requests = snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(
+    cachedQuery('payment_requests').where('requestedBy','==',currentUid).limit(500).build(),
+    (docs)=>{
+      requests = docs;
       requests.sort((a,b)=>{
         const ta = a.requestedAt?.toMillis?.()||0;
         const tb = b.requestedAt?.toMillis?.()||0;
         return tb - ta;
       });
       render();
-    },
-    err=>{
-      console.error('[my-requests] requests:', err);
-      document.getElementById('list-content').innerHTML = `<div class="empty-pl">⚠️ فشل تحميل الطلبات: ${escapeHtml(err.message)}</div>`;
     }
   );
 
   // orders are only used as a lookup map for displayed request rows. Recent 3000.
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),
-    snap=>{ ordersMap.clear(); snap.docs.forEach(d=>ordersMap.set(d.id, {...d.data(), _id:d.id})); },
-    err=>console.error('[my-requests] orders:', err)
+  dataCache.subscribe(
+    cachedQuery('orders').orderBy('createdAt','desc').limit(3000).build(),
+    (docs)=>{ ordersMap.clear(); docs.forEach(d=>ordersMap.set(d._id, d)); }
   );
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),
-    snap=>{ suppliers = snap.docs.map(d=>({...d.data(),_id:d.id})); },
-    err=>console.error('[my-requests] suppliers:', err)
+  dataCache.subscribe(
+    cachedQuery('suppliers_v2').limit(500).build(),
+    (docs)=>{ suppliers = docs; }
   );
-  onSnapshot(query(collection(db,'employees_v2'),limit(200)),
-    snap=>{ employees = snap.docs.map(d=>({...d.data(),_id:d.id})); },
-    err=>console.error('[my-requests] employees:', err)
+  dataCache.subscribe(
+    cachedQuery('employees_v2').limit(200).build(),
+    (docs)=>{ employees = docs; }
   );
 
   // إجازاتي (RULE G3: bounded — آخر 100 طلب لي).
-  onSnapshot(query(collection(db,'employee_leaves'), where('requestedBy','==',currentUid), limit(100)),
-    snap=>{
-      myLeaves = snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(
+    cachedQuery('employee_leaves').where('requestedBy','==',currentUid).limit(100).build(),
+    (docs)=>{
+      myLeaves = docs;
       myLeaves.sort((a,b)=>(b.requestedAt?.toMillis?.()||0)-(a.requestedAt?.toMillis?.()||0));
       renderLeaves();
-    },
-    err=>console.error('[my-requests] leaves:', err)
+    }
   );
 }
 
