@@ -25,6 +25,7 @@ export { FB_CONFIG } from './core/firebase-init.js';
 // expectedFromCompany/orderGrossTotal منقولان من هنا (كانا _expectedFromCompany
 // و_orderGrossTotal محليين) عشان يتغطّوا بـ smoke tests نقية (G8).
 import { expectedFromCompany as _expectedFromCompany, orderGrossTotal as _orderGrossTotal, isFullyPaid as _isFullyPaid } from './core/order-math.js';
+import { normalizeCostType } from './core/cost-type-normalize.js';
 
 // ══════════════════════════════════════════
 // STAGES — تعريف المراحل وترتيبها (يطابق الواقع)
@@ -2188,7 +2189,7 @@ export function validateReverseSettle({ order, role }) {
  * @param {boolean}[args.isEdit=false]   — هل العملية تعديل بند موجود؟
  * @returns { ok, errors, warnings }
  */
-export function validateCostItem({ order, payload, role, wallets = [], isEdit = false, allowedTypes = [] }) {
+export function validateCostItem({ order, payload, role, wallets = [], isEdit = false, allowedTypes = [], refPrice = 0 }) {
   const errors = [];
   const warnings = [];
 
@@ -2200,7 +2201,7 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
 
   // النوع
   if (!type || !type.trim()) errors.push('اختر نوع البند');
-  else if (allowedTypes.length && !allowedTypes.map(t=>t.trim()).includes(type.trim()))
+  else if (allowedTypes.length && !allowedTypes.map(t => normalizeCostType(t)).includes(normalizeCostType(type)))
     errors.push('نوع البند غير مُعرَّف في خدمات الإنتاج بالإعدادات');
 
   // المبلغ
@@ -2230,6 +2231,17 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
 
   // المورد إلزامي
   if (!supplierId) errors.push('اختر المورد — كل بند تكلفة مرتبط بمورد');
+
+  // تحذير انحراف السعر (>20% عن المرجعي — لا يمنع الحفظ)
+  const ref = parseFloat(refPrice) || 0;
+  if (ref > 0 && amt > 0) {
+    const deviation = ((amt - ref) / ref) * 100;
+    if (deviation > 20) {
+      warnings.push(`⚠️ التكلفة أعلى بـ ${Math.round(deviation)}% من السعر المرجعي (${ref.toLocaleString('ar-EG')} ج)`);
+    } else if (deviation < -20) {
+      warnings.push(`ℹ️ التكلفة أقل بـ ${Math.round(Math.abs(deviation))}% من السعر المرجعي (${ref.toLocaleString('ar-EG')} ج)`);
+    }
+  }
 
   return { ok: errors.length === 0, errors, warnings };
 }

@@ -39,6 +39,7 @@ import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-e
 import { db as defaultDb } from './core/firebase-init.js';
 import { withIdempotency } from './core/idempotency.js';
 import { auditEntry, persistAuditLog } from './core/audit.js';
+import { normalizeCostType } from './core/cost-type-normalize.js';
 // طبقة المراسلة: «بدء التصميم» يفتح مجموعة العميل بعد تعيين المصمم (side-effect تواصلي).
 // استيراد أعمال→مراسلة مسموح (قفل الحدود يقيّد المراسلة فقط من لمس الأعمال، لا العكس).
 import { inboxActions } from './inbox-actions.js';
@@ -1581,11 +1582,12 @@ export const orderActions = {
     if (!v.ok) return { ...v, orderId };
 
     const {
-      type, total: rawTotal,
+      type: rawType, total: rawTotal,
       supplierId = '', supplierName = '',
       note = '', walletId = '',
       paperMeta = {},
     } = payload;
+    const type = normalizeCostType(rawType) || rawType;
     const total = parseFloat(rawTotal) || 0;
 
     const _doRecord = async () => {

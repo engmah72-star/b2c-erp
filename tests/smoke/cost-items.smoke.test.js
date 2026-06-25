@@ -28,14 +28,20 @@ function section(title){ console.log('\n' + title); }
 //    Mirrors orders.js → validateCostItem. If the source changes, this
 //    mirror must also change (intentional drift detection).
 // ──────────────────────────────────────────────────────────
-function validateCostItem({ order, payload, role, wallets = [], isEdit = false, allowedTypes = [] }) {
+function _normalizeCostType(raw) {
+  if (!raw) return '';
+  let s = raw.trim().replace(/[ؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۤۧۨ-ۭ]/g, '').replace(/\s+/g, ' ').replace(/^ال/, '');
+  return s;
+}
+
+function validateCostItem({ order, payload, role, wallets = [], isEdit = false, allowedTypes = [], refPrice = 0 }) {
   const errors = []; const warnings = [];
   if (!order) return { ok:false, errors:['لا يوجد أوردر'], warnings:[] };
   if (!payload) return { ok:false, errors:['بيانات البند ناقصة'], warnings:[] };
   const { type = '', total, walletId = '', supplierId = '' } = payload;
   const amt = parseFloat(total) || 0;
   if (!type || !type.trim()) errors.push('اختر نوع البند');
-  else if (allowedTypes.length && !allowedTypes.includes(type.trim()))
+  else if (allowedTypes.length && !allowedTypes.map(t => _normalizeCostType(t)).includes(_normalizeCostType(type)))
     errors.push('نوع البند غير مُعرَّف في خدمات الإنتاج بالإعدادات');
   if (amt <= 0) errors.push('أدخل تكلفة صحيحة');
   const cur = order.stage || '';
@@ -50,6 +56,12 @@ function validateCostItem({ order, payload, role, wallets = [], isEdit = false, 
   }
   if (payload.isExternal && !supplierId && !errors.length) {
     warnings.push('بند خارجي بدون مورد محدد');
+  }
+  const ref = parseFloat(refPrice) || 0;
+  if (ref > 0 && amt > 0) {
+    const deviation = ((amt - ref) / ref) * 100;
+    if (deviation > 20) warnings.push(`⚠️ التكلفة أعلى بـ ${Math.round(deviation)}% من السعر المرجعي (${ref.toLocaleString('ar-EG')} ج)`);
+    else if (deviation < -20) warnings.push(`ℹ️ التكلفة أقل بـ ${Math.round(Math.abs(deviation))}% من السعر المرجعي (${ref.toLocaleString('ar-EG')} ج)`);
   }
   return { ok: errors.length === 0, errors, warnings };
 }
@@ -229,6 +241,73 @@ test('cost item required fields match schema (RULE 6)', () => {
   // recordCostItem builds the item with these keys — if any are removed
   // here, the contract drifts (this test is a sentinel).
   assert.ok(required.every(k => typeof k === 'string'));
+});
+
+section('validateCostItem — price deviation warnings');
+
+test('price >20% above reference triggers warning (still ok)', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:150, supplierId:'s1' },
+    role: 'admin',
+    refPrice: 100,
+  });
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.warnings.some(w => w.includes('أعلى')));
+});
+
+test('price within 20% of reference has no warning', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:110, supplierId:'s1' },
+    role: 'admin',
+    refPrice: 100,
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.warnings.length, 0);
+});
+
+test('price >20% below reference triggers info warning (still ok)', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:70, supplierId:'s1' },
+    role: 'admin',
+    refPrice: 100,
+  });
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.warnings.some(w => w.includes('أقل')));
+});
+
+test('no refPrice means no deviation warning', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:100, supplierId:'s1' },
+    role: 'admin',
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.warnings.length, 0);
+});
+
+section('validateCostItem — normalized type matching');
+
+test('"الطباعة" matches allowedType "طباعة" via normalization', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'الطباعة', total:100, supplierId:'s1' },
+    role: 'admin',
+    allowedTypes: ['طباعة', 'ورق'],
+  });
+  assert.strictEqual(r.ok, true);
+});
+
+test('"طباعة" matches allowedType "الطباعة" via normalization', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:100, supplierId:'s1' },
+    role: 'admin',
+    allowedTypes: ['الطباعة', 'ورق'],
+  });
+  assert.strictEqual(r.ok, true);
 });
 
 // ── summary ───────────────────────────────────────────────

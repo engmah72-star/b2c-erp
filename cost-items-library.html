@@ -70,6 +70,7 @@
 .lib-badge-type{display:inline-block;padding:2px 8px;border-radius:99px;font-size:var(--fs-xs);background:var(--info-bg,rgba(74,142,245,.12));color:var(--b);border:1px solid rgba(74,142,245,.3)}
 .lib-sup-name{color:var(--dim1);font-size:var(--fs-sm)}
 .lib-price-main{font-weight:var(--fw-bold);color:var(--heading);direction:ltr;font-feature-settings:"tnum"}
+.lib-price-pinned{font-weight:var(--fw-bold);color:var(--success-text,#16a34a);direction:ltr;font-feature-settings:"tnum";background:var(--success-bg,rgba(22,163,74,.08));padding:2px 6px;border-radius:4px;font-size:var(--fs-sm)}
 .lib-price-range{font-size:var(--fs-xs);color:var(--dim2);direction:ltr;font-feature-settings:"tnum"}
 .lib-usage{font-size:var(--fs-sm);color:var(--dim1);text-align:center}
 .lib-actions{display:flex;gap:4px;justify-content:flex-end}
@@ -276,7 +277,10 @@ import {
   getCostLibraryItems,
   deleteCostLibraryItem,
   getSupplierComparisons,
+  pinLibraryPrice,
+  unpinLibraryPrice,
 } from './core/cost-library-actions.js';
+import { normalizeCostType } from './core/cost-type-normalize.js';
 
 // ── State ────────────────────────────────────────────────────
 let _items = [];
@@ -425,7 +429,9 @@ window.loadItems = async function() {
 // ── Build filter dropdowns ───────────────────────────────────
 function _buildFilters() {
   const active = _items.filter(x => x.isActive !== false);
-  const types = [...new Set(active.map(x => x.type).filter(Boolean))].sort();
+  const typeMap = {};
+  active.forEach(x => { if (x.type) { const n = normalizeCostType(x.type); if (!typeMap[n]) typeMap[n] = x.type; } });
+  const types = Object.values(typeMap).sort((a, b) => a.localeCompare(b, 'ar'));
   const sups = [...new Set(active.map(x => x.supplierName).filter(Boolean))].sort();
 
   const tf = document.getElementById('type-filter');
@@ -451,7 +457,7 @@ window.applyFilter = function() {
   _filteredItems = _items
     .filter(x => x.isActive !== false)
     .filter(x => {
-      if (type && x.type !== type) return false;
+      if (type && normalizeCostType(x.type) !== normalizeCostType(type)) return false;
       if (sup && x.supplierName !== sup) return false;
       if (text) {
         return (x.type || '').toLowerCase().includes(text)
@@ -538,13 +544,19 @@ function _renderTable() {
     const updDate = formatDate(item.updatedAt);
     const avgDisplay = item.avgUnitCost > 0 ? nf(item.avgUnitCost) + ' ج' : '—';
     const lastDisplay = item.lastTotal > 0 ? nf(item.lastTotal) + ' ج' : '—';
+    const hasPinned = item.pinnedPrice > 0;
+    const pinnedDisplay = hasPinned ? nf(item.pinnedPrice) + ' ج' : '';
     return `<tr tabindex="0" data-id="${esc(item._id)}">
       <td>
         <div class="lib-row-name">${getCostIco(item.type)} ${esc(item.type || '—')}</div>
         ${item.productName ? `<div class="lib-row-sub">📦 ${esc(item.productName)}</div>` : ''}
       </td>
       <td><span class="lib-sup-name">${esc(item.supplierName || '—')}</span></td>
-      <td><span class="lib-price-main">${avgDisplay}</span></td>
+      <td>
+        ${hasPinned
+          ? `<span class="lib-price-pinned" title="سعر مُثبّت بواسطة ${esc(item.pinnedBy || '')}">📌 ${pinnedDisplay}</span>`
+          : `<span class="lib-price-main">${avgDisplay}</span>`}
+      </td>
       <td><span class="lib-price-range">${minP} – ${maxP} ج</span></td>
       <td><span class="lib-price-main">${lastDisplay}</span></td>
       <td class="lib-usage">${item.usageCount || 0} مرة</td>
@@ -552,6 +564,7 @@ function _renderTable() {
       <td>
         <div class="lib-actions">
           <button class="lib-btn" type="button" data-action="open-hist" data-id="${esc(item._id)}" aria-label="عرض سجل ${esc(item.type || 'البند')}">📊 السجل</button>
+          ${isAdmin ? `<button class="lib-btn" type="button" data-action="${hasPinned ? 'unpin' : 'pin'}" data-id="${esc(item._id)}" data-type="${esc(item.type)}" data-avg="${item.avgUnitCost || 0}" aria-label="${hasPinned ? 'إزالة التثبيت' : 'تثبيت سعر'}">${hasPinned ? '📌✕' : '📌'}</button>` : ''}
           ${isAdmin ? `<button class="lib-btn lib-btn-del" type="button" data-action="delete" data-id="${esc(item._id)}" data-type="${esc(item.type)}" aria-label="حذف ${esc(item.type || 'البند')}">✕</button>` : ''}
         </div>
       </td>
@@ -585,7 +598,7 @@ window.clearFilters = function() {
 function _updateKPIs() {
   const active = _items.filter(x => x.isActive !== false);
   const totalCount = active.length;
-  const typesCount = new Set(active.map(x => x.type)).size;
+  const typesCount = new Set(active.map(x => normalizeCostType(x.type)).filter(Boolean)).size;
   const suppliersCount = new Set(active.map(x => x.supplierId).filter(Boolean)).size;
 
   _animateValue('k-total', totalCount);
@@ -728,6 +741,38 @@ async function _deleteItem(id, typeName) {
   }
 }
 
+async function _pinPrice(id, typeName, avgStr) {
+  const avg = parseFloat(avgStr) || 0;
+  const defaultVal = avg > 0 ? avg.toFixed(2) : '';
+  const input = prompt(`تثبيت سعر مرجعي لـ "${typeName}":\n(سعر الوحدة بالجنيه)`, defaultVal);
+  if (input === null) return;
+  const price = parseFloat(input);
+  if (!(price > 0)) { showToast('أدخل سعر صحيح', 'err'); return; }
+  const userName = auth.currentUser?.displayName || auth.currentUser?.email || '';
+  const res = await pinLibraryPrice({ db, itemId: id, price, userName });
+  if (res.ok) {
+    showToast('تم تثبيت السعر المرجعي', 'ok');
+    const item = _items.find(x => x._id === id);
+    if (item) { item.pinnedPrice = price; item.pinnedBy = userName; }
+    _renderTable();
+  } else {
+    showToast((res.errors?.[0] || 'فشل التثبيت'), 'err');
+  }
+}
+
+async function _unpinPrice(id, typeName) {
+  if (!confirm(`إزالة السعر المُثبّت لـ "${typeName}"؟`)) return;
+  const res = await unpinLibraryPrice({ db, itemId: id });
+  if (res.ok) {
+    showToast('تم إزالة السعر المُثبّت', 'ok');
+    const item = _items.find(x => x._id === id);
+    if (item) { item.pinnedPrice = null; item.pinnedBy = null; }
+    _renderTable();
+  } else {
+    showToast((res.errors?.[0] || 'فشل إزالة التثبيت'), 'err');
+  }
+}
+
 // ── Event Delegation ─────────────────────────────────────────
 // Table actions (delegated)
 document.getElementById('lib-table').addEventListener('click', e => {
@@ -736,6 +781,8 @@ document.getElementById('lib-table').addEventListener('click', e => {
   const action = btn.dataset.action;
   if (action === 'open-hist') _openHist(btn.dataset.id);
   else if (action === 'delete') _deleteItem(btn.dataset.id, btn.dataset.type);
+  else if (action === 'pin') _pinPrice(btn.dataset.id, btn.dataset.type, btn.dataset.avg);
+  else if (action === 'unpin') _unpinPrice(btn.dataset.id, btn.dataset.type);
 });
 
 // Table row keyboard navigation
