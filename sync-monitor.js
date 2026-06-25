@@ -53,6 +53,63 @@
     return false;
   };
 
+  // ── Connection quality detection ──
+  const _conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  let _isSlow = false;
+
+  function _checkConnectionQuality() {
+    if (!_conn) return;
+    const eff = _conn.effectiveType || '';
+    _isSlow = eff === 'slow-2g' || eff === '2g' || _conn.saveData === true;
+  }
+  _checkConnectionQuality();
+  if (_conn) _conn.addEventListener('change', _checkConnectionQuality);
+
+  window.isSlowConnection = function() {
+    if (!_conn) return false;
+    _checkConnectionQuality();
+    return _isSlow;
+  };
+
+  window.getConnectionInfo = function() {
+    if (!_conn) return { effectiveType: 'unknown', downlink: -1, rtt: -1, saveData: false };
+    return {
+      effectiveType: _conn.effectiveType || 'unknown',
+      downlink: _conn.downlink || -1,
+      rtt: _conn.rtt || -1,
+      saveData: !!_conn.saveData
+    };
+  };
+
+  // ── Slow network banner (amber, non-blocking) ──
+  let slowBadge = null;
+  function _showSlowBanner() {
+    if (slowBadge || _isOffline) return;
+    slowBadge = document.createElement('div');
+    slowBadge.id = 'slow-net-banner';
+    slowBadge.style.cssText = `
+      position:fixed;top:0;left:0;right:0;z-index:9998;
+      background:var(--y, #f59e0b);color:#fff;text-align:center;
+      padding:6px;font-size:13px;font-weight:600;
+      font-family:IBM Plex Sans Arabic,sans-serif;
+      transition:opacity 0.3s;
+    `;
+    slowBadge.textContent = '🐢 اتصال بطيء — يتم عرض البيانات من الكاش لتسريع التجربة';
+    document.body.prepend(slowBadge);
+  }
+  function _hideSlowBanner() {
+    if (slowBadge) { slowBadge.remove(); slowBadge = null; }
+  }
+  if (_conn) {
+    _conn.addEventListener('change', function() {
+      _checkConnectionQuality();
+      if (_isSlow && !_isOffline) _showSlowBanner();
+      else _hideSlowBanner();
+    });
+    if (_isSlow && !_isOffline && document.body) _showSlowBanner();
+    else if (_isSlow) document.addEventListener('DOMContentLoaded', function() { if (_isSlow && !_isOffline) _showSlowBanner(); }, { once: true });
+  }
+
   // ── مؤشر حالة الكاش — يظهر عند عرض بيانات من الكاش وينتهي عند المزامنة ──
   let cacheBadge = null;
 
