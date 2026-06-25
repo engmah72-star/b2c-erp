@@ -21,6 +21,7 @@ import {
   getDocs, query, where, orderBy, limit,
   serverTimestamp, increment,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { normalizeCostType } from './cost-type-normalize.js';
 
 // ── Deterministic document ID: type + productName + supplierId ──
 function _libDocId(type, productName, supplierId) {
@@ -29,7 +30,7 @@ function _libDocId(type, productName, supplierId) {
     .replace(/[^a-z0-9؀-ۿ-]/g, '');
   const parts = [
     norm(supplierId) || 'X',
-    norm(type)       || 'X',
+    norm(normalizeCostType(type)) || 'X',
     norm(productName) || 'X',
   ];
   return parts.join('__').slice(0, 80);
@@ -49,10 +50,11 @@ function _calcAvg(priceHistory) {
  * Fire-and-forget — أي خطأ يُسجَّل فقط في console.
  */
 export async function upsertCostLibraryItem({
-  db, type, productName, supplierId, supplierName,
+  db, type: rawType, productName, supplierId, supplierName,
   qty, total, orderId, userId,
 }) {
-  if(!type || !db) return;
+  if(!rawType || !db) return;
+  const type = normalizeCostType(rawType) || rawType;
 
   const unitCost = qty > 0 ? Math.round((total / qty) * 1000) / 1000 : 0;
   const docId    = _libDocId(type, productName, supplierId);
@@ -128,10 +130,11 @@ export async function upsertCostLibraryItem({
  *   supplierId  — فلترة بمورد محدد (اختياري)
  *   limitN      — أقصى عدد نتائج (default 20)
  */
-export async function searchCostLibrary({ db, type, productName, supplierId, limitN = 20 }) {
-  if(!db || !type) return [];
+export async function searchCostLibrary({ db, type: rawType, productName, supplierId, limitN = 20 }) {
+  if(!db || !rawType) return [];
+  const type = normalizeCostType(rawType) || rawType;
   try {
-    // استعلام بـ type (الأكثر تحديداً)
+    // استعلام بـ type المُطبَّع + fallback للقيمة الخام (backward compat)
     const q = query(
       collection(db, 'cost_item_library'),
       where('type', '==', type),
@@ -140,6 +143,18 @@ export async function searchCostLibrary({ db, type, productName, supplierId, lim
     );
     const snap = await getDocs(q);
     let results = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+
+    // fallback: لو لا نتائج بالنوع المُطبَّع، جرّب الخام (بيانات قديمة)
+    if (!results.length && type !== rawType) {
+      const qRaw = query(
+        collection(db, 'cost_item_library'),
+        where('type', '==', rawType),
+        where('isActive', '==', true),
+        limit(100)
+      );
+      const snapRaw = await getDocs(qRaw);
+      results = snapRaw.docs.map(d => ({ ...d.data(), _id: d.id }));
+    }
 
     // فلترة إضافية بالمنتج (client-side fuzzy)
     if(productName) {
@@ -175,8 +190,9 @@ export async function searchCostLibrary({ db, type, productName, supplierId, lim
  * مُرتَّبين بـ avgUnitCost تصاعدياً.
  * يُستخدم لعرض "مقارنة الموردين" في الـ drawer.
  */
-export async function getSupplierComparisons({ db, type, productName }) {
-  if(!db || !type) return [];
+export async function getSupplierComparisons({ db, type: rawType, productName }) {
+  if(!db || !rawType) return [];
+  const type = normalizeCostType(rawType) || rawType;
   try {
     const q = query(
       collection(db, 'cost_item_library'),
@@ -186,6 +202,17 @@ export async function getSupplierComparisons({ db, type, productName }) {
     );
     const snap = await getDocs(q);
     let results = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+
+    if (!results.length && type !== rawType) {
+      const qRaw = query(
+        collection(db, 'cost_item_library'),
+        where('type', '==', rawType),
+        where('isActive', '==', true),
+        limit(50)
+      );
+      const snapRaw = await getDocs(qRaw);
+      results = snapRaw.docs.map(d => ({ ...d.data(), _id: d.id }));
+    }
 
     // تصفية بالمنتج إن وُجد
     if(productName) {
@@ -282,6 +309,82 @@ export async function getSupplierRanking({ db, type, productName, limitN = 10 })
       isCheapest: idx === 0,
     };
   });
+}
+
+/**
+ * getReferencePrice
+ * ─────────────────
+ * سعر مرجعي موحّد — أولوية واضحة بدل عرض 3 أرقام:
+ *   1. pinnedPrice (سعر مُثبّت يدوياً من admin)
+ *   2. آخر سعر فعلي لنفس المورد
+ *   3. متوسط المكتبة (fallback)
+ *
+ * @returns {{ price, source: 'pinned'|'lastSameSupplier'|'avg'|null, item? }}
+ */
+export async function getReferencePrice({ db, type: rawType, supplierId, productName }) {
+  if (!db || !rawType) return { price: 0, source: null };
+  const type = normalizeCostType(rawType) || rawType;
+  try {
+    const results = await searchCostLibrary({ db, type: rawType, productName, limitN: 50 });
+
+    // 1) pinnedPrice (أي مدخل فيه سعر مُثبّت)
+    const pinned = results.find(r => r.pinnedPrice > 0 && (!supplierId || r.supplierId === supplierId));
+    if (pinned) return { price: pinned.pinnedPrice, source: 'pinned', item: pinned };
+
+    // 2) آخر سعر لنفس المورد
+    if (supplierId) {
+      const sameSupplier = results.find(r => r.supplierId === supplierId);
+      if (sameSupplier?.lastUnitCost > 0)
+        return { price: sameSupplier.lastUnitCost, source: 'lastSameSupplier', item: sameSupplier };
+    }
+
+    // 3) متوسط أرخص مورد
+    const cheapest = results.filter(r => r.avgUnitCost > 0)
+      .sort((a, b) => a.avgUnitCost - b.avgUnitCost)[0];
+    if (cheapest) return { price: cheapest.avgUnitCost, source: 'avg', item: cheapest };
+
+    return { price: 0, source: null };
+  } catch (e) {
+    return { price: 0, source: null };
+  }
+}
+
+/**
+ * pinLibraryPrice — يُثبّت سعر مرجعي يدوياً على مدخل مكتبة (admin)
+ */
+export async function pinLibraryPrice({ db, itemId, price, userName }) {
+  if (!db || !itemId) return { ok: false, errors: ['معرّف غير صالح'] };
+  const amt = parseFloat(price);
+  if (!(amt > 0)) return { ok: false, errors: ['السعر مطلوب'] };
+  try {
+    await updateDoc(doc(db, 'cost_item_library', itemId), {
+      pinnedPrice: amt,
+      pinnedBy: userName || '',
+      pinnedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل التثبيت'] };
+  }
+}
+
+/**
+ * unpinLibraryPrice — إزالة السعر المُثبّت
+ */
+export async function unpinLibraryPrice({ db, itemId }) {
+  if (!db || !itemId) return { ok: false, errors: ['معرّف غير صالح'] };
+  try {
+    await updateDoc(doc(db, 'cost_item_library', itemId), {
+      pinnedPrice: null,
+      pinnedBy: null,
+      pinnedAt: null,
+      updatedAt: serverTimestamp(),
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل إزالة التثبيت'] };
+  }
 }
 
 /**

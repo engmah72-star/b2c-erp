@@ -8,6 +8,7 @@
  */
 
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { normalizeCostType } from './cost-type-normalize.js';
 
 const TMPL_REF = (db) => doc(db, 'master_lists', 'cost_templates');
 
@@ -44,9 +45,9 @@ export async function saveCostTemplate(db, { id, name, qty, costItems, mergeInto
   if (mergeInto) {
     const target = templates.find(t => t.id === mergeInto);
     if (!target) return { ok: false, errors: ['القالب المطلوب دمجه غير موجود'] };
-    const existTypes = new Map(target.costItems.map(c => [c.type + '__' + c.supplierId, c]));
+    const existTypes = new Map(target.costItems.map(c => [normalizeCostType(c.type) + '__' + c.supplierId, c]));
     costItems.forEach(c => {
-      const key = c.type + '__' + c.supplierId;
+      const key = normalizeCostType(c.type) + '__' + c.supplierId;
       existTypes.set(key, {
         type: c.type,
         supplierId: c.supplierId,
@@ -102,10 +103,10 @@ export async function mergeDuplicateTemplates(db, userName) {
     // keep the newest as base, merge others into it
     group.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     const base = { ...group[0], costItems: [...group[0].costItems] };
-    const existTypes = new Map(base.costItems.map(c => [c.type + '__' + c.supplierId, c]));
+    const existTypes = new Map(base.costItems.map(c => [normalizeCostType(c.type) + '__' + c.supplierId, c]));
     for (let i = 1; i < group.length; i++) {
       group[i].costItems.forEach(c => {
-        const ck = c.type + '__' + c.supplierId;
+        const ck = normalizeCostType(c.type) + '__' + c.supplierId;
         if (!existTypes.has(ck)) { existTypes.set(ck, c); }
       });
       removed++;

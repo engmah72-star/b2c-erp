@@ -5,9 +5,12 @@
  * Used by exec-cost-entry.html and exec-workspace.html.
  */
 
-// ── Arabic-aware normalisation ──────────────────────────────
+import { normalizeCostType } from './cost-type-normalize.js';
+
+// ── Arabic-aware normalisation (extended — includes hamza/ta-marbuta) ──
 export function normAr(s) {
-  return (s || '')
+  let n = normalizeCostType(s);
+  return n
     .replace(/[أإآ]/g, 'ا').replace(/[ةه]/g, 'ه').replace(/[يى]/g, 'ي')
     .replace(/\s+/g, '').replace(/[٠-٩0-9]+/g, '').toLowerCase();
 }

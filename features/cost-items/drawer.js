@@ -176,10 +176,13 @@
       </header>
 
       <div class="cid-body">
+        ${_editIdx >= 0 ? _renderEditSection() : _renderBatchSection()}
+        ${(suggestions.length || _libLoading || _libSuggestions.length) ? `<div class="cid-suggest-zone">` : ''}
         ${suggestions.length ? _renderSuggestions(suggestions, lastRefEntry, lastUnitCost) : ''}
         ${(_libLoading || _libSuggestions.length) ? _renderLibrarySuggestions() : ''}
+        ${(suggestions.length || _libLoading || _libSuggestions.length) ? `</div>` : ''}
         ${ci.length ? _renderExistingItems(ci, allCi) : ''}
-        ${_editIdx >= 0 ? _renderEditSection() : _renderBatchSection()}
+        ${(!ci.length && !suggestions.length && !_libSuggestions.length && _editIdx < 0) ? _renderEmptyHint() : ''}
         ${(cmp || (existingTotal > 0 && qty > 0)) ? `
         <div class="cid-meter">
           <div class="cid-meter-card is-good">
@@ -252,7 +255,7 @@
         <div class="cid-sect-label">
           <span>📚 من المكتبة</span>
           <span class="cid-line"></span>
-          <span class="cid-hint">الأكثر استخداماً · أرخص مورد أولاً</span>
+          <span class="cid-hint">الأكثر استخداماً · سعر مرجعي موحّد</span>
         </div>
         <div class="cid-lib-grid">
           ${_libSuggestions.map(sg => `
@@ -265,7 +268,7 @@
               <div class="cid-lib-info">
                 <div class="cid-lib-type">${escapeHtml(sg.type)}</div>
                 <div class="cid-lib-sup">${escapeHtml(sg.cheapest.supplierName||'—')}</div>
-                ${sg.cheapest.avgUnitCost > 0 ? `<div class="cid-lib-price">${sg.cheapest.avgUnitCost.toFixed(2)} ج/قطعة</div>` : ''}
+                ${sg.refPrice > 0 ? `<div class="cid-lib-price${sg.hasPinned ? ' is-pinned' : ''}">${sg.hasPinned ? '📌 ' : ''}${sg.refPrice.toFixed(2)} ج/قطعة</div>` : ''}
               </div>
               <div class="cid-lib-meta">
                 <span class="cid-lib-badge">× ${sg.usageCount||0}</span>
@@ -275,6 +278,16 @@
           `).join('')}
         </div>
       </section>`;
+  }
+
+  // ── Empty state hint ──────────────────────────────────────
+  function _renderEmptyHint(){
+    return `
+      <div class="cid-empty-hint">
+        <div class="cid-empty-ico">📋</div>
+        <div class="cid-empty-title">ابدأ بإضافة بنود التكلفة</div>
+        <div class="cid-empty-sub">اختر المورد ← حدد النوع ← أدخل المبلغ</div>
+      </div>`;
   }
 
   // ── Existing items grouped by SUPPLIER ────────────────────
@@ -314,13 +327,16 @@
     `).join('');
 
     return `
-      <section class="cid-sect">
-        <div class="cid-sect-label">
+      <section class="cid-sect cid-existing-sect">
+        <div class="cid-sect-label cid-sect-toggle" data-action="toggle-existing" role="button" tabindex="0">
           <span>📋 البنود المسجّلة (${ci.length})</span>
           <span class="cid-line"></span>
           <span class="cid-hint">إجمالي ${fn(total)} ج</span>
+          <span class="cid-toggle-ico">▾</span>
         </div>
-        ${groups}
+        <div class="cid-existing-body">
+          ${groups}
+        </div>
       </section>`;
   }
 
@@ -358,6 +374,25 @@
       </section>`;
   }
 
+  function _getRefHint(row){
+    if(!row.type || !_libSuggestions.length) return '';
+    const normType = (row.type||'').replace(/^ال/, '').trim();
+    const sg = _libSuggestions.find(s => {
+      const sn = (s.type||'').replace(/^ال/, '').trim();
+      return sn === normType || sn === row.type;
+    });
+    if(!sg || !sg.refPrice) return '';
+    const amt = parseFloat(row.total) || 0;
+    let cls = 'cid-ref-hint';
+    let devLabel = '';
+    if(amt > 0 && sg.refPrice > 0){
+      const dev = ((amt - sg.refPrice) / sg.refPrice) * 100;
+      if(dev > 20){ cls += ' is-high'; devLabel = ` <span class="cid-ref-dev">+${Math.round(dev)}%</span>`; }
+      else if(dev < -20){ cls += ' is-low'; devLabel = ` <span class="cid-ref-dev">${Math.round(dev)}%</span>`; }
+    }
+    return `<div class="${cls}">${sg.hasPinned ? '📌' : '💡'} مرجعي ${sg.refPrice.toFixed(0)} ج${devLabel}</div>`;
+  }
+
   function _renderBatchRow(row){
     const supLabel  = row.supplierName || '— المورد —';
     const typeLabel = row.type || (row.supplierId ? '— النوع —' : '...');
@@ -384,6 +419,7 @@
         <div class="cid-cell cid-amt-cell">
           <input type="number" placeholder="0" value="${escapeHtml(String(row.total))}"
                  data-cid-field="total" data-rid="${row.id}" inputmode="numeric" min="0"/>
+          ${_getRefHint(row)}
         </div>
         <div class="cid-cell cid-batch-note-col">
           <input type="text" placeholder="ملاحظة..." value="${escapeHtml(row.note||'')}"
@@ -433,6 +469,7 @@
             <div class="cid-cell cid-amt-cell">
               <input type="number" placeholder="0" value="${escapeHtml(String(d.total))}"
                      data-cid-field="total" data-rid="edit" inputmode="numeric" min="0"/>
+              ${_getRefHint(d)}
             </div>
             <div style="display:flex;justify-content:center">
               <button class="cid-row-x cid-add" type="button" data-action="submit-edit" aria-label="حفظ التعديل">💾</button>
@@ -541,6 +578,16 @@
     });
     _drawer.querySelectorAll('[data-action="delete-item"]').forEach(el => {
       el.addEventListener('click', () => _deleteItem(parseInt(el.dataset.gi, 10)));
+    });
+
+    // Toggle existing items section
+    _drawer.querySelectorAll('[data-action="toggle-existing"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const body = el.closest('.cid-existing-sect')?.querySelector('.cid-existing-body');
+        const ico = el.querySelector('.cid-toggle-ico');
+        if(body){ body.classList.toggle('is-collapsed'); }
+        if(ico){ ico.textContent = body?.classList.contains('is-collapsed') ? '◂' : '▾'; }
+      });
     });
 
     // Supplier/type popover triggers
@@ -763,23 +810,29 @@
       if(!loaded){ _libLoading = false; return; }
       const { db } = loaded;
       const { getCostLibraryItems } = await import('../../core/cost-library-actions.js');
+      const { normalizeCostType } = await import('../../core/cost-type-normalize.js');
       const items = await getCostLibraryItems({ db, limitN: 60 });
       const active = items.filter(x => x.isActive !== false);
 
-      // Group by type, sort cheapest supplier first
+      // Group by normalized type, sort cheapest supplier first
       const byType = {};
       active.forEach(item => {
-        const t = item.type || '—';
-        if(!byType[t]) byType[t] = [];
-        byType[t].push(item);
+        const t = normalizeCostType(item.type) || item.type || '—';
+        if(!byType[t]) byType[t] = { label: item.type || '—', items: [] };
+        byType[t].items.push(item);
       });
 
       _libSuggestions = Object.entries(byType)
-        .map(([type, list]) => {
-          const sorted   = [...list].sort((a, b) => (a.avgUnitCost||Infinity) - (b.avgUnitCost||Infinity));
+        .map(([normType, group]) => {
+          const list = group.items;
+          const pinned = list.find(x => x.pinnedPrice > 0);
+          const sorted = [...list].sort((a, b) => (a.avgUnitCost||Infinity) - (b.avgUnitCost||Infinity));
           const cheapest = sorted[0];
           const totalUsage = list.reduce((s, x) => s + (x.usageCount||0), 0);
-          return { type, cheapest, alts: sorted.slice(1, 3), usageCount: totalUsage };
+          const refPrice = pinned ? pinned.pinnedPrice
+            : cheapest.lastUnitCost > 0 ? cheapest.lastUnitCost
+            : cheapest.avgUnitCost || 0;
+          return { type: group.label, cheapest, alts: sorted.slice(1, 3), usageCount: totalUsage, refPrice, hasPinned: !!pinned };
         })
         .sort((a, b) => b.usageCount - a.usageCount)
         .slice(0, 8);
