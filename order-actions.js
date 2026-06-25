@@ -1581,14 +1581,37 @@ export const orderActions = {
     const v = validateCostItem({ order, payload, role, wallets, isEdit, allowedTypes });
     if (!v.ok) return { ...v, orderId };
 
+    // Reference price lookup (non-blocking — enriches warnings only)
+    let refPrice = 0;
+    if (!isEdit) {
+      try {
+        const { getReferencePrice } = await import('./core/cost-library-actions.js');
+        const ref = await getReferencePrice({ db, type: payload.type, supplierId: payload.supplierId || '', productName: (order.products || [])[prodIdx >= 0 ? prodIdx : 0]?.name || '' });
+        refPrice = ref.price || 0;
+      } catch (_) { /* non-blocking */ }
+      if (refPrice > 0) {
+        const rv = validateCostItem({ order, payload, role, wallets, isEdit, allowedTypes, refPrice });
+        if (rv.warnings.length) v.warnings.push(...rv.warnings);
+      }
+    }
+
     const {
       type: rawType, total: rawTotal,
-      supplierId = '', supplierName = '',
+      supplierId = '', supplierName: rawSupplierName = '',
       note = '', walletId = '',
       paperMeta = {},
     } = payload;
     const type = normalizeCostType(rawType) || rawType;
     const total = parseFloat(rawTotal) || 0;
+
+    // resolve fresh supplier name (non-blocking fallback to payload name)
+    let supplierName = rawSupplierName;
+    if (supplierId) {
+      try {
+        const { resolveSupplierName } = await import('./core/supplier-resolve.js');
+        supplierName = await resolveSupplierName(db, supplierId, rawSupplierName);
+      } catch (_) { /* keep rawSupplierName */ }
+    }
 
     const _doRecord = async () => {
     // ── prepare refs + ids ────────────────────────────────
@@ -1607,6 +1630,10 @@ export const orderActions = {
     const soRef           = needNewSo ? doc(collection(db, 'supplier_orders')) : null;
     const supplierOrderId = soRef ? soRef.id : (!supplierChanged && existingSoId && supplierId ? existingSoId : '');
 
+    // ── resolve stable productId alongside legacy prodIdx ──
+    const _prod = prodIdx >= 0 ? (order.products || [])[prodIdx] : null;
+    const _productId = _prod?.productId || null;
+
     // ── build new item ────────────────────────────────────
     const newItem = {
       costItemId,
@@ -1616,6 +1643,7 @@ export const orderActions = {
       supplierId,
       supplierName,
       prodIdx: prodIdx >= 0 ? prodIdx : null,
+      ...(_productId ? { productId: _productId } : {}),
       total,
       note,
       ...(paperMeta && Object.keys(paperMeta).length ? { paperMeta } : {}),
