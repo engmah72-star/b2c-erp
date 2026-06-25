@@ -591,7 +591,7 @@
 <script type="module">
 import { auth, db } from "./core/firebase-init.js";
 import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { productionActions } from "./production-actions.js";
 import { canSeeField } from "./core/permissions-matrix.js";
@@ -601,6 +601,8 @@ import { getPriceTrend, getSupplierRanking } from "./core/cost-library-actions.j
 import { getFixedPrices, lookupFixedPrice } from "./core/fixed-prices-actions.js";
 import { uploadOrderFile } from "./core/storage-helpers.js";
 import { dataCache, cachedQuery } from './core/data-cache.js';
+import { getMasterList } from './core/static-store.js';
+import { warmImages, extractOrderImageUrls } from './core/image-cache.js';
 
 // ── Constants ──────────────────────────────────────────────────────
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
@@ -631,6 +633,8 @@ let filterK='all', mineOnly=false, searchQ='', supFilter='';
 let selectMode=false, selected=new Set();
 let __started=false;
 let shiftStart=Date.now(), shiftDone=0, shiftCosts=0;
+let _renderTimer=null;
+function scheduleRender(){if(_renderTimer)return;_renderTimer=requestAnimationFrame(()=>{_renderTimer=null;renderList();renderKPIs();if(selectedId)renderDetail();});}
 let pinnedIds=new Set(JSON.parse(localStorage.getItem('exec-pinned')||'[]'));
 let prodChecks={};
 let _agentCat='نقل';
@@ -834,34 +838,34 @@ onAuthStateChanged(auth,async u=>{
     if(typeof B2CSidebar!=='undefined') B2CSidebar.build(d,'exec-workspace.html');
     if(role==='production_agent'){mineOnly=true;syncMine();}
   }
-  getCostTemplates(db).then(t=>{costTemplates=t;if(selectedId)renderDetail();}).catch(e=>console.warn('[exec-ws] templates',e));
+  getCostTemplates(db).then(t=>{costTemplates=t;scheduleRender();}).catch(e=>console.warn('[exec-ws] templates',e));
   getFixedPrices(db).then(p=>{fixedPrices=p;}).catch(e=>console.warn('[exec-ws] fixed prices',e));
-  getDoc(doc(db,'master_lists','supplier_categories')).then(s=>{
-    if(s.exists())masterCategories=(s.data().items||[]).filter(c=>c.isActive!==false&&c.isSupplierService!==false&&c.isCostItem!==false);
-    if(selectedId)renderDetail();
-  }).catch(e=>console.warn('[exec-ws] categories',e));
+  getMasterList('supplier_categories',data=>{
+    masterCategories=(data?.items||[]).filter(c=>c.isActive!==false&&c.isSupplierService!==false&&c.isCostItem!==false);
+    scheduleRender();
+  });
   if(canCost()){
     dataCache.subscribe(cachedQuery('wallets').limit(50).build(),docs=>{
       wallets=docs;
-      if(selectedId)renderDetail();
+      scheduleRender();
     });
   }
   const urlId=new URLSearchParams(location.search).get('orderId')||'';let urlOpened=false;
-  onSnapshot(query(collection(db,'orders'),where('stage','==','production'),limit(1000)),s=>{
-    orders=s.docs.map(x=>({...x.data(),_id:x.id}));loaded=true;
+  dataCache.subscribe(cachedQuery('orders').where('stage','==','production').limit(1000).build(),docs=>{
+    orders=docs;loaded=true;
     if(urlId&&!urlOpened&&orders.find(o=>o._id===urlId)){urlOpened=true;selectedId=urlId;}
-    renderList();renderKPIs();
-    if(selectedId)renderDetail();
-  },e=>{console.warn('[exec-ws]',e.message);loaded=true;renderList();});
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{
-    suppliers=s.docs.map(x=>({...x.data(),_id:x.id}));
+    warmImages(extractOrderImageUrls(orders));
+    scheduleRender();
+  });
+  dataCache.subscribe(cachedQuery('suppliers_v2').limit(500).build(),docs=>{
+    suppliers=docs;
     buildSupSel();buildBulkSupSel();
-    if(selectedId)renderDetail();
-  },e=>console.warn('[exec-ws] sup',e.message));
-  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent'),limit(100)),s=>{
-    prodAgents=s.docs.map(x=>({...x.data(),_id:x.id}));
-    if(selectedId)renderDetail();
-  },e=>console.warn('[exec-ws] agents',e.message));
+    scheduleRender();
+  });
+  dataCache.subscribe(cachedQuery('employees').where('role','==','production_agent').limit(100).build(),docs=>{
+    prodAgents=docs;
+    scheduleRender();
+  });
 });
 
 // ── KPIs + شريط الإنجاز اليومي ────────────────────────────────────
