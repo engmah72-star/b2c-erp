@@ -300,7 +300,7 @@ export async function createSelfEmployeeFile({
   try {
     const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
     // حارس تكرار: لو فيه ملف موظف مرتبط بنفس الحساب، أوقف بدل إنشاء نسخة ثانية.
-    const existing = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid)));
+    const existing = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid), limit(1)));
     if (!existing.empty) {
       return { ok: false, errors: ['⚠️ يوجد ملف موظف مرتبط بهذا الحساب بالفعل'], warnings: [] };
     }
@@ -963,7 +963,7 @@ export async function changeUserRole({
     });
     // find matching employee doc (if any)
     const { getDocs, query, where, collection: coll } = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
-    const empSnap = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid)));
+    const empSnap = await getDocs(query(coll(db, 'employees'), where('authUid', '==', authUid), limit(1)));
     if (!empSnap.empty) {
       batch.update(empSnap.docs[0].ref, { role: newRole, updatedAt: serverTimestamp() });
     }

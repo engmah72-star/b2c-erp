@@ -88,7 +88,7 @@ export async function publishGalleryItem({
 
     // 2) كشف التكرار — best effort (لا يمنع النشر).
     try {
-      const dupSnap = await getDocs(query(collection(db, GALLERY), where('imageUrl', '==', url)));
+      const dupSnap = await getDocs(query(collection(db, GALLERY), where('imageUrl', '==', url), limit(5)));
       const dup = dupSnap.docs.find((d) => d.data().isVisible !== false);
       if (dup) warnings.push(`⚠️ صورة مكررة لـ "${dup.data().title || 'تصميم'}"`);
     } catch (_) { /* فهرس/صلاحية — تجاهل */ }

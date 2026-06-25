@@ -1489,9 +1489,9 @@ export const orderActions = {
 
       // اجمع كل المستندات المرتبطة (قبل بناء الـ batch لفحص الحجم)
       const [txSnap, ledgerSnap, returnsSnap] = await Promise.all([
-        getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', orderId))),
-        getDocs(query(collection(db, 'financial_ledger'), where('orderId', '==', orderId))),
-        getDocs(query(collection(db, 'returns_tickets'), where('orderId', '==', orderId))),
+        getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', orderId), limit(500))),
+        getDocs(query(collection(db, 'financial_ledger'), where('orderId', '==', orderId), limit(500))),
+        getDocs(query(collection(db, 'returns_tickets'), where('orderId', '==', orderId), limit(100))),
       ]);
       const supplierOrderIds = [...new Set(
         (order.costItems || []).map(ci => ci?.supplierOrderId).filter(Boolean)
