@@ -71,6 +71,24 @@ const PAGE_COLLECTIONS = {
     () => cachedQuery('employees').limit(200),
     () => cachedQuery('wallets').orderBy('name', 'asc').limit(100),
   ],
+  'exec-workspace.html': [
+    () => cachedQuery('orders').where('stage', '==', 'production').orderBy('createdAt', 'desc').limit(500),
+    () => cachedQuery('suppliers_v2').limit(500),
+    () => cachedQuery('wallets').orderBy('name', 'asc').limit(100),
+  ],
+  'inbox.html': [
+    () => cachedQuery('conversations').orderBy('updatedAt', 'desc').limit(100),
+  ],
+  'reports.html': [
+    () => cachedQuery('orders').orderBy('createdAt', 'desc').limit(1500),
+    () => cachedQuery('wallets').orderBy('name', 'asc').limit(100),
+  ],
+  'settings.html': [
+    () => cachedQuery('wallets').orderBy('name', 'asc').limit(100),
+  ],
+  'employee-profile.html': [
+    () => cachedQuery('employees').limit(200),
+  ],
 };
 
 export function prefetchForPage(url) {
