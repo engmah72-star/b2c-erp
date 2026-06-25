@@ -374,6 +374,16 @@
       </section>`;
   }
 
+  function _getRefPriceForType(type){
+    if(!type || !_libSuggestions.length) return 0;
+    const normType = (type||'').replace(/^ال/, '').trim();
+    const sg = _libSuggestions.find(s => {
+      const sn = (s.type||'').replace(/^ال/, '').trim();
+      return sn === normType || sn === type;
+    });
+    return sg?.refPrice || 0;
+  }
+
   function _getRefHint(row){
     if(!row.type || !_libSuggestions.length) return '';
     const normType = (row.type||'').replace(/^ال/, '').trim();
@@ -678,29 +688,58 @@
     }
   }
 
+  // ── Smart supplier ordering ────────────────────────────────
+  function _rankSuppliers(suppliers){
+    const c = ctx();
+    const o = c?.getOrder(_orderId);
+    const existing = o?.costItems || [];
+    const freq = {};
+    existing.forEach(ci => { if(ci.supplierId) freq[ci.supplierId] = (freq[ci.supplierId]||0) + 1; });
+    return [...suppliers].sort((a, b) => (freq[b._id]||0) - (freq[a._id]||0));
+  }
+
   // ── Popovers ──────────────────────────────────────────────
   function _openSupplierPop(anchor, rowId){
     closePop();
     _popRowId = rowId;
     const c = ctx();
     const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
+    const ranked = _rankSuppliers(suppliers);
     const pop = document.createElement('div');
     pop.className = 'cid-pop';
     const rect = anchor.getBoundingClientRect();
     pop.style.top  = `${rect.bottom + 4}px`;
     pop.style.right = `${window.innerWidth - rect.right}px`;
-    pop.style.minWidth = `${Math.max(rect.width, 190)}px`;
-    pop.style.maxHeight = '240px';
+    pop.style.minWidth = `${Math.max(rect.width, 220)}px`;
+    pop.style.maxHeight = '320px';
     pop.style.overflowY = 'auto';
-    pop.innerHTML = !suppliers.length
-      ? `<div class="cid-pop-empty">لا موردين مسجلين</div>`
-      : `<div class="cid-pop-section">الموردون (${suppliers.length})</div>
-         ${suppliers.slice(0,12).map(s => `
-           <div class="cid-pop-item" data-action="pick-supplier"
-                data-id="${escapeHtml(s._id)}" data-name="${escapeHtml(s.name)}">
-             🏭 <span>${escapeHtml(s.name)}</span>
-           </div>
-         `).join('')}`;
+    if(!ranked.length){
+      pop.innerHTML = `<div class="cid-pop-empty">لا موردين مسجلين</div>`;
+    } else {
+      pop.innerHTML = `
+        <div class="cid-pop-search-wrap">
+          <input type="text" class="cid-pop-search" placeholder="🔍 بحث في الموردين..." autocomplete="off"/>
+        </div>
+        <div class="cid-pop-list">
+          <div class="cid-pop-section">الموردون (${ranked.length})</div>
+          ${ranked.map(s => `
+            <div class="cid-pop-item" data-action="pick-supplier"
+                 data-id="${escapeHtml(s._id)}" data-name="${escapeHtml(s.name)}"
+                 data-search="${escapeHtml((s.name||'').toLowerCase())}">
+              🏭 <span>${escapeHtml(s.name)}</span>
+              ${s.specialties?.length ? `<span class="cid-pop-badge">${s.specialties.length} خدمة</span>` : ''}
+            </div>
+          `).join('')}
+        </div>`;
+      const searchInput = pop.querySelector('.cid-pop-search');
+      searchInput?.addEventListener('input', (e) => {
+        const q = (e.target.value||'').trim().toLowerCase();
+        pop.querySelectorAll('.cid-pop-item[data-action="pick-supplier"]').forEach(el => {
+          el.style.display = !q || (el.dataset.search||'').includes(q) ? '' : 'none';
+        });
+      });
+      setTimeout(() => searchInput?.focus(), 30);
+    }
     document.body.appendChild(pop);
     _pop = pop;
     pop.addEventListener('click', _onPopClick);
@@ -715,45 +754,76 @@
     const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
     const specs = currentRow.supplierSpecialties || [];
 
-    // Priority: masterCats (grouped, supplier specs highlighted) > specs alone > DEFAULT_TYPES
-    let typeList;
     let bodyHtml;
     if(masterCats.length){
       const specSet = new Set(specs);
+      // Supplier-specific items first, then grouped master categories
+      const specItems = specs.filter(s => masterCats.some(mc => mc.label === s));
       const groups = {};
       masterCats.forEach(cat => {
         const g = cat.group || 'أخرى';
         if(!groups[g]) groups[g] = [];
         groups[g].push(cat.label);
       });
-      bodyHtml = (specs.length ? `<div class="cid-pop-section" style="color:var(--b)">🏭 خدمات المورد المحدد</div>` : '')
+      bodyHtml = (specItems.length ? `<div class="cid-pop-section" style="color:var(--b)">🏭 خدمات المورد (${specItems.length})</div>
+        ${specItems.map(l => `
+          <div class="cid-pop-item is-supplier-svc ${currentRow.type===l?'is-active':''}" data-action="pick-type" data-val="${escapeHtml(l)}" data-search="${escapeHtml(l.toLowerCase())}">
+            ${getCostIco(l)} <span>${escapeHtml(l)}</span><span class="cid-pop-badge">✓</span>
+          </div>`).join('')}` : '')
         + Object.entries(groups).map(([g, labels]) => `
         <div class="cid-pop-section">${escapeHtml(g)}</div>
         ${labels.map(l => `
-          <div class="cid-pop-item ${currentRow.type===l?'is-active':''} ${specSet.has(l)?'is-supplier-svc':''}" data-action="pick-type" data-val="${escapeHtml(l)}">
-            ${getCostIco(l)} <span>${escapeHtml(l)}</span>${specSet.has(l)?'<span style="font-size:9px;color:var(--b);margin-right:auto"> ✓ المورد</span>':''}
+          <div class="cid-pop-item ${currentRow.type===l?'is-active':''} ${specSet.has(l)?'is-supplier-svc':''}" data-action="pick-type" data-val="${escapeHtml(l)}" data-search="${escapeHtml(l.toLowerCase())}">
+            ${getCostIco(l)} <span>${escapeHtml(l)}</span>${specSet.has(l) && !specItems.includes(l)?'<span class="cid-pop-badge">✓ المورد</span>':''}
           </div>`).join('')}
       `).join('');
     } else if(specs.length){
-      typeList = specs;
       bodyHtml = `<div class="cid-pop-section">تخصصات المورد</div>`
-        + typeList.map(l => `
-          <div class="cid-pop-item ${currentRow.type===l?'is-active':''}" data-action="pick-type" data-val="${escapeHtml(l)}">
+        + specs.map(l => `
+          <div class="cid-pop-item ${currentRow.type===l?'is-active':''}" data-action="pick-type" data-val="${escapeHtml(l)}" data-search="${escapeHtml(l.toLowerCase())}">
             ${getCostIco(l)} <span>${escapeHtml(l)}</span>
           </div>`).join('');
     } else {
       bodyHtml = `<div class="cid-pop-section" style="color:var(--err);padding:12px 8px">⚠️ لا توجد خدمات مُعرّفة — عرّف الخدمات من الإعدادات أولاً</div>`;
     }
 
+    const hasItems = masterCats.length || specs.length;
     const pop = document.createElement('div');
     pop.className = 'cid-pop';
     const rect = anchor.getBoundingClientRect();
     pop.style.top    = `${rect.bottom + 4}px`;
     pop.style.right  = `${window.innerWidth - rect.right}px`;
-    pop.style.minWidth = `${Math.max(rect.width, 160)}px`;
-    pop.style.maxHeight = '280px';
+    pop.style.minWidth = `${Math.max(rect.width, 180)}px`;
+    pop.style.maxHeight = '320px';
     pop.style.overflowY = 'auto';
-    pop.innerHTML = bodyHtml || '<div class="cid-pop-empty">لا توجد أنواع</div>';
+    pop.innerHTML = hasItems
+      ? `<div class="cid-pop-search-wrap">
+           <input type="text" class="cid-pop-search" placeholder="🔍 بحث في الأنواع..." autocomplete="off"/>
+         </div>
+         <div class="cid-pop-list">${bodyHtml}</div>`
+      : (bodyHtml || '<div class="cid-pop-empty">لا توجد أنواع</div>');
+
+    if(hasItems){
+      const searchInput = pop.querySelector('.cid-pop-search');
+      searchInput?.addEventListener('input', (e) => {
+        const q = (e.target.value||'').trim().toLowerCase();
+        pop.querySelectorAll('.cid-pop-item[data-action="pick-type"]').forEach(el => {
+          el.style.display = !q || (el.dataset.search||'').includes(q) ? '' : 'none';
+        });
+        pop.querySelectorAll('.cid-pop-section').forEach(sec => {
+          if(!q){ sec.style.display = ''; return; }
+          let next = sec.nextElementSibling;
+          let anyVisible = false;
+          while(next && !next.classList.contains('cid-pop-section')){
+            if(next.style.display !== 'none') anyVisible = true;
+            next = next.nextElementSibling;
+          }
+          sec.style.display = anyVisible ? '' : 'none';
+        });
+      });
+      setTimeout(() => searchInput?.focus(), 30);
+    }
+
     document.body.appendChild(pop);
     _pop = pop;
     pop.addEventListener('click', _onPopClick);
@@ -793,11 +863,16 @@
       if(!(row.type.toLowerCase().includes('ورق') || row.type.toLowerCase().includes('كرتون'))){
         row.paperMeta = null;
       }
+      // Auto-fill amount from library reference if empty
+      if(!row.total || row.total === '0'){
+        const ref = _getRefPriceForType(row.type);
+        if(ref > 0) row.total = String(ref);
+      }
       closePop();
       render();
       setTimeout(() => {
         const amtInput = _drawer.querySelector(`[data-cid-field="total"][data-rid="${rowId}"]`);
-        amtInput?.focus();
+        if(amtInput){ amtInput.select(); amtInput.focus(); }
       }, 50);
     }
   }
