@@ -240,6 +240,7 @@ import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
 import { inboxActions } from "./inbox-actions.js";
 import { orderActions } from "./order-actions.js";
 const DESIGN_CAPTURE_ROLES = new Set(['graphic_designer','design_operator','admin','operation_manager']);
@@ -478,9 +479,9 @@ function subscribeConversations(){
 
 // ── Presence listener (for everyone we might chat with) ──
 function subscribePresence(){
-  onSnapshot(query(collection(db,'presence'),limit(500)),snap=>{
+  dataCache.subscribe(cachedQuery('presence').limit(500).build(),(docs)=>{
     presenceMap.clear();
-    snap.docs.forEach(d=>presenceMap.set(d.id,d.data()));
+    docs.forEach(d=>presenceMap.set(d._id,d));
     renderConvList();
     if(activeConv)renderChatHeader();
   });
@@ -488,8 +489,8 @@ function subscribePresence(){
 
 // ── Users listener ──
 function subscribeUsers(){
-  onSnapshot(query(collection(db,'users'),limit(500)),snap=>{
-    allUsers=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(u=>u.isActive!==false&&!u.deleted&&u._id!==currentUid);
+  dataCache.subscribe(cachedQuery('users').limit(500).build(),(docs)=>{
+    allUsers=docs.filter(u=>u.isActive!==false&&!u.deleted&&u._id!==currentUid);
   });
 }
 
@@ -498,10 +499,12 @@ function subscribeUsers(){
 // don't belong in a "what to attach to this chat?" UX. Client-side filter
 // still drops archived/cancelled within the window.
 function subscribeOrders(){
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(2000)),snap=>{
-    allOrders=snap.docs.map(d=>({...d.data(),_id:d.id}))
-      .filter(o=>!['archived','cancelled'].includes(o.stage));
-  },err=>console.warn('orders sub:',err.message));
+  dataCache.subscribe(
+    cachedQuery('orders').orderBy('createdAt','desc').limit(2000).build(),
+    (docs)=>{
+      allOrders=docs.filter(o=>!['archived','cancelled'].includes(o.stage));
+    }
+  );
 }
 
 // ── Render conv list (workspace-aware) ──

@@ -536,48 +536,44 @@ function startListeners(){
   // Bounded — approvals page only needs orders for the ordersMap lookup
   // (display order code/client name on each approval row). Older archived
   // orders linked to historical approvals will fall back to id-only display.
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),
-    snap=>{ ordersMap.clear(); snap.docs.forEach(d=>ordersMap.set(d.id, {...d.data(), _id:d.id})); render(); },
-    err=>console.error('[approvals] orders:', err)
+  dataCache.subscribe(
+    cachedQuery('orders').orderBy('createdAt','desc').limit(3000).build(),
+    (docs) => { ordersMap.clear(); docs.forEach(d=>ordersMap.set(d._id, d)); render(); }
   );
 
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),
-    snap=>{ suppliers = snap.docs.map(d=>({...d.data(),_id:d.id})); },
-    err=>console.error('[approvals] suppliers:', err)
+  dataCache.subscribe(
+    cachedQuery('suppliers_v2').limit(500).build(),
+    (docs) => { suppliers = docs; }
   );
 
-  onSnapshot(query(collection(db,'employees'),limit(200)),
-    snap=>{ employees = snap.docs.map(d=>({...d.data(),_id:d.id})); },
-    err=>console.error('[approvals] employees:', err)
+  dataCache.subscribe(
+    cachedQuery('employees').limit(200).build(),
+    (docs) => { employees = docs; }
   );
 
   // C7: bounded — كان unbounded (listener realtime على transactions_v2 كاملاً).
   // أحدث 3000 tx تكفي للعمل اليومي (approval queue + recent history).
   // العمليات الأقدم تُقرأ من ledger.html / reports.html بـ pagination.
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(3000)),
-    snap=>{
-      allTxs = snap.docs.map(d=>({...d.data(),_id:d.id}))
-        .sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
+  dataCache.subscribe(
+    cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(3000).build(),
+    (docs) => {
+      allTxs = docs.slice().sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
       txs = [...allTxs].filter(t=>t.approvalStatus)
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       updateCounts();
       render();_ps.markFresh();
-    },
-    err=>{
-      console.error('[approvals] tx error:', err);
-      document.getElementById('list-content').innerHTML = `<div class="empty-pl text-r">⛔ ${err.message}</div>`;
     }
   );
 
   // Bounded — recent payment requests only. Historical requests live
   // in their archives; the approvals queue is short-lived by design.
-  onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(1500)),
-    snap=>{
-      requests = snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(
+    cachedQuery('payment_requests').orderBy('requestedAt','desc').limit(1500).build(),
+    (docs) => {
+      requests = docs;
       updateCounts();
       render();
-    },
-    err=>console.error('[approvals] requests:', err)
+    }
   );
 }
 
