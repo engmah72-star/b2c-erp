@@ -160,6 +160,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/core/page-shortcuts.js',
   '/core/offline-warmup.js',
   '/core/static-store.js',
+  '/core/perf-monitor.js',
   '/core/live-kpis.js',
   '/sidebar.js',
   '/sidebar-config.js',
@@ -285,6 +286,11 @@ self.addEventListener('activate', e => {
   );
 });
 
+// Pre-computed Set from NETWORK_FIRST_SUFFIXES for O(1) lookup.
+// Entries like '/core/data-cache.js' are stored as-is and matched against
+// the full pathname or its last segment (filename).
+const _nfSet = new Set(NETWORK_FIRST_SUFFIXES);
+
 // ─── Fetch ───────────────────────────────────────────────
 self.addEventListener('fetch', e => {
   const req = e.request;
@@ -316,7 +322,8 @@ self.addEventListener('fetch', e => {
 
   const isNetworkFirst = sameOrigin && (
     isNavigation ||
-    NETWORK_FIRST_SUFFIXES.some(s => url.pathname.endsWith(s))
+    url.pathname.endsWith('.html') ||
+    _nfSet.has(url.pathname) || _nfSet.has(url.pathname.slice(url.pathname.lastIndexOf('/')))
   );
 
   if (isNetworkFirst) {
@@ -411,14 +418,20 @@ self.addEventListener('message', e => {
   if (e.data?.type === 'WARM_IMAGES' && Array.isArray(e.data.urls)) {
     caches.open(IMAGE_CACHE).then(async cache => {
       const batch = e.data.urls.slice(0, 50);
+      const uncached = [];
       for (const u of batch) {
-        if (await cache.match(u)) continue;
-        try {
-          const res = await fetch(u);
-          if (res.ok && (res.headers.get('content-type') || '').startsWith('image/')) {
-            await cache.put(u, res).catch(() => {});
-          }
-        } catch (_) {}
+        if (!(await cache.match(u))) uncached.push(u);
+      }
+      const CONCURRENCY = 3;
+      for (let i = 0; i < uncached.length; i += CONCURRENCY) {
+        await Promise.all(uncached.slice(i, i + CONCURRENCY).map(async u => {
+          try {
+            const res = await fetch(u);
+            if (res.ok && (res.headers.get('content-type') || '').startsWith('image/')) {
+              await cache.put(u, res).catch(() => {});
+            }
+          } catch (_) {}
+        }));
       }
     });
   }

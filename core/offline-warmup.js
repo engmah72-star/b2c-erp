@@ -101,6 +101,7 @@ export function warmupForRole(role) {
   const seen = new Set();
 
   requestIdleCallback(() => {
+    const queue = [];
     for (const page of pages) {
       const specs = COLLECTION_SPECS[page];
       if (!specs) continue;
@@ -110,10 +111,20 @@ export function warmupForRole(role) {
           const key = spec.collection;
           if (seen.has(key)) continue;
           seen.add(key);
-          prefetch(spec.collection, spec.descriptors, spec.firestoreConstraints).catch(() => {});
+          queue.push(spec);
         } catch (_) {}
       }
     }
+    let i = 0;
+    function next() {
+      if (i >= queue.length) return;
+      const spec = queue[i++];
+      prefetch(spec.collection, spec.descriptors, spec.firestoreConstraints)
+        .catch(() => {})
+        .finally(() => setTimeout(next, 200));
+    }
+    const concurrency = Math.min(2, queue.length);
+    for (let c = 0; c < concurrency; c++) next();
   }, { timeout: 5000 });
 }
 

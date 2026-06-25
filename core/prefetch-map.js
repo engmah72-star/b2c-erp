@@ -89,6 +89,12 @@ const PAGE_COLLECTIONS = {
   'employee-profile.html': [
     () => cachedQuery('employees').limit(200),
   ],
+  'my-profile.html': [
+    () => cachedQuery('orders').orderBy('createdAt', 'desc').limit(500),
+  ],
+  'attendance.html': [
+    () => cachedQuery('employees').limit(200),
+  ],
 };
 
 export function prefetchForPage(url) {

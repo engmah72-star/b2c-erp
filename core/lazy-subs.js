@@ -30,18 +30,29 @@ export function staggerSubs(subs) {
     groups.get(p).push(s.fn);
   }
 
+  const unsubs = [];
+  const timers = [];
+
   for (const [priority, fns] of groups) {
     if (priority === 0) {
-      fns.forEach(fn => fn());
+      fns.forEach(fn => { const u = fn(); if (u) unsubs.push(u); });
     } else {
       const delay = DELAYS[priority];
       if (typeof requestIdleCallback === 'function' && priority === 1) {
-        requestIdleCallback(() => fns.forEach(fn => fn()), { timeout: delay + 200 });
+        const id = requestIdleCallback(() => fns.forEach(fn => { const u = fn(); if (u) unsubs.push(u); }), { timeout: delay + 200 });
+        timers.push(() => cancelIdleCallback(id));
       } else {
-        setTimeout(() => fns.forEach(fn => fn()), delay);
+        const id = setTimeout(() => fns.forEach(fn => { const u = fn(); if (u) unsubs.push(u); }), delay);
+        timers.push(() => clearTimeout(id));
       }
     }
   }
+
+  unsubs.cleanup = () => {
+    timers.forEach(cancel => cancel());
+    unsubs.forEach(u => { try { u(); } catch (_) {} });
+  };
+  return unsubs;
 }
 
 export function deferUntilVisible(el, fn) {
