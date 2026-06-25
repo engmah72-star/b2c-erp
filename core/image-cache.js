@@ -46,6 +46,12 @@ export function extractOrderImageUrls(orders, maxUrls = 30) {
       if (urls.size >= maxUrls) break;
       if (p.designImageUrl) urls.add(p.designImageUrl);
       if (p.imageUrl) urls.add(p.imageUrl);
+      if (Array.isArray(p.designImages)) {
+        for (const u of p.designImages) {
+          if (urls.size >= maxUrls) break;
+          if (u && typeof u === 'string' && u.startsWith('http')) urls.add(u);
+        }
+      }
     }
   }
   return [...urls];
