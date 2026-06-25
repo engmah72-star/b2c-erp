@@ -73,7 +73,8 @@
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, getDoc, getDocs, query, where, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { collection, doc, getDoc, getDocs, query, where, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
 
 const set = (id, val, cls) => {
   const el = document.getElementById(id);
@@ -142,28 +143,23 @@ onAuthStateChanged(auth, async (user) => {
     set('d-total', 'ERROR', 'err');
   }
 
-  // Test onSnapshot (same pattern as design.html / production.html / shipping.html use)
+  // Test dataCache.subscribe (same collections as design.html / production.html / shipping.html)
   function testListener(stageName, suffix) {
     const fireEl = `d-snap-${suffix}`;
     const countEl = `d-snap-${suffix}-count`;
     set(fireEl, '⏳ waiting…', 'warn');
     set(countEl, '—');
     try {
-      onSnapshot(
-        query(collection(db, 'orders'), where('stage', '==', stageName), limit(500)),
-        (snap) => {
+      dataCache.subscribe(
+        cachedQuery('orders').where('stage', '==', stageName).limit(500).build(),
+        (docs) => {
           set(fireEl, '✅ FIRED', 'ok');
-          set(countEl, snap.size, snap.size > 0 ? 'ok' : 'err');
-        },
-        (err) => {
-          set(fireEl, '❌ ERROR', 'err');
-          set(countEl, err.code || err.message || 'unknown', 'err');
-          logError(`onSnapshot(stage==${stageName})`, err);
+          set(countEl, docs.length, docs.length > 0 ? 'ok' : 'err');
         }
       );
     } catch (e) {
       set(fireEl, '❌ THREW', 'err');
-      logError(`onSnapshot(stage==${stageName}) setup`, e);
+      logError(`dataCache.subscribe(stage==${stageName}) setup`, e);
     }
   }
   testListener('design', 'design');

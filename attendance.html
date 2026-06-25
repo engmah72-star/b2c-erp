@@ -45,7 +45,8 @@
 <script type="module">
 import { auth, db } from './core/firebase-init.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { collection, getDocs, onSnapshot, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { collection, getDocs, query, where, limit } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import { dataCache, cachedQuery } from './core/data-cache.js';
 import { employeeActions } from './employee-actions.js';
 import { resolveDayStatus } from './core/attendance-core.js';
 import { buildAttendanceBoardHTML, buildBoardSummaryHTML } from './features/attendance-board/render.js';
@@ -100,10 +101,12 @@ function render() {
 
 function subscribeDay() {
   if (_unsubDay) { try { _unsubDay(); } catch (_) {} }
-  const unsubA = onSnapshot(query(collection(db, 'attendance'), where('date', '==', selDate), limit(500)),
-    s => { attRecords = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
-  const unsubP = onSnapshot(query(collection(db, 'attendance_permissions'), where('date', '==', selDate), limit(500)),
-    s => { permissions = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+  const unsubA = dataCache.subscribe(
+    cachedQuery('attendance').where('date', '==', selDate).limit(500).build(),
+    (docs) => { attRecords = docs; render(); });
+  const unsubP = dataCache.subscribe(
+    cachedQuery('attendance_permissions').where('date', '==', selDate).limit(500).build(),
+    (docs) => { permissions = docs; render(); });
   _unsubDay = () => { unsubA(); unsubP(); };
 }
 
@@ -177,10 +180,10 @@ onAuthStateChanged(auth, async (user) => {
   const caps = userData.permissions?.capabilities || {};
   canManage = role === 'admin' || role === 'operation_manager' || caps.manage_attendance === true;
   if (canManage) {
-    onSnapshot(query(collection(db, 'employees'), limit(500)),
-      s => { employees = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
-    onSnapshot(query(collection(db, 'employee_leaves'), limit(1000)),
-      s => { leaves = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+    dataCache.subscribe(cachedQuery('employees').limit(500).build(),
+      (docs) => { employees = docs; render(); });
+    dataCache.subscribe(cachedQuery('employee_leaves').limit(1000).build(),
+      (docs) => { leaves = docs; render(); });
     subscribeDay();
   } else {
     selfMode = true;
@@ -192,12 +195,12 @@ onAuthStateChanged(auth, async (user) => {
       return;
     }
     employees = empSnap.docs.map(d => ({ ...d.data(), _id: d.id }));
-    onSnapshot(query(collection(db, 'employee_leaves'), where('employeeUid', '==', user.uid), limit(500)),
-      s => { leaves = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
-    onSnapshot(query(collection(db, 'attendance'), where('employeeUid', '==', user.uid), limit(500)),
-      s => { attRecords = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
-    onSnapshot(query(collection(db, 'attendance_permissions'), where('employeeUid', '==', user.uid), limit(500)),
-      s => { permissions = s.docs.map(d => ({ ...d.data(), _id: d.id })); render(); });
+    dataCache.subscribe(cachedQuery('employee_leaves').where('employeeUid', '==', user.uid).limit(500).build(),
+      (docs) => { leaves = docs; render(); });
+    dataCache.subscribe(cachedQuery('attendance').where('employeeUid', '==', user.uid).limit(500).build(),
+      (docs) => { attRecords = docs; render(); });
+    dataCache.subscribe(cachedQuery('attendance_permissions').where('employeeUid', '==', user.uid).limit(500).build(),
+      (docs) => { permissions = docs; render(); });
   }
   render();
 });

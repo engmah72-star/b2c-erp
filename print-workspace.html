@@ -440,8 +440,8 @@ function startListeners(){
   const urlId=new URLSearchParams(window.location.search).get('id')||'';
   let urlOpened=false;
 
-  onSnapshot(query(collection(db,'orders'),where('stage','==','printing'),limit(500)),snap=>{
-    orders=snap.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  dataCache.subscribe(cachedQuery('orders').where('stage','==','printing').limit(500).build(),(docs)=>{
+    orders=docs.slice().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
     set('sub',orders.length+' أوردر في الطباعة');
     set('pw-cnt','('+orders.length+')');
     renderList();
@@ -450,25 +450,24 @@ function startListeners(){
     if(urlId&&!urlOpened&&orders.find(o=>o._id===urlId)){urlOpened=true;setTimeout(()=>selectOrder(urlId),200);}
   });
   dataCache.subscribe(cachedQuery('wallets').limit(100).build(),docs=>{wallets=docs;});
-  onSnapshot(query(collection(db,'shippers_v2'),limit(200)),snap=>{shippers=snap.docs.map(d=>({...d.data(),_id:d.id}));});
+  dataCache.subscribe(cachedQuery('shippers_v2').limit(200).build(),(docs)=>{shippers=docs;});
   getSettings(data=>{if(data)appSettings=data;if(activeOrder)renderWorkspace(activeOrder);});
   getMasterList('supplier_categories',data=>{productionServices=data?(data.items||[]).filter(s=>s.isActive!==false):[];});
-  onSnapshot(query(collection(db,'employees'),where('role','==','production_agent'),limit(100)),snap=>{
-    const raw=snap.docs.map(d=>({...d.data(),_id:d.id}));
-    window.__prodAgents=dedupEmployees(raw).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
+  dataCache.subscribe(cachedQuery('employees').where('role','==','production_agent').limit(100).build(),(docs)=>{
+    window.__prodAgents=dedupEmployees(docs).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('pick-prod-sel');if(!s)return;
     const cur=s.value;
     s.innerHTML='<option value="">— أول منفّذ متاح —</option>'+(window.__prodAgents||[]).map(p=>`<option value="${p.authUid||p._id}">${p.name||p.email||'موظف'}</option>`).join('');
     if(cur)s.value=cur;
   });
   // Suppliers (للمطابع)
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(200)),snap=>{
-    suppliers=snap.docs.map(d=>({...d.data(),_id:d.id})).filter(s=>s.active!==false);
+  dataCache.subscribe(cachedQuery('suppliers_v2').limit(200).build(),(docs)=>{
+    suppliers=docs.filter(s=>s.active!==false);
     if(activeOrder)pwRenderSpecs(activeOrder);
   });
   // Design catalog
-  onSnapshot(query(collection(db,'design_items'),limit(300)),snap=>{
-    productsCatalog=snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(cachedQuery('design_items').limit(300).build(),(docs)=>{
+    productsCatalog=docs;
   });
   // Brief templates (cached one-shot)
   getMasterList('print_brief_templates',(data)=>{
