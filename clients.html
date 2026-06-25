@@ -228,6 +228,7 @@ import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, li
 import { dataCache, cachedQuery } from "./core/data-cache.js";
 import { staggerSubs } from "./core/lazy-subs.js";
 import { warmupForRole } from "./core/offline-warmup.js";
+import { getSettings, getMasterList } from "./core/static-store.js";
 import { warmImages, extractOrderImageUrls, extractClientImageUrls } from "./core/image-cache.js";
 import { initPageShortcuts } from './core/page-shortcuts.js';
 
@@ -568,11 +569,8 @@ onAuthStateChanged(auth, async u=>{
     { priority:1, fn:()=>dataCache.subscribe(
       cachedQuery('wallets').limit(100).build(),
       (docs)=>{ wallets=docs; })},
-    // ── P1: settings (for governorate dropdown) — single doc, raw onSnapshot ──
-    { priority:1, fn:()=>onSnapshot(doc(db,'settings','main'),snap=>{
-      if(snap.exists()) settings=snap.data();
-      fillGovSelect();
-    })},
+    // ── P1: settings (for governorate dropdown) — cached one-shot ──
+    { priority:1, fn:()=>{ getSettings((data)=>{ if(data) settings=data; fillGovSelect(); }); }},
     // ── P1: products ──
     { priority:1, fn:()=>dataCache.subscribe(
       cachedQuery('products_v2').limit(500).build(),
@@ -604,22 +602,17 @@ onAuthStateChanged(auth, async u=>{
         });
         designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
       })},
-    // ── P1: egypt_admin (single doc, raw onSnapshot) ──
-    { priority:1, fn:()=>onSnapshot(doc(db,'master_lists','egypt_admin'),snap=>{
-      if(snap.exists()){
-        const data=snap.data();
-        const items=data?.items;
-        if(items && typeof items==='object' && Object.keys(items).length>0){
-          EGYPT=items;
-        }else{
-          EGYPT={...EGYPT_FALLBACK};
-        }
+    // ── P1: egypt_admin (cached one-shot via static-store) ──
+    { priority:1, fn:()=>{ getMasterList('egypt_admin',(data)=>{
+      const items=data?.items;
+      if(items && typeof items==='object' && Object.keys(items).length>0){
+        EGYPT=items;
       }else{
         EGYPT={...EGYPT_FALLBACK};
       }
       fillGovSelect();
       fillFilters();
-    },err=>{ console.warn('egypt_admin listener:',err?.message||err); })},
+    }).catch(err=>{ console.warn('egypt_admin load:',err?.message||err); }); }},
     // ── P2: followups ──
     { priority:2, fn:()=>dataCache.subscribe(
       cachedQuery('client_followups').orderBy('createdAt','desc').limit(FU_LIMIT).build(),
