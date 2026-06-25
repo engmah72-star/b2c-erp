@@ -9,6 +9,7 @@
 
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { normalizeCostType } from './cost-type-normalize.js';
+import { resolveSupplierName } from './supplier-resolve.js';
 
 const FP_REF = (db) => doc(db, 'master_lists', 'fixed_prices');
 
@@ -35,10 +36,14 @@ export function lookupFixedPrice(prices, type, printType) {
   return exact || generic || null;
 }
 
-export async function saveFixedPrice(db, { id, type, amount, printType, supplierId, supplierName, note, size }, userName) {
+export async function saveFixedPrice(db, { id, type, amount, printType, supplierId, supplierName: rawSupplierName, note, size }, userName) {
   if (!type?.trim()) return { ok: false, errors: ['نوع البند مطلوب'] };
   const amt = parseFloat(amount);
   if (!(amt > 0)) return { ok: false, errors: ['المبلغ مطلوب'] };
+
+  const resolvedName = supplierId
+    ? await resolveSupplierName(db, supplierId, rawSupplierName).catch(() => rawSupplierName || '')
+    : (rawSupplierName || '');
 
   const snap = await getDoc(FP_REF(db));
   const prices = snap.exists() ? (snap.data().prices || []) : [];
@@ -50,7 +55,7 @@ export async function saveFixedPrice(db, { id, type, amount, printType, supplier
     amount: amt,
     printType: (printType || '').trim() || null,
     supplierId: supplierId || null,
-    supplierName: (supplierName || '').trim() || null,
+    supplierName: resolvedName.trim() || null,
     note: (note || '').trim() || null,
     size: (size || '').trim() || null,
     updatedAt: new Date().toISOString().slice(0, 10),

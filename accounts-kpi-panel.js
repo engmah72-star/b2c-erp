@@ -8,6 +8,7 @@
 //
 // Usage:
 //   import { renderKpiDrill } from './accounts-kpi-panel.js';
+import { costTypesMatch } from './core/cost-type-normalize.js';
 //   const { title, html } = renderKpiDrill({
 //     drillType: 'in',
 //     walletFilter: '',
@@ -248,7 +249,7 @@ export function renderKpiDrill({ drillType, walletFilter = '', state, helpers, c
     // كل بنود التكلفة من نوع "طباعة" عبر الأوردرات — مجمّعة حسب المورد.
     const rows = [];
     allOrders.forEach(o => (o.costItems || []).forEach(ci => {
-      if (ci.type !== 'طباعة') return;
+      if (!costTypesMatch(ci.type, 'طباعة')) return;
       rows.push({ ...ci, _orderClient: o.clientName || '', _orderId: o.orderId || o._id });
     }));
     const total = rows.reduce((s, r) => s + (parseFloat(r.total) || 0), 0);
