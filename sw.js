@@ -326,13 +326,41 @@ self.addEventListener('fetch', e => {
   }
 });
 
-// Network-First (no timeout): wait for the network as long as it takes.
-// Only fall back to cache when the network ACTUALLY fails (offline / DNS / etc).
-// Why no timeout? A 3s timeout broke slow mobile networks — the page would
-// fall back to cache (or empty) before the response arrived. Pure network-first
-// matches the browser's natural loading behavior: slow but correct.
+// Network-First with smart timeout:
+//   - If we HAVE a cached copy → race network vs 4s timeout; serve cache if slow.
+//     Background revalidation still updates the cache for the next load.
+//   - If we have NO cache → wait indefinitely (can't serve empty).
+// This avoids the old 3s-timeout bug (empty page on slow network) while
+// eliminating multi-second hangs when a cached version is available.
+const NF_TIMEOUT = 4000;
+
+function _raceTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout')), ms);
+    promise.then(v => { clearTimeout(t); resolve(v); },
+                 e => { clearTimeout(t); reject(e); });
+  });
+}
+
 async function networkFirst(req) {
   const cache = await caches.open(CACHE);
+  const cached = await cache.match(req);
+
+  if (cached) {
+    const revalidate = fetch(req).then(res => {
+      if (res && res.status === 200 && res.type !== 'opaqueredirect') {
+        cache.put(req, res.clone()).catch(() => {});
+      }
+      return res;
+    });
+    try {
+      return await _raceTimeout(revalidate, NF_TIMEOUT);
+    } catch (_) {
+      revalidate.catch(() => {});
+      return cached;
+    }
+  }
+
   try {
     const res = await fetch(req);
     if (res && res.status === 200 && res.type !== 'opaqueredirect') {
@@ -340,13 +368,10 @@ async function networkFirst(req) {
     }
     return res;
   } catch (_) {
-    const cached = await cache.match(req);
-    if (cached) return cached;
     if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
       const offline = await cache.match('./offline.html');
       if (offline) return offline;
     }
-    // Genuine failure — let the browser show its native error.
     return Response.error();
   }
 }
@@ -385,13 +410,15 @@ self.addEventListener('message', e => {
 
   if (e.data?.type === 'WARM_IMAGES' && Array.isArray(e.data.urls)) {
     caches.open(IMAGE_CACHE).then(async cache => {
-      for (const u of e.data.urls.slice(0, 50)) {
+      const batch = e.data.urls.slice(0, 50);
+      for (const u of batch) {
         if (await cache.match(u)) continue;
-        fetch(u).then(res => {
+        try {
+          const res = await fetch(u);
           if (res.ok && (res.headers.get('content-type') || '').startsWith('image/')) {
-            cache.put(u, res).catch(() => {});
+            await cache.put(u, res).catch(() => {});
           }
-        }).catch(() => {});
+        } catch (_) {}
       }
     });
   }

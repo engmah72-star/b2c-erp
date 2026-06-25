@@ -34,7 +34,13 @@ function _extractUrls(docs, maxUrls) {
   return [...urls];
 }
 
+function _adaptiveMax(max) {
+  const slow = typeof window !== 'undefined' && typeof window.isSlowConnection === 'function' && window.isSlowConnection();
+  return slow ? Math.min(max, 6) : max;
+}
+
 export function extractOrderImageUrls(orders, maxUrls = 30) {
+  maxUrls = _adaptiveMax(maxUrls);
   const urls = new Set();
   for (const o of orders) {
     if (urls.size >= maxUrls) break;
@@ -58,16 +64,18 @@ export function extractOrderImageUrls(orders, maxUrls = 30) {
 }
 
 export function extractClientImageUrls(clients, maxUrls = 20) {
-  return _extractUrls(clients, maxUrls);
+  return _extractUrls(clients, _adaptiveMax(maxUrls));
 }
 
 export function warmImages(urls) {
   if (!urls?.length || !navigator.serviceWorker?.controller) return;
   const valid = urls.filter(u => u && typeof u === 'string');
   if (!valid.length) return;
+  const slow = typeof window.isSlowConnection === 'function' && window.isSlowConnection();
+  const limit = slow ? 8 : 50;
   navigator.serviceWorker.controller.postMessage({
     type: 'WARM_IMAGES',
-    urls: valid.slice(0, 50),
+    urls: valid.slice(0, limit),
   });
 }
 
