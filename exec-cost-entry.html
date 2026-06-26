@@ -1190,13 +1190,14 @@ function _renderCompleteness(o){
 
 function _renderTemplate(o){
   const el=document.getElementById('ws-template');if(!el)return;
-  const comp=getCompleteness(o);
+  const comp=_prodFilter>=0?getProductCompleteness(o,_prodFilter):getCompleteness(o);
   if(!comp.missing.length){el.innerHTML='';return;}
 
+  const prodLabel=_prodFilter>=0?` — ${(o.products||[])[_prodFilter]?.name||'منتج'}`:'';
   el.innerHTML=`
     <div class="ws-template-box">
       <div class="ws-tmpl-header">
-        <span>⚠️ بنود ناقصة (${comp.missing.length})</span>
+        <span>⚠️ بنود ناقصة (${comp.missing.length})${prodLabel}</span>
         <button type="button" class="ws-tmpl-all-btn" onclick="applyAllMissing()">📋 إضافة الكل</button>
       </div>
       <div class="ws-tmpl-chips">
@@ -1221,9 +1222,8 @@ window.prefillType=function(typeName){
 
 window.applyAllMissing=function(){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
-  const comp=getCompleteness(o);
+  const comp=_prodFilter>=0?getProductCompleteness(o,_prodFilter):getCompleteness(o);
   if(!comp.missing.length)return;
-  // Prefill the first missing type
   prefillType(comp.missing[0]);
   toast(`📋 ${comp.missing.length} بنود ناقصة — ابدأ بـ "${comp.missing[0]}"· ثم سجّل البقية`,'');
 };
@@ -1481,6 +1481,10 @@ window.setProdFilter=function(idx){
   if(!o)return;
   _renderProdFilterBar(o);
   _renderProductsCostView(o);
+  const prodSel=document.getElementById('cost-prod-idx');
+  if(prodSel)prodSel.value=String(idx>=0?idx:-1);
+  _renderTemplate(o);
+  _renderQuickEntry(o);
 };
 
 window.toggleProdSelect=function(idx,checked){
@@ -1635,18 +1639,19 @@ function renderDrawerProfit(o){
 function renderItemsBox(o){
   if((o.products||[]).length){_renderProductsCostView(o);return;}
   const box=document.getElementById('items-box');if(!box)return;
-  const items=(o.costItems||[]).filter(_isActiveCostItem);
+  const allCi=o.costItems||[];
+  const items=allCi.map((c,gi)=>({...c,_gi:gi})).filter(_isActiveCostItem);
   if(!items.length){box.innerHTML=`<div class="items-box-empty">📋 لا توجد بنود مسجلة — أضف أول بند أدناه</div>`;return;}
   const total=items.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   box.innerHTML=`<div class="items-box-title">📋 بنود مسجلة (${items.length}) · إجمالي: <strong style="color:var(--snow)">${fn(total)} ج</strong></div>`
-    +items.map((c,i)=>{
+    +items.map(c=>{
       const supLbl=c.supplierName?`🏭 ${c.supplierName}`:'⚠️ بدون مورد';
       const paid=c.walletId?'<span class="item-paid">💼 مدفوع</span>':'';
-      return`<div class="item-card${i===editCostIdx?' editing':''}">
+      return`<div class="item-card${c._gi===editCostIdx?' editing':''}">
         <div class="item-info"><div>${paid}<strong>${c.type||'—'} · ${fn(c.total||0)} ج</strong></div><div>${supLbl}${c.note?' · 📝 '+c.note:''}</div></div>
         <div class="item-actions">
-          <button type="button" class="item-act-btn edit" onclick="editCost(${i})">✏️</button>
-          <button type="button" class="item-act-btn danger" onclick="deleteCost(${i})">🗑️</button>
+          <button type="button" class="item-act-btn edit" onclick="editCost(${c._gi})">✏️</button>
+          <button type="button" class="item-act-btn danger" onclick="deleteCost(${c._gi})">🗑️</button>
         </div>
       </div>`;
     }).join('')
@@ -1656,13 +1661,14 @@ function renderItemsBox(o){
 function _renderProductsCostView(o){
   const el=document.getElementById('cost-products-summary');if(!el)return;
   const prods=o.products||[];
-  const allItems=(o.costItems||[]).filter(_isActiveCostItem);
+  const allCi=o.costItems||[];
+  const allItems=allCi.map((c,gi)=>({...c,_gi:gi})).filter(_isActiveCostItem);
   _renderProdFilterBar(o);
   let html=`<div class="prod-summary-hdr">📋 المواصفات والكميات</div>`;
   prods.forEach((p,i)=>{
     // Apply filter: if a specific product is selected, hide others
     if(_prodFilter>=0&&_prodFilter!==i)return;
-    const pItems=allItems.map((c,gi)=>({...c,_gi:gi})).filter(c=>c.prodIdx===i);
+    const pItems=allItems.filter(c=>c.prodIdx===i);
     const pTotal=pItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const printLbl=p.printType==='digital'?'ديجيتال':(p.printType==='offset'?'أوفست':p.printType||'');
     const isChecked=_selectedProds.has(i);
@@ -1700,7 +1706,7 @@ function _renderProductsCostView(o){
       </div>
     </div>`;
   });
-  const genItems=allItems.map((c,gi)=>({...c,_gi:gi})).filter(c=>c.prodIdx==null||c.prodIdx<0);
+  const genItems=allItems.filter(c=>c.prodIdx==null||c.prodIdx<0);
   if(genItems.length){
     const genTotal=genItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     html+=`<div class="prod-cost-card prod-cc-general">
@@ -1934,6 +1940,14 @@ window.deleteCost=async function(idx){
   const r=await orderActions.removeUnpaidCostItem({db,orderId:activeId,itemIndex:idx,userId:currentUser?.uid||'',userName});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   toast('🗑️ تم الحذف','ok');
+};
+
+window.rmCost=async function(idx){
+  const o=orders.find(x=>x._id===activeId);if(!o)return;
+  const item=(o.costItems||[])[idx];if(!item)return;
+  const r=await orderActions.removeCostItem({db,orderId:activeId,costItemIdx:idx,role:currentRole,userId:currentUser?.uid||'',userName});
+  if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+  toast('🗑️ تم إلغاء البند','ok');
 };
 
 /* ═══════════════════════════════════════════════════
@@ -3142,7 +3156,8 @@ function _buildQuickEntryItems(o){
 
 function _renderQuickEntry(o){
   const el=document.getElementById('ws-quick-entry');if(!el)return;
-  const groups=_buildQuickEntryItems(o);
+  let groups=_buildQuickEntryItems(o);
+  if(_prodFilter>=0)groups=groups.filter(g=>g.prodIdx===_prodFilter);
   if(!groups.length){el.hidden=true;el.innerHTML='';return;}
   el.hidden=false;
   let totalEst=0,totalRows=0;
