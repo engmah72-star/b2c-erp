@@ -801,7 +801,6 @@ test('operation_manager can toggle', () => {
   const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 0, role: 'operation_manager', userId: 'u1', products: [{ name: 'x' }] });
   assert.strictEqual(r.ok, true);
 });
-
 // ── summary ───────────────────────────────────────────────
 console.log(`\nresult: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
