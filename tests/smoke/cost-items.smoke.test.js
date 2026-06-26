@@ -401,13 +401,19 @@ test('productId not found falls back to prodIdx', () => {
 section('T3 — resolveCostItemCategory helper');
 
 function resolveCostItemCategory(type, masterCats) {
-  if (!type || !Array.isArray(masterCats) || !masterCats.length) return { category: '', subcategory: '' };
+  if (!type || !Array.isArray(masterCats) || !masterCats.length)
+    return { category: null, subcategory: null, defaultUnit: null, expectedPriceRange: null };
   const norm = _normalizeCostType(type);
   const match = masterCats.find(c =>
     c.label === type || _normalizeCostType(c.label) === norm
   );
-  if (!match) return { category: '', subcategory: '' };
-  return { category: match.group || '', subcategory: match.label || '' };
+  if (!match) return { category: null, subcategory: null, defaultUnit: null, expectedPriceRange: null };
+  return {
+    category: match.group || null,
+    subcategory: match.label || null,
+    defaultUnit: match.defaultUnit || null,
+    expectedPriceRange: match.expectedPriceRange || null,
+  };
 }
 
 test('resolves category from master list', () => {
@@ -424,11 +430,132 @@ test('resolves via normalization (ال prefix)', () => {
   assert.strictEqual(r.subcategory, 'طباعة');
 });
 
-test('no match returns empty', () => {
+test('no match returns null fields', () => {
   const cats = [{ label:'طباعة', group:'طباعة' }];
   const r = resolveCostItemCategory('custom_xyz', cats);
-  assert.strictEqual(r.category, '');
-  assert.strictEqual(r.subcategory, '');
+  assert.strictEqual(r.category, null);
+  assert.strictEqual(r.subcategory, null);
+});
+
+section('T5 — resolveCostItemCategory returns defaultUnit & expectedPriceRange');
+
+test('returns defaultUnit from master category', () => {
+  const cats = [{ label:'ورق', group:'خامات', defaultUnit:'ريم', expectedPriceRange:{min:50,max:200} }];
+  const r = resolveCostItemCategory('ورق', cats);
+  assert.strictEqual(r.defaultUnit, 'ريم');
+  assert.deepStrictEqual(r.expectedPriceRange, {min:50,max:200});
+});
+
+test('returns null defaultUnit when category has none', () => {
+  const cats = [{ label:'طباعة', group:'طباعة' }];
+  const r = resolveCostItemCategory('طباعة', cats);
+  assert.strictEqual(r.defaultUnit, null);
+  assert.strictEqual(r.expectedPriceRange, null);
+});
+
+section('T5 — matchCostItemByKeywords helper');
+
+function matchCostItemByKeywords(query, masterCats) {
+  if (!query || !Array.isArray(masterCats) || !masterCats.length) return [];
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return masterCats.filter(c => {
+    if ((c.label || '').toLowerCase().includes(q)) return true;
+    if (Array.isArray(c.keywords) && c.keywords.some(k => k.toLowerCase().includes(q))) return true;
+    return false;
+  });
+}
+
+test('matches by label substring', () => {
+  const cats = [
+    { label:'طباعة ديجيتال', group:'طباعة' },
+    { label:'سلفنة', group:'تشطيبات' },
+  ];
+  const r = matchCostItemByKeywords('ديجيتال', cats);
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].label, 'طباعة ديجيتال');
+});
+
+test('matches by keywords array', () => {
+  const cats = [
+    { label:'طباعة أوفست', group:'طباعة', keywords:['offset','litho'] },
+    { label:'سلفنة', group:'تشطيبات', keywords:['lamination'] },
+  ];
+  const r = matchCostItemByKeywords('lamination', cats);
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].label, 'سلفنة');
+});
+
+test('empty query returns empty', () => {
+  const cats = [{ label:'طباعة', group:'طباعة' }];
+  assert.deepStrictEqual(matchCostItemByKeywords('', cats), []);
+  assert.deepStrictEqual(matchCostItemByKeywords(null, cats), []);
+});
+
+test('no match returns empty', () => {
+  const cats = [{ label:'طباعة', group:'طباعة', keywords:['print'] }];
+  const r = matchCostItemByKeywords('xyz_nothing', cats);
+  assert.strictEqual(r.length, 0);
+});
+
+section('T8 — isActiveCostItem predicate');
+
+function isActiveCostItem(ci) {
+  if (!ci) return false;
+  return !ci.status || ci.status === 'active' || ci.status === 'adjusted';
+}
+
+test('item without status is active (backward compatible)', () => {
+  assert.strictEqual(isActiveCostItem({ type:'طباعة', total:100 }), true);
+});
+
+test('item with status=active is active', () => {
+  assert.strictEqual(isActiveCostItem({ status:'active' }), true);
+});
+
+test('item with status=adjusted is active', () => {
+  assert.strictEqual(isActiveCostItem({ status:'adjusted' }), true);
+});
+
+test('item with status=voided is NOT active', () => {
+  assert.strictEqual(isActiveCostItem({ status:'voided' }), false);
+});
+
+test('null/undefined returns false', () => {
+  assert.strictEqual(isActiveCostItem(null), false);
+  assert.strictEqual(isActiveCostItem(undefined), false);
+});
+
+section('T8 — voided items excluded from totals');
+
+test('active items sum excludes voided', () => {
+  const items = [
+    { type:'طباعة', total:100 },
+    { type:'ورق', total:50, status:'active' },
+    { type:'سلفنة', total:200, status:'voided' },
+    { type:'قص', total:30, status:'adjusted' },
+  ];
+  const activeTotal = items.filter(isActiveCostItem).reduce((s,c) => s + (parseFloat(c.total)||0), 0);
+  assert.strictEqual(activeTotal, 180);
+});
+
+test('all voided = zero total', () => {
+  const items = [
+    { type:'طباعة', total:100, status:'voided' },
+    { type:'ورق', total:200, status:'voided' },
+  ];
+  const activeTotal = items.filter(isActiveCostItem).reduce((s,c) => s + (parseFloat(c.total)||0), 0);
+  assert.strictEqual(activeTotal, 0);
+});
+
+section('T8 — COST_ITEM_STATUSES constants');
+
+const COST_ITEM_STATUSES = { ACTIVE:'active', VOIDED:'voided', ADJUSTED:'adjusted' };
+
+test('COST_ITEM_STATUSES has correct values', () => {
+  assert.strictEqual(COST_ITEM_STATUSES.ACTIVE, 'active');
+  assert.strictEqual(COST_ITEM_STATUSES.VOIDED, 'voided');
+  assert.strictEqual(COST_ITEM_STATUSES.ADJUSTED, 'adjusted');
 });
 
 // ── summary ───────────────────────────────────────────────
