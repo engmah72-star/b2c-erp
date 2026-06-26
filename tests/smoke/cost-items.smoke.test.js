@@ -849,6 +849,44 @@ test('operation_manager can toggle', () => {
   const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 0, role: 'operation_manager', userId: 'u1', products: [{ name: 'x' }] });
   assert.strictEqual(r.ok, true);
 });
+// ── cancelOrder — archived order admin-only ──────────────
+section('cancelOrder — archived order restriction');
+
+function validateCancelOrder({ stage, role, reason, userId }) {
+  if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'] };
+  if (!reason) return { ok: false, errors: ['⛔ سبب الإلغاء مطلوب'] };
+  if (stage === 'cancelled') return { ok: false, errors: ['الأوردر ملغي بالفعل'] };
+  if (stage === 'archived' && role !== 'admin') return { ok: false, errors: ['لا يمكن إلغاء أوردر مؤرشف — الأدمن فقط'] };
+  return { ok: true, errors: [] };
+}
+
+test('admin can cancel archived order', () => {
+  const r = validateCancelOrder({ stage: 'archived', role: 'admin', reason: 'خطأ', userId: 'u1' });
+  assert.strictEqual(r.ok, true);
+});
+
+test('non-admin cannot cancel archived order', () => {
+  const r = validateCancelOrder({ stage: 'archived', role: 'production_agent', reason: 'خطأ', userId: 'u1' });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors[0].includes('الأدمن فقط'));
+});
+
+test('operation_manager cannot cancel archived order', () => {
+  const r = validateCancelOrder({ stage: 'archived', role: 'operation_manager', reason: 'خطأ', userId: 'u1' });
+  assert.strictEqual(r.ok, false);
+});
+
+test('non-archived order can be cancelled by any allowed role', () => {
+  const r = validateCancelOrder({ stage: 'production', role: 'production_agent', reason: 'سبب', userId: 'u1' });
+  assert.strictEqual(r.ok, true);
+});
+
+test('already cancelled order is rejected', () => {
+  const r = validateCancelOrder({ stage: 'cancelled', role: 'admin', reason: 'سبب', userId: 'u1' });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors[0].includes('ملغي بالفعل'));
+});
+
 // ── summary ───────────────────────────────────────────────
 console.log(`\nresult: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
