@@ -558,6 +558,7 @@ import { dataCache, cachedQuery } from './core/data-cache.js';
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
 let activeId=null,currentStageFilters=new Set(),currentSort='priority',editCostIdx=-1;
 let _prodFilter=-1; // -1=all, >=0 show only this product's card (inside workspace)
+let _showCompletedProds=false; // toggle to show/hide cost-completed products
 let _selectedProds=new Set(); // prodIdxes checked for bulk add
 let _prodNameFilter=new Set(); // filter order list by product base names (multi-select)
 let _selectedOrders=new Map(); // orderId→{prodIdx,baseName,qty,prodName} for cross-order bulk
@@ -1457,7 +1458,8 @@ function _renderProdFilterBar(o){
   if(prods.length<=1){el.hidden=true;return;}
   el.hidden=false;
   const allItems=(o.costItems||[]).filter(_isActiveCostItem);
-  // Group similar products by baseName for visual tinting
+  const compMap=o.costCompletedProds||{};
+  const completedCount=Object.keys(compMap).length;
   const baseGroups={};
   prods.forEach((p,i)=>{const b=_normBaseName(p.name)||`_${i}`;(baseGroups[b]||(baseGroups[b]=[])).push(i);});
   const groupTints=['','pfg-b','pfg-c','pfg-d'];
@@ -1466,11 +1468,15 @@ function _renderProdFilterBar(o){
   let html=`<div class="pf-bar">`;
   html+=`<button class="pf-chip${_prodFilter===-1?' pf-active':''}" onclick="setProdFilter(-1)">الكل <span class="pf-badge">${prods.length}</span></button>`;
   prods.forEach((p,i)=>{
+    const isDone=!!compMap[String(i)];
     const hasItems=allItems.some(c=>c.prodIdx===i);
-    const dot=hasItems?'<span class="pf-dot pf-dot-ok"></span>':'<span class="pf-dot pf-dot-miss"></span>';
+    const dot=isDone?'<span class="pf-dot pf-dot-done"></span>':(hasItems?'<span class="pf-dot pf-dot-ok"></span>':'<span class="pf-dot pf-dot-miss"></span>');
     const short=(p.name||`منتج ${i+1}`).slice(0,16);
-    html+=`<button class="pf-chip ${idxTint[i]||''}${_prodFilter===i?' pf-active':''}" onclick="setProdFilter(${i})">${dot}${short}</button>`;
+    html+=`<button class="pf-chip ${idxTint[i]||''}${isDone?' pf-done':''}${_prodFilter===i?' pf-active':''}" onclick="setProdFilter(${i})">${dot}${short}</button>`;
   });
+  if(completedCount>0){
+    html+=`<button class="pf-chip pf-completed-toggle${_showCompletedProds?' pf-active':''}" onclick="toggleShowCompleted()">${_showCompletedProds?'إخفاء':'عرض'} المكتملة <span class="pf-badge">${completedCount}</span></button>`;
+  }
   html+=`</div>`;
   el.innerHTML=html;
 }
@@ -1485,6 +1491,30 @@ window.setProdFilter=function(idx){
   if(prodSel)prodSel.value=String(idx>=0?idx:-1);
   _renderTemplate(o);
   _renderQuickEntry(o);
+};
+
+window.toggleShowCompleted=function(){
+  _showCompletedProds=!_showCompletedProds;
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  _renderProdFilterBar(o);
+  _renderProductsCostView(o);
+};
+
+window.toggleCostComplete=async function(prodIdx){
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  const compMap=o.costCompletedProds||{};
+  const isDone=!!compMap[String(prodIdx)];
+  const prodName=(o.products||[])[prodIdx]?.name||`منتج ${prodIdx+1}`;
+  const msg=isDone?`إعادة فتح تسجيل بنود "${prodName}"؟`:`إنهاء تسجيل بنود "${prodName}"؟ لن تتمكن من إضافة أو تعديل بنود حتى إعادة الفتح.`;
+  if(!confirm(msg))return;
+  const res=await orderActions.toggleProductCostComplete({
+    orderId:o._id, prodIdx,
+    role:currentRole, userId:currentUser?.uid, userName,
+  });
+  if(!res.ok){alert(res.errors.join('\n'));return;}
+  showToast(res.completed?`✅ تم إنهاء تسجيل: ${prodName}`:`🔓 تم إعادة فتح: ${prodName}`);
 };
 
 window.toggleProdSelect=function(idx,checked){
@@ -1663,27 +1693,35 @@ function _renderProductsCostView(o){
   const prods=o.products||[];
   const allCi=o.costItems||[];
   const allItems=allCi.map((c,gi)=>({...c,_gi:gi})).filter(_isActiveCostItem);
+  const compMap=o.costCompletedProds||{};
   _renderProdFilterBar(o);
   let html=`<div class="prod-summary-hdr">📋 المواصفات والكميات</div>`;
   prods.forEach((p,i)=>{
-    // Apply filter: if a specific product is selected, hide others
     if(_prodFilter>=0&&_prodFilter!==i)return;
+    const isDone=!!compMap[String(i)];
+    if(isDone&&!_showCompletedProds&&_prodFilter<0)return;
     const pItems=allItems.filter(c=>c.prodIdx===i);
     const pTotal=pItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const printLbl=p.printType==='digital'?'ديجيتال':(p.printType==='offset'?'أوفست':p.printType||'');
     const isChecked=_selectedProds.has(i);
-    html+=`<div class="prod-cost-card">
+    const canToggle=['admin','operation_manager','production_agent'].includes(currentRole);
+    const completeBtn=canToggle?(isDone
+      ?`<button type="button" class="prod-reopen-btn" onclick="toggleCostComplete(${i})">🔓 إعادة فتح</button>`
+      :(pItems.length?`<button type="button" class="prod-complete-btn" onclick="toggleCostComplete(${i})">✅ انتهاء التسجيل</button>`:'')):'';
+    const doneInfo=isDone?compMap[String(i)]:{};
+    html+=`<div class="prod-cost-card${isDone?' prod-cc-done':''}">
       <div class="prod-cc-hdr">
         <label class="prod-sel-wrap" title="تحديد للإضافة الجماعية">
-          <input type="checkbox" class="prod-sel-cb" ${isChecked?'checked':''} onchange="toggleProdSelect(${i},this.checked)">
+          <input type="checkbox" class="prod-sel-cb" ${isChecked?'checked':''} onchange="toggleProdSelect(${i},this.checked)"${isDone?' disabled':''}>
         </label>
         <div class="prod-cc-info">
-          <span class="prod-block-name">📦 ${p.name||'منتج'}</span>
+          <span class="prod-block-name">${isDone?'✅':'📦'} ${p.name||'منتج'}</span>
           <span class="qty-big">× ${p.qty||0}</span>
           ${p.size?`<span class="prod-tag prod-tag-size">📐 ${p.size}</span>`:''}
           ${printLbl?`<span class="prod-tag prod-tag-print">🖨️ ${printLbl}</span>`:''}
           ${(p.extras||[]).map(e=>`<span class="prod-tag prod-tag-extra">${e}</span>`).join('')}
           ${p.supplierName?`<span class="prod-tag prod-tag-sup">🏭 ${p.supplierName}</span>`:'<span class="prod-no-sup">⚠️ بدون مورد</span>'}
+          ${isDone?`<span class="prod-tag prod-tag-done">مكتمل${doneInfo.byName?' — '+doneInfo.byName:''}</span>`:''}
         </div>
         <span class="prod-cc-total">${pItems.length?fn(pTotal)+' ج':'—'}</span>
       </div>
@@ -1696,13 +1734,14 @@ function _renderProductsCostView(o){
           <strong class="pci-amt">${fn(c.total||0)} ج</strong>
           ${c.walletId?'<span class="item-paid">💼</span>':''}
           <div class="pci-acts">
-            <button type="button" class="item-act-btn edit" onclick="editCost(${c._gi})">✏️</button>
-            <button type="button" class="item-act-btn danger" onclick="deleteCost(${c._gi})">🗑️</button>
+            <button type="button" class="item-act-btn edit" onclick="editCost(${c._gi})"${isDone?' disabled':''}>✏️</button>
+            <button type="button" class="item-act-btn danger" onclick="deleteCost(${c._gi})"${isDone?' disabled':''}>🗑️</button>
           </div>
         </div>`).join('')}</div>`:`<div class="prod-no-cost">لا توجد بنود تكلفة لهذا المنتج بعد</div>`}
       <div class="prod-card-foot">
-        <button type="button" class="prod-add-cost-btn" onclick="addCostForProd(${i})">➕ إضافة بند</button>
-        ${pItems.length?`<button type="button" class="save-as-tmpl-btn prod-tmpl-btn" onclick="saveCurrentCostAsTemplate(${i})">💾 حفظ كقالب</button>`:''}
+        ${isDone?'':`<button type="button" class="prod-add-cost-btn" onclick="addCostForProd(${i})">➕ إضافة بند</button>`}
+        ${!isDone&&pItems.length?`<button type="button" class="save-as-tmpl-btn prod-tmpl-btn" onclick="saveCurrentCostAsTemplate(${i})">💾 حفظ كقالب</button>`:''}
+        ${completeBtn}
       </div>
     </div>`;
   });
