@@ -706,75 +706,66 @@ test('no printType → empty', () => {
   assert.strictEqual(r.length, 0);
 });
 
-section('T9 — scoreTmpl category bonus');
+// ── Hard filters: printType + qty range ──────────────
+section('tmplPassesFilters — printType hard filter');
 
-function scoreTmplCategoryBonus(template, product) {
-  const prodCat = product.productCategory || resolveProductCategory(product.name);
-  const tmplCat = resolveProductCategory(template.name);
-  return (prodCat && tmplCat && prodCat === tmplCat) ? 0.10 : 0;
-}
-
-test('same category gives 0.10 bonus', () => {
-  const bonus = scoreTmplCategoryBonus({ name:'بروشور 1000' }, { name:'بروشور A4' });
-  assert.strictEqual(bonus, 0.10);
-});
-
-test('different category gives 0 bonus', () => {
-  const bonus = scoreTmplCategoryBonus({ name:'بروشور 1000' }, { name:'بانر 3م' });
-  assert.strictEqual(bonus, 0);
-});
-
-test('unknown category gives 0 bonus', () => {
-  const bonus = scoreTmplCategoryBonus({ name:'قالب عام' }, { name:'منتج عام' });
-  assert.strictEqual(bonus, 0);
-});
-
-// ── Template metadata: printType & productCategory matching ──
-section('scoreTmpl — template printType/productCategory metadata');
-
-function scorePrintTypeMatch(template, product) {
-  if (!product.printType) return 0;
-  if (template.printType) {
-    return template.printType === product.printType ? 0.10 : -0.05;
+function tmplPassesFilters(template, product) {
+  if (product.printType && template.printType && template.printType !== product.printType) {
+    return false;
   }
-  return 0;
+  const pQty = parseInt(String(product.qty || '').replace(/[^0-9]/g, '')) || 0;
+  const tQty = parseInt(template.qty || 0);
+  if (pQty && tQty) {
+    const ratio = Math.min(pQty, tQty) / Math.max(pQty, tQty);
+    if (ratio < 0.5) return false;
+  }
+  return true;
 }
 
-function scoreCategoryExplicit(template, product) {
-  const prodCat = product.productCategory || resolveProductCategory(product.name);
-  const tmplCat = template.productCategory || resolveProductCategory(template.name);
-  return (prodCat && tmplCat && prodCat === tmplCat) ? 0.10 : 0;
-}
-
-test('explicit printType match gives 0.10 (doubled from 0.05)', () => {
-  const s = scorePrintTypeMatch({ printType: 'digital' }, { printType: 'digital' });
-  assert.strictEqual(s, 0.10);
+test('same printType passes', () => {
+  assert.strictEqual(tmplPassesFilters({ printType: 'offset' }, { printType: 'offset' }), true);
 });
 
-test('explicit printType mismatch penalizes -0.05', () => {
-  const s = scorePrintTypeMatch({ printType: 'offset' }, { printType: 'digital' });
-  assert.strictEqual(s, -0.05);
+test('mismatched printType is rejected', () => {
+  assert.strictEqual(tmplPassesFilters({ printType: 'offset' }, { printType: 'digital' }), false);
 });
 
-test('no template printType = no explicit bonus/penalty', () => {
-  const s = scorePrintTypeMatch({}, { printType: 'digital' });
-  assert.strictEqual(s, 0);
+test('no template printType passes any product', () => {
+  assert.strictEqual(tmplPassesFilters({}, { printType: 'digital' }), true);
 });
 
-test('explicit productCategory on template overrides name-based detection', () => {
-  const s = scoreCategoryExplicit(
-    { name: 'قالب عام', productCategory: 'paper_prints' },
-    { name: 'بروشور A4' }
-  );
-  assert.strictEqual(s, 0.10);
+test('no product printType passes any template', () => {
+  assert.strictEqual(tmplPassesFilters({ printType: 'offset' }, {}), true);
 });
 
-test('explicit category mismatch gives 0', () => {
-  const s = scoreCategoryExplicit(
-    { name: 'قالب عام', productCategory: 'stamps' },
-    { name: 'بروشور A4' }
-  );
-  assert.strictEqual(s, 0);
+section('tmplPassesFilters — qty range hard filter');
+
+test('same qty passes', () => {
+  assert.strictEqual(tmplPassesFilters({ qty: '300' }, { qty: '300' }), true);
+});
+
+test('close qty (within 50%) passes — 300 vs 400', () => {
+  assert.strictEqual(tmplPassesFilters({ qty: '400' }, { qty: '300' }), true);
+});
+
+test('far qty (>50% diff) rejected — 300 vs 1000', () => {
+  assert.strictEqual(tmplPassesFilters({ qty: '1000' }, { qty: '300' }), false);
+});
+
+test('template without qty passes any product', () => {
+  assert.strictEqual(tmplPassesFilters({}, { qty: '300' }), true);
+});
+
+test('product without qty passes any template', () => {
+  assert.strictEqual(tmplPassesFilters({ qty: '1000' }, {}), true);
+});
+
+test('500 vs 300 — ratio 0.6 passes', () => {
+  assert.strictEqual(tmplPassesFilters({ qty: '500' }, { qty: '300' }), true);
+});
+
+test('200 vs 500 — ratio 0.4 rejected', () => {
+  assert.strictEqual(tmplPassesFilters({ qty: '500' }, { qty: '200' }), false);
 });
 
 // ── T: toggleProductCostComplete validation ──────────────
