@@ -48,6 +48,33 @@ export async function saveSupplierCategories({ db = defaultDb, items }) {
   }
 }
 
+/**
+ * T7: updateCategoryUsage — fire-and-forget usageCount + lastUsedAt increment.
+ * Called from recordCostItem after batch commit. Reads the doc, finds the
+ * matching category by label, increments usageCount, sets lastUsedAt.
+ */
+export async function updateCategoryUsage({ db = defaultDb, categoryLabel }) {
+  if (!categoryLabel) return;
+  try {
+    const ref = doc(db, 'master_lists', 'supplier_categories');
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    const data = snap.data();
+    const items = Array.isArray(data.items) ? data.items : [];
+    const idx = items.findIndex(c => c.label === categoryLabel);
+    if (idx < 0) return;
+    const updated = [...items];
+    updated[idx] = {
+      ...updated[idx],
+      usageCount: (updated[idx].usageCount || 0) + 1,
+      lastUsedAt: new Date().toISOString().slice(0, 10),
+    };
+    await updateDoc(ref, { items: updated });
+  } catch (e) {
+    console.warn('[master-lists] updateCategoryUsage failed (non-blocking):', e?.message);
+  }
+}
+
 // ══════════════════════════════════════════
 // INCIDENT REASONS (master_lists/incident_reasons)
 // ══════════════════════════════════════════

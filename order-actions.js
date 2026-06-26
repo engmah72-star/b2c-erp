@@ -36,6 +36,8 @@ import {
   ORDER_DESIGN_STAGES,
   matchCostItemProduct,
   resolveCostItemCategory,
+  isActiveCostItem,
+  COST_ITEM_STATUSES,
 } from './orders.js';
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -1581,7 +1583,7 @@ export const orderActions = {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
-    const v = validateCostItem({ order, payload, role, wallets, isEdit, allowedTypes });
+    const v = validateCostItem({ order, payload, role, wallets, isEdit, allowedTypes, masterCats });
     if (!v.ok) return { ...v, orderId };
 
     // Reference price lookup (non-blocking — enriches warnings only)
@@ -1641,21 +1643,19 @@ export const orderActions = {
     const _prod = prodIdx >= 0 ? (order.products || [])[prodIdx] : null;
     const _productId = _prod?.productId || existingItem?.productId || null;
 
-    // ── T3: auto-derive category/subcategory from master categories ──
-    let _category = '', _subcategory = '';
-    if (masterCats.length) {
-      const resolved = resolveCostItemCategory(type, masterCats);
-      _category = resolved.category;
-      _subcategory = resolved.subcategory;
-    }
-
     // ── T4: auto-derive printType from product ──
     const _printType = _prod?.printType || '';
+
+    // ── T3+T5: resolve category/subcategory/defaultUnit from master categories ──
+    const _resolved = masterCats.length ? resolveCostItemCategory(type, masterCats) : null;
+    const _category = _resolved?.category || '';
+    const _subcategory = _resolved?.subcategory || '';
 
     // ── build new item ────────────────────────────────────
     const newItem = {
       costItemId,
       orderId,
+      status: isEdit ? (existingItem?.status || COST_ITEM_STATUSES.ACTIVE) : COST_ITEM_STATUSES.ACTIVE,
       ...(supplierOrderId ? { supplierOrderId } : {}),
       type,
       supplierId,
@@ -1665,7 +1665,7 @@ export const orderActions = {
       total,
       ...(itemQty > 0 ? { itemQty } : {}),
       ...(unitPrice > 0 ? { unitPrice } : {}),
-      ...(unit ? { unit } : {}),
+      ...(unit ? { unit } : ((_resolved?.defaultUnit && !isEdit) ? { unit: _resolved.defaultUnit } : {})),
       ...(_category ? { category: _category } : {}),
       ...(_subcategory ? { subcategory: _subcategory } : {}),
       ...(_printType ? { printType: _printType } : {}),
@@ -1809,6 +1809,15 @@ export const orderActions = {
             userId: userId || '',
           }).catch(() => {}))
           .catch(() => {});
+
+        // T7: fire-and-forget — update usageCount + lastUsedAt on master category
+        if (_resolved?.subcategory) {
+          import('./master-lists-actions.js')
+            .then(({ updateCategoryUsage }) => updateCategoryUsage({
+              db, categoryLabel: _resolved.subcategory,
+            }).catch(() => {}))
+            .catch(() => {});
+        }
       }
 
       return {
@@ -1868,18 +1877,28 @@ export const orderActions = {
       return { ok: false, errors: ['البند غير موجود'], warnings: [] };
     }
     const item = items[costItemIdx];
+    if (item.status === COST_ITEM_STATUSES.VOIDED) {
+      return { ok: false, errors: ['⚠️ البند محذوف بالفعل'], warnings: [] };
+    }
     if (item.paid || item.walletId || item.txId || item.spId) {
       return { ok: false, errors: ['⛔ هذا البند مرتبط بدفعة — استخدم حذف البند المدفوع من الحسابات'], warnings: [] };
     }
-    items.splice(costItemIdx, 1);
+    // T8: soft-delete — mark as voided instead of removing from array
+    items[costItemIdx] = {
+      ...item,
+      status: COST_ITEM_STATUSES.VOIDED,
+      voidedAt: new Date().toISOString(),
+      voidedBy: userId,
+      voidedByName: userName,
+    };
     try {
       const batch = writeBatch(db);
       batch.update(order._ref, {
         costItems: items,
         timeline: [...(order.timeline || []), auditEntry({
-          action: `🗑️ حذف بند تكلفة: ${item.type || ''} — ${parseFloat(item.total) || 0} ج${item.supplierName ? ' — ' + item.supplierName : ''}`,
+          action: `🗑️ إلغاء بند تكلفة: ${item.type || ''} — ${parseFloat(item.total) || 0} ج${item.supplierName ? ' — ' + item.supplierName : ''}`,
           userId, userName, kind: 'edit',
-          meta: { costItemIndex: costItemIdx, type: item.type, total: item.total, supplierId: item.supplierId },
+          meta: { costItemIndex: costItemIdx, type: item.type, total: item.total, supplierId: item.supplierId, status: 'voided' },
         })],
         updatedAt: serverTimestamp(),
       });
@@ -1923,7 +1942,7 @@ export const orderActions = {
     }
     if (!targetStage) return { ok: false, errors: ['⚠️ targetStage مطلوب'], warnings: [], orderId };
     if (targetStage === order.stage) return { ok: false, errors: ['⚠️ نفس المرحلة الحالية'], warnings: [], orderId };
-    if (targetStage === 'archived' && !(order.costItems || []).length) {
+    if (targetStage === 'archived' && !(order.costItems || []).filter(isActiveCostItem).length) {
       return { ok: false, errors: ['⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً'], warnings: [], orderId };
     }
     const labels = { design: 'تصميم', printing: 'طباعة', production: 'تنفيذ', shipping: 'شحن', archived: 'أرشيف' };
@@ -2333,7 +2352,7 @@ export const orderActions = {
     const prods = order.products || [];
     const prod = prodIdx >= 0 ? prods[prodIdx] : prods[0];
     if (!prod) return { ok: false, errors: ['⚠️ المنتج غير موجود'], warnings: [], orderId };
-    const ci = order.costItems || [];
+    const ci = (order.costItems || []).filter(isActiveCostItem);
     const prodCi = prodIdx >= 0
       ? ci.filter(c => {
           const m = matchCostItemProduct(c, prods);
@@ -2534,7 +2553,7 @@ export const orderActions = {
     }
     try {
       const prods = order.products || [];
-      const ci = order.costItems || [];
+      const ci = (order.costItems || []).filter(isActiveCostItem);
       const now = nowStr();
       const idxSet = new Set(doneIdx);
       const idxRemap = new Map();

@@ -567,6 +567,7 @@ const LAST_COST_KEY=()=>`b2c_last_cost_${currentUser?.uid||'anon'}`;
 let lastCostMem=null;
 const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
+const _isActiveCostItem=c=>!c.status||c.status==='active'||c.status==='adjusted';
 
 function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+(t==='ok'?'toast-ok':t==='err'?'toast-err':'');el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 
@@ -593,10 +594,11 @@ function getExpectedTypes(order){
 
 function getCompleteness(order){
   const expected=getExpectedTypes(order);
-  const recorded=new Set((order.costItems||[]).map(c=>(c.type||'').trim()));
+  const activeItems=(order.costItems||[]).filter(_isActiveCostItem);
+  const recorded=new Set(activeItems.map(c=>(c.type||'').trim()));
   const done=expected.filter(t=>recorded.has(t));
   const missing=expected.filter(t=>!recorded.has(t));
-  const pct=expected.length?Math.round(done.length/expected.length*100):((order.costItems||[]).length>0?100:0);
+  const pct=expected.length?Math.round(done.length/expected.length*100):(activeItems.length>0?100:0);
   return{expected,done,missing,pct};
 }
 
@@ -611,8 +613,9 @@ function getExpectedTypesForProduct(prod){
   return[...types];
 }
 function getProductCostItems(o,prodIdx){
-  if(prodIdx<0)return o.costItems||[];
-  return(o.costItems||[]).filter(c=>c.prodIdx===prodIdx);
+  const all=(o.costItems||[]).filter(_isActiveCostItem);
+  if(prodIdx<0)return all;
+  return all.filter(c=>c.prodIdx===prodIdx);
 }
 function getProductCompleteness(o,prodIdx){
   if(prodIdx<0)return getCompleteness(o);
@@ -707,7 +710,7 @@ function getMissingCostOrders(){
   const uid=currentUser?.uid||'';
   return orders.filter(o=>{
     if(o.stage==='cancelled')return false;
-    const hasItems=(o.costItems||[]).length>0;
+    const hasItems=(o.costItems||[]).filter(_isActiveCostItem).length>0;
     const isAwaiting=!!o.awaitingFinalArchive;
     if(hasItems&&!isAwaiting)return false;
     if(seeAll)return true;
@@ -727,12 +730,12 @@ function getMissingProductEntries(){
     if(!canSee)return;
     const prods=o.products||[];
     if(!prods.length){
-      const hasItems=(o.costItems||[]).length>0;
+      const hasItems=(o.costItems||[]).filter(_isActiveCostItem).length>0;
       if(!hasItems||o.awaitingFinalArchive)entries.push({o,prodIdx:-1,prod:null});
       return;
     }
     prods.forEach((prod,i)=>{
-      const prodItems=(o.costItems||[]).filter(c=>c.prodIdx===i);
+      const prodItems=(o.costItems||[]).filter(c=>_isActiveCostItem(c)&&c.prodIdx===i);
       if(!prodItems.length||o.awaitingFinalArchive)entries.push({o,prodIdx:i,prod});
     });
   });
@@ -1160,7 +1163,7 @@ function _populateWorkspace(o){
 
 function _renderCompleteness(o){
   const el=document.getElementById('ws-completeness');if(!el)return;
-  const allItems=o.costItems||[];
+  const allItems=(o.costItems||[]).filter(_isActiveCostItem);
   const prods=o.products||[];
   const hasItems=allItems.length>0;
   const totalCost=allItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
@@ -1304,7 +1307,7 @@ window.applyLibItem=function(libId,supplierId,supplierName,avgCost){
    ═══════════════════════════════════════════════════ */
 function getAllCostItems(){
   const items=[];
-  orders.forEach(o=>(o.costItems||[]).forEach(c=>{
+  orders.forEach(o=>(o.costItems||[]).filter(_isActiveCostItem).forEach(c=>{
     const ts=c.addedAtMs||(c.addedAt?new Date(c.addedAt).getTime():0);
     items.push({...c,_orderId:o._id,_ts:isNaN(ts)?0:ts});
   }));
@@ -1376,7 +1379,7 @@ function estimateOrderCost(o){
 function calcMargin(o){
   const sale=parseFloat(o.totalPrice)||parseFloat(o.price)||0;
   if(!sale)return{sale:0,cost:0,marginPct:null,cls:'margin-na',estimated:false};
-  const existingCost=(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
+  const existingCost=(o.costItems||[]).filter(_isActiveCostItem).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   const est=estimateOrderCost(o);
   const cost=existingCost>0?existingCost:est.cost;
   const pct=sale>0?((sale-cost)/sale)*100:0;
@@ -1464,7 +1467,7 @@ function _renderProdFilterBar(o){
   const prods=o.products||[];
   if(prods.length<=1){el.hidden=true;return;}
   el.hidden=false;
-  const allItems=o.costItems||[];
+  const allItems=(o.costItems||[]).filter(_isActiveCostItem);
   // Group similar products by baseName for visual tinting
   const baseGroups={};
   prods.forEach((p,i)=>{const b=_normBaseName(p.name)||`_${i}`;(baseGroups[b]||(baseGroups[b]=[])).push(i);});
@@ -1643,7 +1646,7 @@ function renderDrawerProfit(o){
 function renderItemsBox(o){
   if((o.products||[]).length){_renderProductsCostView(o);return;}
   const box=document.getElementById('items-box');if(!box)return;
-  const items=o.costItems||[];
+  const items=(o.costItems||[]).filter(_isActiveCostItem);
   if(!items.length){box.innerHTML=`<div class="items-box-empty">📋 لا توجد بنود مسجلة — أضف أول بند أدناه</div>`;return;}
   const total=items.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   box.innerHTML=`<div class="items-box-title">📋 بنود مسجلة (${items.length}) · إجمالي: <strong style="color:var(--snow)">${fn(total)} ج</strong></div>`
@@ -1664,7 +1667,7 @@ function renderItemsBox(o){
 function _renderProductsCostView(o){
   const el=document.getElementById('cost-products-summary');if(!el)return;
   const prods=o.products||[];
-  const allItems=o.costItems||[];
+  const allItems=(o.costItems||[]).filter(_isActiveCostItem);
   _renderProdFilterBar(o);
   let html=`<div class="prod-summary-hdr">📋 المواصفات والكميات</div>`;
   prods.forEach((p,i)=>{
@@ -2082,7 +2085,7 @@ function _getAllCostItemsExtended(){
         _qty:prod?.qty!=null?String(prod.qty):'—',
         _ts:c.addedAtMs||(c.date?new Date(c.date).getTime():0)||0,
         _salePrice:parseFloat(o.totalPrice)||parseFloat(o.price)||0,
-        _orderTotalCost:(o.costItems||[]).reduce((s,ci)=>s+(parseFloat(ci.total)||0),0),
+        _orderTotalCost:(o.costItems||[]).filter(_isActiveCostItem).reduce((s,ci)=>s+(parseFloat(ci.total)||0),0),
       });
     });
   });
