@@ -1754,7 +1754,7 @@ function _renderProductsCostView(o){
         ${isDone?'':`<button type="button" class="prod-add-cost-btn" onclick="addCostForProd(${i})">➕ إضافة بند</button>`}
         ${!isDone&&pItems.length?`<button type="button" class="save-as-tmpl-btn prod-tmpl-btn" onclick="saveCurrentCostAsTemplate(${i})">💾 حفظ كقالب</button>`:''}
         ${completeBtn}
-        ${prods.length>1&&canToggle?`<button type="button" class="prod-remove-btn" onclick="removeProduct(${i})">🗑️ إلغاء المنتج</button>`:''}
+        ${canToggle?`<button type="button" class="prod-remove-btn" onclick="removeProduct(${i})">${prods.length<=1?'❌ إلغاء الأوردر':'🗑️ إلغاء المنتج'}</button>`:''}
       </div>
     </div>`;
   });
@@ -1794,8 +1794,20 @@ window.removeProduct=async function(prodIdx){
   const o=orders.find(x=>x._id===activeId);
   if(!o)return;
   const prods=o.products||[];
-  if(prods.length<=1){alert('لا يمكن حذف المنتج الأخير');return;}
   const p=prods[prodIdx];
+
+  if(prods.length<=1){
+    const reason=prompt(`❌ إلغاء الأوردر #${o.orderNumber||o._id}؟\n\nالأوردر فيه منتج واحد — حذفه يعني إلغاء الأوردر كله.\n\nأدخل سبب الإلغاء:`);
+    if(!reason)return;
+    const res=await orderActions.cancelOrder({
+      orderId:o._id, reason,
+      userId:currentUser?.uid, userName,
+    });
+    if(!res.ok){alert(res.errors.join('\n'));return;}
+    showToast(`❌ تم إلغاء الأوردر #${o.orderNumber||o._id}`);
+    return;
+  }
+
   const pItems=(o.costItems||[]).filter(c=>c.prodIdx===prodIdx&&_isActiveCostItem(c));
   const warn=pItems.length?`\n⚠️ سيتم حذف ${pItems.length} بند تكلفة مسجل عليه`:'';
   if(!confirm(`حذف "${p?.name||'منتج'}" × ${p?.qty||0} من الأوردر؟${warn}\n\nهذا الإجراء لا يمكن التراجع عنه.`))return;
