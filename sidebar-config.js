@@ -108,6 +108,7 @@ import('./error-reporter-init.js').catch(function(){});
     // settings = perm عادي (لا adminOnly): يراها admin + operation_manager (pages:['*'])
     // كصفحة تشغيلية للقوائم الرئيسية، بينما تبقى محجوبة عن باقي الأدوار (لا '*'/'settings').
     { file:'settings.html',          label:'الإعدادات',        ico:'⚙️', group:'admin',  perm:'settings' },
+    { file:'qr-generator.html',      label:'QR ذكي',           ico:'📱', group:'orders', public:true },
   ];
 
   // أين تذهب كل دور عند الـ login (الـ dashboard المخصص)
