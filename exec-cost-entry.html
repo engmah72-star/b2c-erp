@@ -111,10 +111,11 @@
             </table>
           </div>
           <div class="lib-pd-footer">
-            <div class="lib-pd-total">الإجمالي المتوقع: <strong id="lib-pd-total">—</strong></div>
-            <button type="button" class="btn lib-pd-apply-btn" id="lib-pd-apply-all" onclick="applyBundleToWorkspace()">
-              ⚡ تطبيق الكل على الأوردر الحالي
-            </button>
+            <div class="lib-pd-total">الإجمالي: <strong id="lib-pd-total">—</strong></div>
+            <div class="lib-pd-actions">
+              <button type="button" class="btn lib-pd-save-btn" onclick="saveProfileAsTemplate()">💾 حفظ كقالب ثابت</button>
+              <button type="button" class="btn lib-pd-apply-btn" id="lib-pd-apply-all" onclick="applyBundleToWorkspace()">⚡ تطبيق على الأوردر</button>
+            </div>
           </div>
         </div>
 
@@ -2432,19 +2433,28 @@ function _buildProductProfiles(){
       const sz=(prod.size||'').trim();
       const keyParts=[baseName,pt,sz,qty].filter(Boolean);
       const key=keyParts.join('::');
-      if(!profiles[key])profiles[key]={key,baseName,qty,printType:pt,size:sz,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0,salePrices:[]};
+      if(!profiles[key])profiles[key]={key,baseName,qty,printType:pt,size:sz,displayName:prod.name,items:[],orderIds:new Set(),lastTs:0};
       const ts=c.addedAtMs||(c.date?new Date(c.date).getTime():0)||0;
       profiles[key].items.push({type:c.type,total:parseFloat(c.total)||0,supplierId:c.supplierId,supplierName:c.supplierName,ts});
-      if(!profiles[key].orderIds.has(o._id)){
-        profiles[key].orderIds.add(o._id);
-        const sp=parseFloat(o.totalPrice)||parseFloat(o.price)||0;
-        if(sp>0)profiles[key].salePrices.push(sp);
-      }
+      profiles[key].orderIds.add(o._id);
       if(ts>profiles[key].lastTs){profiles[key].lastTs=ts;profiles[key].displayName=prod.name;}
     });
   });
+  // Build saved template lookup for deduplication
+  const _savedKeys=new Set();
+  costTemplates.forEach(t=>{
+    const bn=_normBaseName(t.name);
+    const q=t.qty?String(t.qty).replace(/[^0-9]/g,''):'';
+    _savedKeys.add(q?`${bn}::${q}`:bn);
+  });
+
   _libProfiles=Object.values(profiles)
-    .filter(p=>p.orderIds.size>=2)  // at least 2 distinct orders — not just 2 items
+    .filter(p=>{
+      if(p.orderIds.size<2)return false;
+      // Exclude if a saved template already covers this product+qty
+      const checkKey=p.qty?`${p.baseName}::${p.qty}`:p.baseName;
+      return!_savedKeys.has(checkKey);
+    })
     .map(p=>{
       // Group by (type, supplierId) — each supplier's price shown separately
       const byTS={};
@@ -2452,14 +2462,14 @@ function _buildProductProfiles(){
         if(!item.type)return;
         const tsKey=`${item.type}__${item.supplierId||''}`;
         if(!byTS[tsKey])byTS[tsKey]={type:item.type,supplierId:item.supplierId||'',supplierName:item.supplierName||'',
-          prices:[],lastPrice:0,lastTs:0,useCount:0};
+          lastPrice:0,lastTs:0,useCount:0};
         const e=byTS[tsKey];
         if(item.total>0){
-          e.prices.push(item.total);e.useCount++;
+          e.useCount++;
           if(item.ts>=e.lastTs){e.lastTs=item.ts;e.lastPrice=item.total;}
         }
       });
-      // A cost type is "core" only if it appears in ≥50% of orders (raised from 35%)
+      // A cost type is "core" only if it appears in ≥50% of orders
       const typeFreq={};
       Object.values(byTS).forEach(e=>{typeFreq[e.type]=(typeFreq[e.type]||0)+e.useCount;});
       const threshold=Math.max(1,Math.ceil(p.orderIds.size*0.5));
@@ -2472,11 +2482,9 @@ function _buildProductProfiles(){
         if(!bestPerType[b.type]||b.useCount>bestPerType[b.type].useCount)bestPerType[b.type]=b;
       });
       const totalEstimate=Object.values(bestPerType).reduce((s,b)=>s+(b.lastPrice||0),0);
-      const avgSalePrice=p.salePrices.length?p.salePrices.reduce((s,v)=>s+v,0)/p.salePrices.length:0;
-      const estMarginPct=(avgSalePrice>0&&totalEstimate>0)?Math.round((avgSalePrice-totalEstimate)/avgSalePrice*100):null;
       return{key:p.key,baseName:p.baseName,qty:p.qty,printType:p.printType,size:p.size,
         displayName:p.displayName,usageCount:p.orderIds.size,lastTs:p.lastTs,
-        bundle,coreBundle,addons,totalEstimate,avgSalePrice,estMarginPct};
+        bundle,coreBundle,addons,totalEstimate};
     })
     .sort((a,b)=>b.lastTs-a.lastTs||b.usageCount-a.usageCount)
     .slice(0,60);
@@ -2528,7 +2536,7 @@ function _renderLibProfiles(){
       ${specTags?`<div class="lib-pc-specs">${specTags}</div>`:''}
       <div class="lib-pc-meta">${p.coreBundle.length} بنود أساسية · ${p.usageCount} أوردر</div>
       <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
-      <div class="lib-pc-total">~${fn(p.totalEstimate)} ج${p.estMarginPct!==null?` <span class="lib-pc-margin ${p.estMarginPct>=35?'lib-margin-g':p.estMarginPct>=20?'lib-margin-y':'lib-margin-r'}">${p.estMarginPct}% هامش</span>`:''}</div>
+      <div class="lib-pc-total">~${fn(p.totalEstimate)} ج</div>
       <div class="lib-pc-badge">${[...new Set(p.coreBundle.map(b=>b.type))].slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
       ${addonsHtml}
     </div>`;
@@ -2545,8 +2553,7 @@ window.openProfileDetail=function(key){
     pdNameEl.innerHTML=`${p.baseName||p.displayName}${qtyBadge}`;
   }
   const lastStr=p.lastTs?new Date(p.lastTs).toLocaleDateString('ar-EG',{day:'2-digit',month:'2-digit',year:'numeric'}):'—';
-  const marginHint=p.estMarginPct!==null?` · هامش متوقع ${p.estMarginPct}% (سعر بيع ~${fn(Math.round(p.avgSalePrice))} ج)`:'';
-  setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}${marginHint}`);
+  setText('lib-pd-stats',`استُخدم ${p.usageCount} مرة · آخر استخدام: ${lastStr}`);
   const tbody=document.getElementById('lib-pd-tbody');
   if(tbody){
     // build rows grouped by type — each (type,supplier) is its own row
@@ -2582,6 +2589,28 @@ window.openProfileDetail=function(key){
 
 window.closeProfileDetail=function(){
   document.getElementById('lib-profile-detail').hidden=true;_activeBundleForApply=null;
+};
+
+window.saveProfileAsTemplate=async function(){
+  const p=_activeBundleForApply;if(!p)return;
+  const bestPerType={};
+  p.coreBundle.forEach(b=>{
+    if(!bestPerType[b.type]||b.useCount>bestPerType[b.type].useCount)bestPerType[b.type]=b;
+  });
+  const items=Object.values(bestPerType).map(b=>({type:b.type,supplierId:b.supplierId,supplierName:b.supplierName,amount:b.lastPrice||0}))
+    .filter(c=>c.type&&c.supplierId&&c.amount>0);
+  if(!items.length)return toast('⚠️ لا توجد بنود صالحة للحفظ','err');
+  try{
+    const{saveCostTemplate,findDuplicateTemplate}=await import('./core/cost-template-actions.js');
+    const dup=findDuplicateTemplate(costTemplates,p.displayName||p.baseName,p.qty,null);
+    if(dup)return toast('⚠️ يوجد قالب ثابت بالفعل لهذا المنتج','err');
+    const r=await saveCostTemplate(db,{name:p.displayName||p.baseName,qty:p.qty||null,printType:p.printType||null,productCategory:null,costItems:items},userName);
+    if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
+    await _loadCostTemplates();
+    closeProfileDetail();
+    _buildProductProfiles();_renderLibProfiles();_renderLibStats();_renderLibTemplates();
+    toast('✅ تم حفظ القالب الثابت — انتقل من المكتشفة إلى الثابتة','ok');
+  }catch(e){toast('❌ '+(e.message||'فشل'),'err');}
 };
 
 window.applyOneItem=function(type,supplierId,supplierName,amount,prodIdx=-1){
