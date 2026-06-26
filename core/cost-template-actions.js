@@ -44,7 +44,7 @@ export function findDuplicateTemplate(templates, name, qty, excludeId) {
   }) || null;
 }
 
-export async function saveCostTemplate(db, { id, name, qty, costItems, mergeInto }, userName) {
+export async function saveCostTemplate(db, { id, name, qty, printType, productCategory, costItems, mergeInto }, userName) {
   if (!name?.trim()) return { ok: false, errors: ['اسم المنتج مطلوب'] };
   if (!costItems?.length) return { ok: false, errors: ['أضف بنداً واحداً على الأقل'] };
   const invalid = costItems.filter(c => !c.type || !c.supplierId || !(parseFloat(c.amount) > 0));
@@ -78,6 +78,8 @@ export async function saveCostTemplate(db, { id, name, qty, costItems, mergeInto
     id: templateId,
     name: name.trim(),
     qty: qty ? String(qty).trim() : null,
+    printType: printType || null,
+    productCategory: productCategory || null,
     costItems: costItems.map(c => ({
       type: c.type,
       supplierId: c.supplierId,

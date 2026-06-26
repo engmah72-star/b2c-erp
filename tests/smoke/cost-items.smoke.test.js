@@ -729,6 +729,54 @@ test('unknown category gives 0 bonus', () => {
   assert.strictEqual(bonus, 0);
 });
 
+// ── Template metadata: printType & productCategory matching ──
+section('scoreTmpl — template printType/productCategory metadata');
+
+function scorePrintTypeMatch(template, product) {
+  if (!product.printType) return 0;
+  if (template.printType) {
+    return template.printType === product.printType ? 0.10 : -0.05;
+  }
+  return 0;
+}
+
+function scoreCategoryExplicit(template, product) {
+  const prodCat = product.productCategory || resolveProductCategory(product.name);
+  const tmplCat = template.productCategory || resolveProductCategory(template.name);
+  return (prodCat && tmplCat && prodCat === tmplCat) ? 0.10 : 0;
+}
+
+test('explicit printType match gives 0.10 (doubled from 0.05)', () => {
+  const s = scorePrintTypeMatch({ printType: 'digital' }, { printType: 'digital' });
+  assert.strictEqual(s, 0.10);
+});
+
+test('explicit printType mismatch penalizes -0.05', () => {
+  const s = scorePrintTypeMatch({ printType: 'offset' }, { printType: 'digital' });
+  assert.strictEqual(s, -0.05);
+});
+
+test('no template printType = no explicit bonus/penalty', () => {
+  const s = scorePrintTypeMatch({}, { printType: 'digital' });
+  assert.strictEqual(s, 0);
+});
+
+test('explicit productCategory on template overrides name-based detection', () => {
+  const s = scoreCategoryExplicit(
+    { name: 'قالب عام', productCategory: 'paper_prints' },
+    { name: 'بروشور A4' }
+  );
+  assert.strictEqual(s, 0.10);
+});
+
+test('explicit category mismatch gives 0', () => {
+  const s = scoreCategoryExplicit(
+    { name: 'قالب عام', productCategory: 'stamps' },
+    { name: 'بروشور A4' }
+  );
+  assert.strictEqual(s, 0);
+});
+
 // ── T: toggleProductCostComplete validation ──────────────
 section('toggleProductCostComplete — input validation');
 

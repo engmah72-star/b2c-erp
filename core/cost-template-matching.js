@@ -77,18 +77,27 @@ export function scoreTmpl(template, product) {
     if (covered.length) reasons.push('يشمل ' + covered.join('+'));
   }
 
-  // 4. Print type (5%)
+  // 4. Print type (10% — boosted: explicit match from template metadata)
   if (product.printType) {
-    const ptn = product.printType === 'digital' ? 'ديجيتال' : 'اوفست';
-    if ((template.costItems || []).some(c => normAr(c.type || '').includes(normAr(ptn)))) {
-      score += 0.05;
-      reasons.push(product.printType === 'digital' ? 'ديجيتال' : 'أوفست');
+    if (template.printType) {
+      if (template.printType === product.printType) {
+        score += 0.10;
+        reasons.push(product.printType === 'digital' ? 'ديجيتال' : 'أوفست');
+      } else {
+        score -= 0.05;
+      }
+    } else {
+      const ptn = product.printType === 'digital' ? 'ديجيتال' : 'اوفست';
+      if ((template.costItems || []).some(c => normAr(c.type || '').includes(normAr(ptn)))) {
+        score += 0.05;
+        reasons.push(product.printType === 'digital' ? 'ديجيتال' : 'أوفست');
+      }
     }
   }
 
-  // 5. Product category match (10% — T9)
+  // 5. Product category match (10% — T9, explicit template category preferred)
   const prodCat = product.productCategory || resolveProductCategory(product.name);
-  const tmplCat = resolveProductCategory(template.name);
+  const tmplCat = template.productCategory || resolveProductCategory(template.name);
   if (prodCat && tmplCat && prodCat === tmplCat) {
     score += 0.10;
     reasons.push('نفس الفئة');

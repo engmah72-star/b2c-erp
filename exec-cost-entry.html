@@ -468,6 +468,18 @@
       <div class="fg"><label>🔢 الكمية (اختياري — اتركه فارغاً لكل الكميات)</label>
         <input class="inp" id="tmpl-qty" type="number" placeholder="300">
       </div>
+      <div class="tmpl-meta-row">
+        <div class="fg fg-half"><label>🖨️ نوع الطباعة</label>
+          <select class="inp" id="tmpl-print-type">
+            <option value="">— الكل —</option>
+            <option value="digital">ديجيتال</option>
+            <option value="offset">أوفست</option>
+          </select>
+        </div>
+        <div class="fg fg-half"><label>📂 فئة المنتج</label>
+          <select class="inp" id="tmpl-category"></select>
+        </div>
+      </div>
       <div class="tmpl-items-label">📋 بنود التكلفة <span class="text-r">*</span></div>
       <div id="tmpl-items-list"></div>
       <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addTmplItem()">＋ إضافة بند</button>
@@ -1742,6 +1754,7 @@ function _renderProductsCostView(o){
         ${isDone?'':`<button type="button" class="prod-add-cost-btn" onclick="addCostForProd(${i})">➕ إضافة بند</button>`}
         ${!isDone&&pItems.length?`<button type="button" class="save-as-tmpl-btn prod-tmpl-btn" onclick="saveCurrentCostAsTemplate(${i})">💾 حفظ كقالب</button>`:''}
         ${completeBtn}
+        ${prods.length>1&&canToggle?`<button type="button" class="prod-remove-btn" onclick="removeProduct(${i})">🗑️ إلغاء المنتج</button>`:''}
       </div>
     </div>`;
   });
@@ -1775,6 +1788,24 @@ window.addCostForProd=function(prodIdx){
   if(sel){sel.value=String(prodIdx);onCostInputChange();}
   document.getElementById('form-section')?.scrollIntoView({behavior:'smooth',block:'nearest'});
   document.getElementById('ac-type')?.focus();
+};
+
+window.removeProduct=async function(prodIdx){
+  const o=orders.find(x=>x._id===activeId);
+  if(!o)return;
+  const prods=o.products||[];
+  if(prods.length<=1){alert('لا يمكن حذف المنتج الأخير');return;}
+  const p=prods[prodIdx];
+  const pItems=(o.costItems||[]).filter(c=>c.prodIdx===prodIdx&&_isActiveCostItem(c));
+  const warn=pItems.length?`\n⚠️ سيتم حذف ${pItems.length} بند تكلفة مسجل عليه`:'';
+  if(!confirm(`حذف "${p?.name||'منتج'}" × ${p?.qty||0} من الأوردر؟${warn}\n\nهذا الإجراء لا يمكن التراجع عنه.`))return;
+  const res=await orderActions.removeProductFromOrder({
+    orderId:o._id, prodIdx,
+    userId:currentUser?.uid, userName,
+  });
+  if(!res.ok){alert(res.errors.join('\n'));return;}
+  _prodFilter=-1;
+  showToast(`🗑️ تم حذف: ${res.productName||p?.name||'منتج'}`);
 };
 
 window.pickProductFromSummary=function(idx){addCostForProd(idx);};
@@ -2885,7 +2916,7 @@ function _renderLibTemplates(){
     }).length;
     return`<div class="lib-tmpl-card">
       <div class="lib-tmpl-hdr">
-        <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</div>
+        <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}${t.printType?` <span class="lib-pc-tag">${t.printType==='digital'?'ديجيتال':'أوفست'}</span>`:''}${t.productCategory?` <span class="lib-pc-tag">${t.productCategory}</span>`:''}</div>
         <div class="lib-tmpl-acts">
           ${pendingCount?`<button type="button" class="lib-tmpl-bulk-btn" onclick="bulkApplyTemplate('${t.id}')" title="${pendingCount} أوردر بانتظار التطبيق">📦 ${pendingCount}</button>`:''}
           <button type="button" class="item-act-btn edit" onclick="openTmplModal('${t.id}')">✏️</button>
@@ -2944,10 +2975,22 @@ window.bulkApplyTemplate=async function(templateId){
   _renderLibTemplates();
 };
 
+function _refreshTmplCategorySelect(sel){
+  const el=typeof sel==='string'?document.getElementById(sel):sel;
+  if(!el)return;
+  const groups=new Set();
+  masterCategories.forEach(c=>{if(c.group)groups.add(c.group);});
+  const prev=el.value;
+  el.innerHTML='<option value="">— الكل —</option>'+[...groups].map(g=>`<option value="${g}">${g}</option>`).join('');
+  if(prev)el.value=prev;
+}
+
 window.openTmplModal=function(id){
   const t=id?costTemplates.find(x=>x.id===id):null;
   setText('tmpl-modal-title',id?'✏️ تعديل القالب':'⚡ قالب جديد');
   sv('tmpl-id',id||'');sv('tmpl-name',t?.name||'');sv('tmpl-qty',t?.qty||'');
+  _refreshTmplCategorySelect('tmpl-category');
+  sv('tmpl-print-type',t?.printType||'');sv('tmpl-category',t?.productCategory||'');
   _tmplItems=t?t.costItems.map(c=>({...c})):[{type:'',supplierId:'',supplierName:'',amount:''}];
   _renderTmplItems();
   document.getElementById('tmpl-modal').hidden=false;
@@ -2982,17 +3025,18 @@ function _renderTmplItems(){
 }
 window.saveTmplModal=async function(){
   const name=gv('tmpl-name').trim(),qty=gv('tmpl-qty').trim(),id=gv('tmpl-id')||null;
+  const printType=gv('tmpl-print-type')||null;
+  const productCategory=gv('tmpl-category')||null;
   if(!name)return toast('⚠️ أدخل اسم المنتج','err');
   const items=_tmplItems.filter(c=>c.type&&c.supplierId&&parseFloat(c.amount)>0);
   if(!items.length)return toast('⚠️ أضف بنداً واحداً على الأقل بنوع + مورد + مبلغ','err');
   try{
     const{saveCostTemplate,findDuplicateTemplate}=await import('./core/cost-template-actions.js');
-    // Duplicate check for new templates only
     if(!id){
       const dup=findDuplicateTemplate(costTemplates,name,qty,null);
       if(dup&&!confirm(`⚠️ يوجد قالب "${dup.name}"${dup.qty?' ('+dup.qty+')':''} بالفعل.\n\nمتأكد إنك عايز تحفظ قالب جديد؟`))return;
     }
-    const r=await saveCostTemplate(db,{id,name,qty:qty||null,costItems:items},userName);
+    const r=await saveCostTemplate(db,{id,name,qty:qty||null,printType,productCategory,costItems:items},userName);
     if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
     await _loadCostTemplates();
     closeTmplModal();
@@ -3042,10 +3086,20 @@ window.saveCurrentCostAsTemplate=async function(prodIdx=-1){
     }
   }
 
+  // Derive group from most common cost item type group
+  const typeToGroup={};
+  masterCategories.forEach(c=>{if(c.label&&c.group)typeToGroup[c.label]=c.group;});
+  const groupCounts={};
+  items.forEach(c=>{const g=typeToGroup[c.type];if(g){groupCounts[g]=(groupCounts[g]||0)+1;}});
+  const topGroup=Object.entries(groupCounts).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
+
   setText('tmpl-modal-title','💾 حفظ البنود كقالب');
   sv('tmpl-id','');
   sv('tmpl-name',name);
   sv('tmpl-qty',qty);
+  _refreshTmplCategorySelect('tmpl-category');
+  sv('tmpl-print-type',prod?.printType||'');
+  sv('tmpl-category',topGroup);
   _tmplItems=items.length?items:[{type:'',supplierId:'',supplierName:'',amount:''}];
   _renderTmplItems();
   document.getElementById('tmpl-modal').hidden=false;
