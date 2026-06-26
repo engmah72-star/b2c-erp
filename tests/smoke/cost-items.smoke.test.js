@@ -558,6 +558,177 @@ test('COST_ITEM_STATUSES has correct values', () => {
   assert.strictEqual(COST_ITEM_STATUSES.ADJUSTED, 'adjusted');
 });
 
+// ══════════════════════════════════════════
+// Phase 3 — T6 + T9
+// ══════════════════════════════════════════
+
+section('T9 — resolveProductCategory (product taxonomy)');
+
+function _normPC(s) {
+  if (!s) return '';
+  let n = s.trim().replace(/\s+/g, ' ').replace(/^ال/, '');
+  return n.replace(/[أإآ]/g, 'ا').replace(/[ةه]/g, 'ه').replace(/[يى]/g, 'ي').toLowerCase();
+}
+
+const PRODUCT_CATEGORIES = [
+  { id:'paper_prints', keywords:['بروشور','فلاير','كارت','كتيب','مجلة','كتالوج','ظرف','فولدر','ملصق','استيكر','دفتر','نوتة','أجندة','تقويم','شهادة','دعوة','منيو','فاتورة','كروت','بوستر','نشرة','مظروف','ورقة','ورق','بطاقة','كتاب','تاج','ليبل'] },
+  { id:'large_format', keywords:['بانر','رول اب','ستاند','يافطة','لافتة','خلفية','فينيل','ساين','backdrop','رول','بنر','لوحة','لوح','فلكس','مش','ميش','واجهة','حروف بارزة'] },
+  { id:'packaging', keywords:['علبة','كرتون','باكج','تغليف','شنطة','أكياس','كيس','صندوق','بوكس','باكيج'] },
+  { id:'stamps', keywords:['ختم','أختام','stamp','شمع'] },
+  { id:'promotional', keywords:['تيشيرت','مج','قلم','ميدالية','شارة','هدايا','سبلميشن','كوب','تيشرت','ميداليه','يونيفورم','كاب','شنطه','فلاشة'] },
+  { id:'design_only', keywords:['تصميم','لوجو','هوية','identity','موشن','فيديو','سوشيال','بوست','اعلان','إعلان'] },
+];
+
+function resolveProductCategory(productName) {
+  if (!productName) return null;
+  const n = _normPC(productName);
+  let best = null, bestLen = 0;
+  for (const cat of PRODUCT_CATEGORIES) {
+    for (const kw of cat.keywords) {
+      const nk = _normPC(kw);
+      if (n.includes(nk) && nk.length > bestLen) { best = cat; bestLen = nk.length; }
+    }
+  }
+  return best ? best.id : null;
+}
+
+test('بروشور → paper_prints', () => {
+  assert.strictEqual(resolveProductCategory('بروشور A4'), 'paper_prints');
+});
+
+test('بانر → large_format', () => {
+  assert.strictEqual(resolveProductCategory('بانر 3×2 متر'), 'large_format');
+});
+
+test('علبة → packaging', () => {
+  assert.strictEqual(resolveProductCategory('علبة كرتون'), 'packaging');
+});
+
+test('ختم → stamps', () => {
+  assert.strictEqual(resolveProductCategory('ختم شركة'), 'stamps');
+});
+
+test('تيشيرت → promotional', () => {
+  assert.strictEqual(resolveProductCategory('تيشيرت بولو'), 'promotional');
+});
+
+test('لوجو → design_only', () => {
+  assert.strictEqual(resolveProductCategory('تصميم لوجو'), 'design_only');
+});
+
+test('unknown product → null', () => {
+  assert.strictEqual(resolveProductCategory('منتج غير معروف'), null);
+});
+
+test('null/empty → null', () => {
+  assert.strictEqual(resolveProductCategory(null), null);
+  assert.strictEqual(resolveProductCategory(''), null);
+});
+
+test('longest keyword match wins (كرتون in packaging not paper)', () => {
+  assert.strictEqual(resolveProductCategory('كرتون تغليف'), 'packaging');
+});
+
+section('T9 — getExpectedCostTypes (category-aware filtering)');
+
+function getExpectedCostTypes(product, masterCats) {
+  if (!product || !masterCats?.length) return [];
+  const pt = (product.printType || '').toLowerCase();
+  if (!pt) return [];
+  const catId = product.productCategory || resolveProductCategory(product.name);
+  const cat = catId ? PRODUCT_CATEGORIES.find(c => c.id === catId) : null;
+  const costTypeHints = {
+    paper_prints:['طباعة','ورق','زنكات','تجليد','سلوفان','يو في','تقطيع','دبوس','لصق','تكسير','تصميم','فرز','تغليف'],
+    large_format:['طباعة','خامة','تركيب','تصميم'],
+    packaging:['طباعة','تقطيع','تجليد','لصق','خامة','تصميم','ورق'],
+    stamps:['ختم','حبر','تصميم'],
+    promotional:['طباعة','خامة','تصميم'],
+    design_only:['تصميم'],
+  };
+  const base = masterCats.filter(c =>
+    c.isCostItem !== false &&
+    (c.printTypes || []).some(x => x === pt || pt.includes(x) || x.includes(pt))
+  );
+  if (!cat) return base.map(c => c.label);
+  const hints = (costTypeHints[cat.id] || []).map(h => _normPC(h));
+  const filtered = base.filter(c => {
+    const nl = _normPC(c.label);
+    return hints.some(h => nl.includes(h) || h.includes(nl));
+  });
+  return filtered.length ? filtered.map(c => c.label) : base.map(c => c.label);
+}
+
+const sampleMasterCats = [
+  { label:'طباعة ديجيتال', isCostItem:true, printTypes:['digital'] },
+  { label:'زنكات أوفست', isCostItem:true, printTypes:['offset'] },
+  { label:'ورق', isCostItem:true, printTypes:['digital','offset'] },
+  { label:'تجليد', isCostItem:true, printTypes:['digital','offset'] },
+  { label:'تركيب', isCostItem:true, printTypes:['digital'] },
+  { label:'خامة فينيل', isCostItem:true, printTypes:['digital'] },
+  { label:'ختم', isCostItem:true, printTypes:['digital','offset'] },
+];
+
+test('paper product digital: includes ورق+تجليد, excludes ختم', () => {
+  const r = getExpectedCostTypes({ name:'بروشور', printType:'digital' }, sampleMasterCats);
+  assert.ok(r.includes('طباعة ديجيتال'), 'should include طباعة');
+  assert.ok(r.includes('ورق'), 'should include ورق');
+  assert.ok(r.includes('تجليد'), 'should include تجليد');
+  assert.ok(!r.includes('ختم'), 'should exclude ختم');
+});
+
+test('large_format digital: includes تركيب, excludes تجليد+ورق', () => {
+  const r = getExpectedCostTypes({ name:'بانر كبير', printType:'digital' }, sampleMasterCats);
+  assert.ok(r.includes('طباعة ديجيتال'), 'should include طباعة');
+  assert.ok(r.includes('تركيب'), 'should include تركيب');
+  assert.ok(!r.includes('تجليد'), 'should exclude تجليد');
+  assert.ok(!r.includes('ورق'), 'should exclude ورق');
+});
+
+test('stamp product: only ختم from matching types', () => {
+  const r = getExpectedCostTypes({ name:'ختم مؤسسة', printType:'digital' }, sampleMasterCats);
+  assert.ok(r.includes('ختم'), 'should include ختم');
+  assert.ok(!r.includes('تركيب'), 'should exclude تركيب');
+});
+
+test('unknown category falls back to all matching printType', () => {
+  const r = getExpectedCostTypes({ name:'منتج خاص', printType:'digital' }, sampleMasterCats);
+  assert.ok(r.length >= 4, 'should return all digital cost types');
+});
+
+test('explicit productCategory overrides auto-detection', () => {
+  const r = getExpectedCostTypes({ name:'بروشور', printType:'digital', productCategory:'large_format' }, sampleMasterCats);
+  assert.ok(r.includes('تركيب'), 'should include تركيب (large_format)');
+  assert.ok(!r.includes('تجليد'), 'should exclude تجليد');
+});
+
+test('no printType → empty', () => {
+  const r = getExpectedCostTypes({ name:'بروشور' }, sampleMasterCats);
+  assert.strictEqual(r.length, 0);
+});
+
+section('T9 — scoreTmpl category bonus');
+
+function scoreTmplCategoryBonus(template, product) {
+  const prodCat = product.productCategory || resolveProductCategory(product.name);
+  const tmplCat = resolveProductCategory(template.name);
+  return (prodCat && tmplCat && prodCat === tmplCat) ? 0.10 : 0;
+}
+
+test('same category gives 0.10 bonus', () => {
+  const bonus = scoreTmplCategoryBonus({ name:'بروشور 1000' }, { name:'بروشور A4' });
+  assert.strictEqual(bonus, 0.10);
+});
+
+test('different category gives 0 bonus', () => {
+  const bonus = scoreTmplCategoryBonus({ name:'بروشور 1000' }, { name:'بانر 3م' });
+  assert.strictEqual(bonus, 0);
+});
+
+test('unknown category gives 0 bonus', () => {
+  const bonus = scoreTmplCategoryBonus({ name:'قالب عام' }, { name:'منتج عام' });
+  assert.strictEqual(bonus, 0);
+});
+
 // ── summary ───────────────────────────────────────────────
 console.log(`\nresult: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
