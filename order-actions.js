@@ -3702,7 +3702,7 @@ export const orderActions = {
   async cancelOrder({
     db = defaultDb, orderId,
     reason = '', note = '',
-    userId, userName,
+    userId, userName, role = '',
   }) {
     if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
     if (!reason) return { ok: false, errors: ['⛔ سبب الإلغاء مطلوب'], warnings: [], orderId };
@@ -3711,8 +3711,8 @@ export const orderActions = {
     if (order.stage === 'cancelled') {
       return { ok: false, errors: ['الأوردر ملغي بالفعل'], warnings: [], orderId };
     }
-    if (order.stage === 'archived') {
-      return { ok: false, errors: ['لا يمكن إلغاء أوردر مؤرشف'], warnings: [], orderId };
+    if (order.stage === 'archived' && role !== 'admin') {
+      return { ok: false, errors: ['لا يمكن إلغاء أوردر مؤرشف — الأدمن فقط'], warnings: [], orderId };
     }
     try {
       const entry = auditEntry({
