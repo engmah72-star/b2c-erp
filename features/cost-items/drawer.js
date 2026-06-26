@@ -77,6 +77,7 @@
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
       supplierId:'', supplierName:'', supplierSpecialties:[],
       type:'', total:'', note:'', paperMeta:null,
+      itemQty:'', unitPrice:'', unit:'',
     };
   }
 
@@ -119,8 +120,14 @@
     const qty = parseFloat(prod?.qty || prods[0]?.qty) || 0;
 
     const allCi = o.costItems || [];
+    const _filterProd = _prodIdx >= 0 ? prods[_prodIdx] : null;
+    const _filterProdId = _filterProd?.productId || null;
     const ci = _prodIdx >= 0
-      ? allCi.filter(x => x.prodIdx === _prodIdx || x.prodIdx == null)
+      ? allCi.filter(x => {
+          if (_filterProdId && x.productId === _filterProdId) return true;
+          if (x.productId && _filterProdId && x.productId !== _filterProdId) return false;
+          return x.prodIdx === _prodIdx || x.prodIdx == null;
+        })
       : allCi;
     const existingTotal = ci.reduce((s,x) => s + (parseFloat(x.total)||0), 0);
     const pendingTotal  = _editIdx >= 0
@@ -438,6 +445,20 @@
         <div class="cid-cell cid-del-cell">
           <button class="cid-row-x" type="button" data-action="remove-row" data-rid="${row.id}" title="حذف الصف">✕</button>
         </div>
+      </div>
+      <div class="cid-qty-row" data-rid="${row.id}">
+        <label class="cid-qty-label">الكمية
+          <input type="number" placeholder="0" value="${escapeHtml(String(row.itemQty||''))}"
+                 data-cid-field="itemQty" data-rid="${row.id}" inputmode="numeric" min="0"/>
+        </label>
+        <label class="cid-qty-label">سعر الوحدة
+          <input type="number" placeholder="0" value="${escapeHtml(String(row.unitPrice||''))}"
+                 data-cid-field="unitPrice" data-rid="${row.id}" inputmode="decimal" min="0" step="0.01"/>
+        </label>
+        <label class="cid-qty-label cid-unit-label">الوحدة
+          <input type="text" placeholder="قطعة" value="${escapeHtml(row.unit||'')}"
+                 data-cid-field="unit" data-rid="${row.id}"/>
+        </label>
       </div>`;
   }
 
@@ -513,6 +534,20 @@
       <div class="cid-note-row">
         <label class="cid-note-label">📝 ملاحظة (اختياري)
           <input type="text" placeholder="مثال: دفعة جزئية، طلب خاص..." value="${escapeHtml(d?.note||'')}" data-cid-field="note" data-rid="edit"/>
+        </label>
+      </div>
+      <div class="cid-qty-row" data-rid="edit">
+        <label class="cid-qty-label">الكمية
+          <input type="number" placeholder="0" value="${escapeHtml(String(d?.itemQty||''))}"
+                 data-cid-field="itemQty" data-rid="edit" inputmode="numeric" min="0"/>
+        </label>
+        <label class="cid-qty-label">سعر الوحدة
+          <input type="number" placeholder="0" value="${escapeHtml(String(d?.unitPrice||''))}"
+                 data-cid-field="unitPrice" data-rid="edit" inputmode="decimal" min="0" step="0.01"/>
+        </label>
+        <label class="cid-qty-label cid-unit-label">الوحدة
+          <input type="text" placeholder="قطعة" value="${escapeHtml(d?.unit||'')}"
+                 data-cid-field="unit" data-rid="edit"/>
         </label>
       </div>`;
   }
@@ -642,6 +677,27 @@
       });
     });
 
+    // Qty/unitPrice/unit inputs (T1)
+    _drawer.querySelectorAll('[data-cid-field="itemQty"][data-rid],[data-cid-field="unitPrice"][data-rid],[data-cid-field="unit"][data-rid]').forEach(el => {
+      const rid = el.dataset.rid;
+      const field = el.dataset.cidField;
+      el.addEventListener('input', (e) => {
+        const row = rid === 'edit' ? _editDraft : _drafts.find(x => x.id === rid);
+        if(!row) return;
+        row[field] = e.target.value;
+        if(field === 'itemQty' || field === 'unitPrice'){
+          const q = parseFloat(row.itemQty) || 0;
+          const u = parseFloat(row.unitPrice) || 0;
+          if(q > 0 && u > 0){
+            row.total = String(Math.round(q * u * 100) / 100);
+            const ti = _drawer.querySelector(`[data-cid-field="total"][data-rid="${rid}"]`);
+            if(ti) ti.value = row.total;
+            _updateTotals();
+          }
+        }
+      });
+    });
+
     // Paper calc inputs (edit mode only)
     _drawer.querySelectorAll('[data-cid-paper]').forEach(el => {
       el.addEventListener('input', (e) => {
@@ -666,7 +722,16 @@
     const o = c?.getOrder(_orderId);
     if(!o) return;
     const allCi = o.costItems || [];
-    const ci = _prodIdx >= 0 ? allCi.filter(x => x.prodIdx === _prodIdx || x.prodIdx == null) : allCi;
+    const prods = o.products || [];
+    const _fp = _prodIdx >= 0 ? prods[_prodIdx] : null;
+    const _fpId = _fp?.productId || null;
+    const ci = _prodIdx >= 0
+      ? allCi.filter(x => {
+          if (_fpId && x.productId === _fpId) return true;
+          if (x.productId && _fpId && x.productId !== _fpId) return false;
+          return x.prodIdx === _prodIdx || x.prodIdx == null;
+        })
+      : allCi;
     const existingTotal = ci.reduce((s,x)=>s+(parseFloat(x.total)||0), 0);
     const batchTotal    = _drafts.reduce((s,r)=>s+(parseFloat(r.total)||0), 0);
     const validCount    = _drafts.filter(r => r.supplierId && r.type && parseFloat(r.total) > 0).length;
@@ -1002,6 +1067,7 @@
       supplierId: item.supplierId||'', supplierName: item.supplierName||'',
       supplierSpecialties: specs, type: item.type||'',
       total: String(item.total||''), note: item.note||'', paperMeta: item.paperMeta||null,
+      itemQty: String(item.itemQty||''), unitPrice: String(item.unitPrice||''), unit: item.unit||'',
     };
     render();
     setTimeout(() => _drawer.querySelector('[data-cid-field="total"][data-rid="edit"]')?.focus(), 50);
@@ -1059,9 +1125,11 @@
           type: row.type, total: parseFloat(row.total),
           supplierId: row.supplierId, supplierName: row.supplierName,
           note: row.note||'', walletId:'', paperMeta: row.paperMeta||{},
+          itemQty: row.itemQty||'', unitPrice: row.unitPrice||'', unit: row.unit||'',
         },
         role, userId, userName, wallets, isEdit:false, editIdx:-1,
         allowedTypes: masterCats.map(x => x.label),
+        masterCats,
       });
       if(res.ok){
         okCount++;
@@ -1099,12 +1167,14 @@
         supplierId: _editDraft.supplierId, supplierName: _editDraft.supplierName,
         note: _editDraft.note||'', walletId:'', paperMeta: _editDraft.paperMeta||{},
         isExternal: true,
+        itemQty: _editDraft.itemQty||'', unitPrice: _editDraft.unitPrice||'', unit: _editDraft.unit||'',
       },
       role: c.getCurrentRole ? c.getCurrentRole() : '',
       userId: (c.getCurrentUser && c.getCurrentUser()?.uid)||'',
       userName: c.getUserName ? c.getUserName() : '',
       wallets, isEdit:true, editIdx: _editIdx,
       allowedTypes: masterCats.map(x => x.label),
+      masterCats,
     });
     if(!res.ok){ toast('❌ '+(res.errors?.[0]||'فشل التعديل'), 'err'); return; }
     toast(`✅ تم التعديل — ${fn(total)} ج`, 'ok');

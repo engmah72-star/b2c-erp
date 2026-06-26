@@ -40,10 +40,18 @@ function validateCostItem({ order, payload, role, wallets = [], isEdit = false, 
   if (!payload) return { ok:false, errors:['بيانات البند ناقصة'], warnings:[] };
   const { type = '', total, walletId = '', supplierId = '' } = payload;
   const amt = parseFloat(total) || 0;
+  const itemQty   = parseFloat(payload.itemQty) || 0;
+  const unitPrice = parseFloat(payload.unitPrice) || 0;
   if (!type || !type.trim()) errors.push('اختر نوع البند');
   else if (allowedTypes.length && !allowedTypes.map(t => _normalizeCostType(t)).includes(_normalizeCostType(type)))
     errors.push('نوع البند غير مُعرَّف في خدمات الإنتاج بالإعدادات');
   if (amt <= 0) errors.push('أدخل تكلفة صحيحة');
+  if (itemQty > 0 && unitPrice > 0) {
+    const expected = Math.round(itemQty * unitPrice * 100) / 100;
+    if (Math.abs(amt - expected) > 0.5) {
+      warnings.push(`⚠️ الإجمالي (${amt.toLocaleString('ar-EG')}) لا يطابق الكمية × سعر الوحدة (${expected.toLocaleString('ar-EG')})`);
+    }
+  }
   const cur = order.stage || '';
   if (cur === 'cancelled') errors.push('لا يمكن تسجيل تكلفة على أوردر ملغي');
   if (role && !['admin','operation_manager','production_agent'].includes(role)) {
@@ -232,15 +240,20 @@ test('edit mode skips wallet balance check', () => {
 section('Schema contract — cost item shape (regression guard)');
 
 test('cost item required fields match schema (RULE 6)', () => {
-  // Documents the schema that downstream consumers rely on (per
-  // production.html line refs + dashboards + reports)
   const required = [
     'costItemId','orderId','isExternal','type','supplierId','supplierName',
     'prodIdx','total','note','date','addedAt','addedBy',
   ];
-  // recordCostItem builds the item with these keys — if any are removed
-  // here, the contract drifts (this test is a sentinel).
   assert.ok(required.every(k => typeof k === 'string'));
+});
+
+test('cost item optional T1/T3/T4 fields documented in schema', () => {
+  const optional = [
+    'itemQty','unitPrice','unit',
+    'category','subcategory',
+    'printType','productId',
+  ];
+  assert.ok(optional.every(k => typeof k === 'string'));
 });
 
 section('validateCostItem — price deviation warnings');
@@ -308,6 +321,114 @@ test('"طباعة" matches allowedType "الطباعة" via normalization', () =
     allowedTypes: ['الطباعة', 'ورق'],
   });
   assert.strictEqual(r.ok, true);
+});
+
+section('T1 — qty × unitPrice consistency warning');
+
+test('mismatched qty × unitPrice triggers warning (still ok)', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:500, supplierId:'s1', itemQty:10, unitPrice:40 },
+    role: 'admin',
+  });
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.warnings.some(w => w.includes('لا يطابق')));
+});
+
+test('matched qty × unitPrice has no consistency warning', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:400, supplierId:'s1', itemQty:10, unitPrice:40 },
+    role: 'admin',
+  });
+  assert.strictEqual(r.ok, true);
+  assert.ok(!r.warnings.some(w => w.includes('لا يطابق')));
+});
+
+test('empty qty/unitPrice skips consistency check', () => {
+  const r = validateCostItem({
+    order: { stage:'production' },
+    payload: { type:'طباعة', total:400, supplierId:'s1' },
+    role: 'admin',
+  });
+  assert.strictEqual(r.ok, true);
+  assert.ok(!r.warnings.some(w => w.includes('لا يطابق')));
+});
+
+section('T2 — matchCostItemProduct helper');
+
+function matchCostItemProduct(ci, products) {
+  if (!ci || !Array.isArray(products) || !products.length) return { product: null, index: -1 };
+  if (ci.productId) {
+    const idx = products.findIndex(p => p.productId === ci.productId);
+    if (idx >= 0) return { product: products[idx], index: idx };
+  }
+  const pi = ci.prodIdx != null ? Number(ci.prodIdx) : -1;
+  if (pi >= 0 && pi < products.length) return { product: products[pi], index: pi };
+  return { product: null, index: -1 };
+}
+
+test('productId match (preferred over prodIdx)', () => {
+  const prods = [{ productId:'p1', name:'A' }, { productId:'p2', name:'B' }];
+  const ci = { productId:'p2', prodIdx:0 };
+  const m = matchCostItemProduct(ci, prods);
+  assert.strictEqual(m.index, 1);
+  assert.strictEqual(m.product.name, 'B');
+});
+
+test('prodIdx fallback when no productId', () => {
+  const prods = [{ name:'A' }, { name:'B' }];
+  const ci = { prodIdx:1 };
+  const m = matchCostItemProduct(ci, prods);
+  assert.strictEqual(m.index, 1);
+  assert.strictEqual(m.product.name, 'B');
+});
+
+test('null ci returns no match', () => {
+  const m = matchCostItemProduct(null, [{ name:'A' }]);
+  assert.strictEqual(m.index, -1);
+  assert.strictEqual(m.product, null);
+});
+
+test('productId not found falls back to prodIdx', () => {
+  const prods = [{ productId:'p1', name:'A' }, { productId:'p2', name:'B' }];
+  const ci = { productId:'p99', prodIdx:0 };
+  const m = matchCostItemProduct(ci, prods);
+  assert.strictEqual(m.index, 0);
+  assert.strictEqual(m.product.name, 'A');
+});
+
+section('T3 — resolveCostItemCategory helper');
+
+function resolveCostItemCategory(type, masterCats) {
+  if (!type || !Array.isArray(masterCats) || !masterCats.length) return { category: '', subcategory: '' };
+  const norm = _normalizeCostType(type);
+  const match = masterCats.find(c =>
+    c.label === type || _normalizeCostType(c.label) === norm
+  );
+  if (!match) return { category: '', subcategory: '' };
+  return { category: match.group || '', subcategory: match.label || '' };
+}
+
+test('resolves category from master list', () => {
+  const cats = [{ label:'طباعة ديجيتال', group:'طباعة' }, { label:'سلفنة', group:'تشطيبات' }];
+  const r = resolveCostItemCategory('طباعة ديجيتال', cats);
+  assert.strictEqual(r.category, 'طباعة');
+  assert.strictEqual(r.subcategory, 'طباعة ديجيتال');
+});
+
+test('resolves via normalization (ال prefix)', () => {
+  const cats = [{ label:'طباعة', group:'طباعة' }];
+  const r = resolveCostItemCategory('الطباعة', cats);
+  assert.strictEqual(r.category, 'طباعة');
+  assert.strictEqual(r.subcategory, 'طباعة');
+});
+
+test('no match returns empty', () => {
+  const cats = [{ label:'طباعة', group:'طباعة' }];
+  const r = resolveCostItemCategory('custom_xyz', cats);
+  assert.strictEqual(r.category, '');
+  assert.strictEqual(r.subcategory, '');
 });
 
 // ── summary ───────────────────────────────────────────────

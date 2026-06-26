@@ -519,6 +519,40 @@ export function orderIsOffset(order) {
 }
 
 /**
+ * matchCostItemProduct — T2: prodIdx→productId migration helper.
+ * Resolves which product a cost item belongs to:
+ *   1. productId (stable ID, preferred)
+ *   2. prodIdx   (legacy array index, fallback)
+ * Returns { product, index } or { product: null, index: -1 }.
+ */
+export function matchCostItemProduct(ci, products) {
+  if (!ci || !Array.isArray(products) || !products.length) return { product: null, index: -1 };
+  if (ci.productId) {
+    const idx = products.findIndex(p => p.productId === ci.productId);
+    if (idx >= 0) return { product: products[idx], index: idx };
+  }
+  const pi = ci.prodIdx != null ? Number(ci.prodIdx) : -1;
+  if (pi >= 0 && pi < products.length) return { product: products[pi], index: pi };
+  return { product: null, index: -1 };
+}
+
+/**
+ * resolveCostItemCategory — T3: auto-derive category/subcategory from master categories.
+ * @param {string} type — cost item type (e.g. 'طباعة ديجيتال')
+ * @param {Array}  masterCats — [{label, group, ...}]
+ * @returns {{ category: string, subcategory: string }}
+ */
+export function resolveCostItemCategory(type, masterCats) {
+  if (!type || !Array.isArray(masterCats) || !masterCats.length) return { category: '', subcategory: '' };
+  const norm = normalizeCostType(type);
+  const match = masterCats.find(c =>
+    c.label === type || normalizeCostType(c.label) === norm
+  );
+  if (!match) return { category: '', subcategory: '' };
+  return { category: match.group || '', subcategory: match.label || '' };
+}
+
+/**
  * عمر الأوردر في مرحلته الحالية بالساعات.
  * يستخدم order.stageEnteredAt[stage] إن وجد، وإلا يرجع 0.
  */
@@ -1220,11 +1254,15 @@ export function validateStageRequirements(order, fromStage) {
       const isReadyStatus = (ps) => ps === PRODUCT_STATUSES.READY
                                  || ps === PRODUCT_STATUSES.PRINTED
                                  || ps === PRODUCT_STATUSES.DONE;
-      const hasGlobalCost = costItems.some(ci => ci && (ci.prodIdx == null));
+      const hasGlobalCost = costItems.some(ci => ci && (ci.prodIdx == null && !ci.productId));
       const productsMissingCost = [];
       products.forEach((p, pi) => {
         if (!isReadyStatus(p.productStatus)) return;
-        const linked = costItems.some(ci => ci && Number(ci.prodIdx) === pi);
+        const linked = costItems.some(ci => {
+          if (!ci) return false;
+          const m = matchCostItemProduct(ci, products);
+          return m.index === pi;
+        });
         if (!linked && !hasGlobalCost) productsMissingCost.push(p.name || `منتج ${pi + 1}`);
       });
       if (productsMissingCost.length) {
@@ -2183,7 +2221,7 @@ export function validateReverseSettle({ order, role }) {
  *
  * @param {Object} args
  * @param {Object} args.order            — الأوردر المستهدف
- * @param {Object} args.payload          — { type, total, supplierId, supplierName, note, walletId, paperMeta }
+ * @param {Object} args.payload          — { type, total, supplierId, supplierName, note, walletId, paperMeta, itemQty, unitPrice, unit }
  * @param {string} args.role             — دور المستخدم
  * @param {Array}  [args.wallets=[]]     — قائمة المحافظ (للتحقق من الرصيد)
  * @param {boolean}[args.isEdit=false]   — هل العملية تعديل بند موجود؟
@@ -2198,6 +2236,8 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
 
   const { type = '', total, walletId = '', supplierId = '' } = payload;
   const amt = parseFloat(total) || 0;
+  const itemQty   = parseFloat(payload.itemQty) || 0;
+  const unitPrice = parseFloat(payload.unitPrice) || 0;
 
   // النوع
   if (!type || !type.trim()) errors.push('اختر نوع البند');
@@ -2206,6 +2246,15 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
 
   // المبلغ
   if (amt <= 0) errors.push('أدخل تكلفة صحيحة');
+
+  // T1: qty×unitPrice consistency check (warning only — total stays primary)
+  if (itemQty > 0 && unitPrice > 0) {
+    const expected = Math.round(itemQty * unitPrice * 100) / 100;
+    const diff = Math.abs(amt - expected);
+    if (diff > 0.5) {
+      warnings.push(`⚠️ الإجمالي (${amt.toLocaleString('ar-EG')}) لا يطابق الكمية × سعر الوحدة (${expected.toLocaleString('ar-EG')})`);
+    }
+  }
 
   // الـ stage
   const cur = order.stage || '';
