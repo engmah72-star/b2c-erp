@@ -1921,6 +1921,51 @@ export const orderActions = {
     }
   },
 
+  async toggleProductCostComplete({
+    db = defaultDb, orderId, prodIdx,
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['userId مطلوب'], warnings: [] };
+    if (!orderId) return { ok: false, errors: ['orderId مطلوب'], warnings: [] };
+    if (prodIdx == null || prodIdx < 0) return { ok: false, errors: ['prodIdx مطلوب'], warnings: [] };
+    if (!['admin', 'operation_manager', 'production_agent'].includes(role)) {
+      return { ok: false, errors: ['ليس لديك صلاحية إغلاق/فتح تسجيل بنود التكلفة'], warnings: [] };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [] };
+    const prods = order.products || [];
+    if (prodIdx >= prods.length) return { ok: false, errors: ['المنتج غير موجود'], warnings: [] };
+
+    const map = { ...(order.costCompletedProds || {}) };
+    const key = String(prodIdx);
+    const wasComplete = !!map[key];
+
+    if (wasComplete) {
+      delete map[key];
+    } else {
+      map[key] = { at: new Date().toISOString(), by: userId, byName: userName || '' };
+    }
+
+    const prodName = prods[prodIdx].name || `منتج ${prodIdx + 1}`;
+    const action = wasComplete
+      ? `🔓 إعادة فتح تسجيل بنود: ${prodName}`
+      : `✅ إنهاء تسجيل بنود: ${prodName}`;
+
+    try {
+      await updateDoc(order._ref, {
+        costCompletedProds: map,
+        timeline: [...(order.timeline || []), auditEntry({
+          action, userId, userName, kind: 'edit',
+          meta: { prodIdx, prodName, completed: !wasComplete },
+        })],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], completed: !wasComplete, prodIdx };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
+    }
+  },
+
   // ─── Production Actions (P2.1) ────────────
   //
   // Order-level operations triggered from production.html. All follow the

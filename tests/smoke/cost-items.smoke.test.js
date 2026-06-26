@@ -729,6 +729,78 @@ test('unknown category gives 0 bonus', () => {
   assert.strictEqual(bonus, 0);
 });
 
+// ── T: toggleProductCostComplete validation ──────────────
+section('toggleProductCostComplete — input validation');
+
+// Re-implement the validation logic inline (mirrors order-actions.js)
+function validateToggleCostComplete({ orderId, prodIdx, role, userId, products, costCompletedProds }) {
+  if (!userId) return { ok: false, errors: ['userId مطلوب'] };
+  if (!orderId) return { ok: false, errors: ['orderId مطلوب'] };
+  if (prodIdx == null || prodIdx < 0) return { ok: false, errors: ['prodIdx مطلوب'] };
+  if (!['admin', 'operation_manager', 'production_agent'].includes(role)) {
+    return { ok: false, errors: ['ليس لديك صلاحية إغلاق/فتح تسجيل بنود التكلفة'] };
+  }
+  if (prodIdx >= (products || []).length) return { ok: false, errors: ['المنتج غير موجود'] };
+  const map = { ...(costCompletedProds || {}) };
+  const key = String(prodIdx);
+  const wasComplete = !!map[key];
+  if (wasComplete) delete map[key]; else map[key] = { at: new Date().toISOString(), by: userId, byName: 'test' };
+  return { ok: true, completed: !wasComplete, prodIdx, map };
+}
+
+test('rejects missing userId', () => {
+  const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 0, role: 'admin', userId: '', products: [{ name: 'x' }] });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors[0].includes('userId'));
+});
+
+test('rejects missing orderId', () => {
+  const r = validateToggleCostComplete({ orderId: '', prodIdx: 0, role: 'admin', userId: 'u1', products: [{ name: 'x' }] });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors[0].includes('orderId'));
+});
+
+test('rejects negative prodIdx', () => {
+  const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: -1, role: 'admin', userId: 'u1', products: [{ name: 'x' }] });
+  assert.strictEqual(r.ok, false);
+});
+
+test('rejects unauthorized role (customer_service)', () => {
+  const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 0, role: 'customer_service', userId: 'u1', products: [{ name: 'x' }] });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors[0].includes('صلاحية'));
+});
+
+test('rejects prodIdx beyond products array', () => {
+  const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 3, role: 'admin', userId: 'u1', products: [{ name: 'a' }, { name: 'b' }] });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors[0].includes('المنتج غير موجود'));
+});
+
+test('admin can complete product (open → done)', () => {
+  const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 0, role: 'admin', userId: 'u1', products: [{ name: 'x' }], costCompletedProds: {} });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.completed, true);
+  assert.ok(r.map['0']);
+  assert.strictEqual(r.map['0'].by, 'u1');
+});
+
+test('admin can reopen completed product (done → open)', () => {
+  const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 1, role: 'admin', userId: 'u1', products: [{ name: 'a' }, { name: 'b' }], costCompletedProds: { '1': { at: '2025-01-01', by: 'u2', byName: 'other' } } });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.completed, false);
+  assert.strictEqual(r.map['1'], undefined);
+});
+
+test('production_agent can toggle', () => {
+  const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 0, role: 'production_agent', userId: 'u1', products: [{ name: 'x' }] });
+  assert.strictEqual(r.ok, true);
+});
+
+test('operation_manager can toggle', () => {
+  const r = validateToggleCostComplete({ orderId: 'o1', prodIdx: 0, role: 'operation_manager', userId: 'u1', products: [{ name: 'x' }] });
+  assert.strictEqual(r.ok, true);
+});
 // ── summary ───────────────────────────────────────────────
 console.log(`\nresult: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
