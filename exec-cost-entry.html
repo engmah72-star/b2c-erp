@@ -468,6 +468,26 @@
       <div class="fg"><label>🔢 الكمية (اختياري — اتركه فارغاً لكل الكميات)</label>
         <input class="inp" id="tmpl-qty" type="number" placeholder="300">
       </div>
+      <div class="tmpl-meta-row">
+        <div class="fg fg-half"><label>🖨️ نوع الطباعة</label>
+          <select class="inp" id="tmpl-print-type">
+            <option value="">— الكل —</option>
+            <option value="digital">ديجيتال</option>
+            <option value="offset">أوفست</option>
+          </select>
+        </div>
+        <div class="fg fg-half"><label>📂 فئة المنتج</label>
+          <select class="inp" id="tmpl-category">
+            <option value="">— تلقائي —</option>
+            <option value="paper_prints">مطبوعات ورقية</option>
+            <option value="large_format">لارج فورمات</option>
+            <option value="packaging">تغليف وعلب</option>
+            <option value="stamps">أختام</option>
+            <option value="promotional">دعائيات</option>
+            <option value="design_only">تصميم فقط</option>
+          </select>
+        </div>
+      </div>
       <div class="tmpl-items-label">📋 بنود التكلفة <span class="text-r">*</span></div>
       <div id="tmpl-items-list"></div>
       <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="addTmplItem()">＋ إضافة بند</button>
@@ -2904,7 +2924,7 @@ function _renderLibTemplates(){
     }).length;
     return`<div class="lib-tmpl-card">
       <div class="lib-tmpl-hdr">
-        <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</div>
+        <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}${t.printType?` <span class="lib-pc-tag">${t.printType==='digital'?'ديجيتال':'أوفست'}</span>`:''}${t.productCategory?` <span class="lib-pc-tag">${{paper_prints:'ورقيات',large_format:'لارج فورمات',packaging:'تغليف',stamps:'أختام',promotional:'دعائيات',design_only:'تصميم'}[t.productCategory]||t.productCategory}</span>`:''}</div>
         <div class="lib-tmpl-acts">
           ${pendingCount?`<button type="button" class="lib-tmpl-bulk-btn" onclick="bulkApplyTemplate('${t.id}')" title="${pendingCount} أوردر بانتظار التطبيق">📦 ${pendingCount}</button>`:''}
           <button type="button" class="item-act-btn edit" onclick="openTmplModal('${t.id}')">✏️</button>
@@ -2967,6 +2987,7 @@ window.openTmplModal=function(id){
   const t=id?costTemplates.find(x=>x.id===id):null;
   setText('tmpl-modal-title',id?'✏️ تعديل القالب':'⚡ قالب جديد');
   sv('tmpl-id',id||'');sv('tmpl-name',t?.name||'');sv('tmpl-qty',t?.qty||'');
+  sv('tmpl-print-type',t?.printType||'');sv('tmpl-category',t?.productCategory||'');
   _tmplItems=t?t.costItems.map(c=>({...c})):[{type:'',supplierId:'',supplierName:'',amount:''}];
   _renderTmplItems();
   document.getElementById('tmpl-modal').hidden=false;
@@ -3001,17 +3022,18 @@ function _renderTmplItems(){
 }
 window.saveTmplModal=async function(){
   const name=gv('tmpl-name').trim(),qty=gv('tmpl-qty').trim(),id=gv('tmpl-id')||null;
+  const printType=gv('tmpl-print-type')||null;
+  const productCategory=gv('tmpl-category')||null;
   if(!name)return toast('⚠️ أدخل اسم المنتج','err');
   const items=_tmplItems.filter(c=>c.type&&c.supplierId&&parseFloat(c.amount)>0);
   if(!items.length)return toast('⚠️ أضف بنداً واحداً على الأقل بنوع + مورد + مبلغ','err');
   try{
     const{saveCostTemplate,findDuplicateTemplate}=await import('./core/cost-template-actions.js');
-    // Duplicate check for new templates only
     if(!id){
       const dup=findDuplicateTemplate(costTemplates,name,qty,null);
       if(dup&&!confirm(`⚠️ يوجد قالب "${dup.name}"${dup.qty?' ('+dup.qty+')':''} بالفعل.\n\nمتأكد إنك عايز تحفظ قالب جديد؟`))return;
     }
-    const r=await saveCostTemplate(db,{id,name,qty:qty||null,costItems:items},userName);
+    const r=await saveCostTemplate(db,{id,name,qty:qty||null,printType,productCategory,costItems:items},userName);
     if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
     await _loadCostTemplates();
     closeTmplModal();
@@ -3065,6 +3087,8 @@ window.saveCurrentCostAsTemplate=async function(prodIdx=-1){
   sv('tmpl-id','');
   sv('tmpl-name',name);
   sv('tmpl-qty',qty);
+  sv('tmpl-print-type',prod?.printType||'');
+  sv('tmpl-category',prod?.productCategory||resolveProductCategory(name)||'');
   _tmplItems=items.length?items:[{type:'',supplierId:'',supplierName:'',amount:''}];
   _renderTmplItems();
   document.getElementById('tmpl-modal').hidden=false;
