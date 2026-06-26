@@ -477,15 +477,7 @@
           </select>
         </div>
         <div class="fg fg-half"><label>📂 فئة المنتج</label>
-          <select class="inp" id="tmpl-category">
-            <option value="">— تلقائي —</option>
-            <option value="paper_prints">مطبوعات ورقية</option>
-            <option value="large_format">لارج فورمات</option>
-            <option value="packaging">تغليف وعلب</option>
-            <option value="stamps">أختام</option>
-            <option value="promotional">دعائيات</option>
-            <option value="design_only">تصميم فقط</option>
-          </select>
+          <select class="inp" id="tmpl-category"></select>
         </div>
       </div>
       <div class="tmpl-items-label">📋 بنود التكلفة <span class="text-r">*</span></div>
@@ -2924,7 +2916,7 @@ function _renderLibTemplates(){
     }).length;
     return`<div class="lib-tmpl-card">
       <div class="lib-tmpl-hdr">
-        <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}${t.printType?` <span class="lib-pc-tag">${t.printType==='digital'?'ديجيتال':'أوفست'}</span>`:''}${t.productCategory?` <span class="lib-pc-tag">${{paper_prints:'ورقيات',large_format:'لارج فورمات',packaging:'تغليف',stamps:'أختام',promotional:'دعائيات',design_only:'تصميم'}[t.productCategory]||t.productCategory}</span>`:''}</div>
+        <div class="lib-tmpl-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}${t.printType?` <span class="lib-pc-tag">${t.printType==='digital'?'ديجيتال':'أوفست'}</span>`:''}${t.productCategory?` <span class="lib-pc-tag">${t.productCategory}</span>`:''}</div>
         <div class="lib-tmpl-acts">
           ${pendingCount?`<button type="button" class="lib-tmpl-bulk-btn" onclick="bulkApplyTemplate('${t.id}')" title="${pendingCount} أوردر بانتظار التطبيق">📦 ${pendingCount}</button>`:''}
           <button type="button" class="item-act-btn edit" onclick="openTmplModal('${t.id}')">✏️</button>
@@ -2983,10 +2975,21 @@ window.bulkApplyTemplate=async function(templateId){
   _renderLibTemplates();
 };
 
+function _refreshTmplCategorySelect(sel){
+  const el=typeof sel==='string'?document.getElementById(sel):sel;
+  if(!el)return;
+  const groups=new Set();
+  masterCategories.forEach(c=>{if(c.group)groups.add(c.group);});
+  const prev=el.value;
+  el.innerHTML='<option value="">— الكل —</option>'+[...groups].map(g=>`<option value="${g}">${g}</option>`).join('');
+  if(prev)el.value=prev;
+}
+
 window.openTmplModal=function(id){
   const t=id?costTemplates.find(x=>x.id===id):null;
   setText('tmpl-modal-title',id?'✏️ تعديل القالب':'⚡ قالب جديد');
   sv('tmpl-id',id||'');sv('tmpl-name',t?.name||'');sv('tmpl-qty',t?.qty||'');
+  _refreshTmplCategorySelect('tmpl-category');
   sv('tmpl-print-type',t?.printType||'');sv('tmpl-category',t?.productCategory||'');
   _tmplItems=t?t.costItems.map(c=>({...c})):[{type:'',supplierId:'',supplierName:'',amount:''}];
   _renderTmplItems();
@@ -3083,12 +3086,20 @@ window.saveCurrentCostAsTemplate=async function(prodIdx=-1){
     }
   }
 
+  // Derive group from most common cost item type group
+  const typeToGroup={};
+  masterCategories.forEach(c=>{if(c.label&&c.group)typeToGroup[c.label]=c.group;});
+  const groupCounts={};
+  items.forEach(c=>{const g=typeToGroup[c.type];if(g){groupCounts[g]=(groupCounts[g]||0)+1;}});
+  const topGroup=Object.entries(groupCounts).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
+
   setText('tmpl-modal-title','💾 حفظ البنود كقالب');
   sv('tmpl-id','');
   sv('tmpl-name',name);
   sv('tmpl-qty',qty);
+  _refreshTmplCategorySelect('tmpl-category');
   sv('tmpl-print-type',prod?.printType||'');
-  sv('tmpl-category',prod?.productCategory||resolveProductCategory(name)||'');
+  sv('tmpl-category',topGroup);
   _tmplItems=items.length?items:[{type:'',supplierId:'',supplierName:'',amount:''}];
   _renderTmplItems();
   document.getElementById('tmpl-modal').hidden=false;
