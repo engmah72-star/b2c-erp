@@ -6,6 +6,7 @@
  */
 
 import { normalizeCostType } from './cost-type-normalize.js';
+import { resolveProductCategory } from './product-taxonomy.js';
 
 // ── Arabic-aware normalisation (extended — includes hamza/ta-marbuta) ──
 export function normAr(s) {
@@ -43,15 +44,15 @@ function _extractQtyFromProd(p) {
 
 /**
  * Score a template against a product (0–1).
- * Weights: name 50%, qty 25%, extras coverage 20%, print type 5%.
+ * Weights: name 45%, qty 25%, extras 15%, print type 5%, category 10%.
  */
 export function scoreTmpl(template, product) {
   let score = 0;
   const reasons = [];
 
-  // 1. Name (50% — dominant signal)
+  // 1. Name (45% — dominant signal)
   const ns = _similarity(normAr(product.name), normAr(template.name));
-  score += ns * 0.5;
+  score += ns * 0.45;
   if (ns >= 0.85) reasons.push('اسم مطابق');
   else if (ns >= 0.6) reasons.push('اسم مشابه');
 
@@ -67,12 +68,12 @@ export function scoreTmpl(template, product) {
     score += 0.08;
   }
 
-  // 3. Extras coverage (20%)
+  // 3. Extras coverage (15%)
   const extras = product.extras || [];
   if (extras.length) {
     const ctypes = (template.costItems || []).map(c => normAr(c.type || ''));
     const covered = extras.filter(e => ctypes.some(ct => ct.includes(normAr(e)) || normAr(e).includes(ct)));
-    score += covered.length / extras.length * 0.20;
+    score += covered.length / extras.length * 0.15;
     if (covered.length) reasons.push('يشمل ' + covered.join('+'));
   }
 
@@ -83,6 +84,14 @@ export function scoreTmpl(template, product) {
       score += 0.05;
       reasons.push(product.printType === 'digital' ? 'ديجيتال' : 'أوفست');
     }
+  }
+
+  // 5. Product category match (10% — T9)
+  const prodCat = product.productCategory || resolveProductCategory(product.name);
+  const tmplCat = resolveProductCategory(template.name);
+  if (prodCat && tmplCat && prodCat === tmplCat) {
+    score += 0.10;
+    reasons.push('نفس الفئة');
   }
 
   return { score, reasons };

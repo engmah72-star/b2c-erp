@@ -3,25 +3,33 @@
  * ──────────────────────────────────────────────────────────
  * أسعار ثابتة مرجعية — تُعرَّف مرة واحدة وتُملأ تلقائياً
  *
- * المخزن: master_lists/fixed_prices  { prices: [...] }
- * كل سعر: { id, type, amount, printType?, supplierId?, supplierName?, note?, updatedAt, updatedBy }
+ * T6 Migration: moved from single-doc array (master_lists/fixed_prices)
+ * to individual docs in collection (fixed_prices/{priceId}).
+ * Legacy fallback reads old doc if collection is empty.
  */
 
-import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {
+  doc, getDoc, setDoc, deleteDoc, writeBatch,
+  collection, getDocs, query, limit,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { normalizeCostType } from './cost-type-normalize.js';
 import { resolveSupplierName } from './supplier-resolve.js';
 
-const FP_REF = (db) => doc(db, 'master_lists', 'fixed_prices');
+const FP_COL = (db) => collection(db, 'fixed_prices');
+const FP_DOC = (db, id) => doc(db, 'fixed_prices', id);
+const LEGACY_REF = (db) => doc(db, 'master_lists', 'fixed_prices');
 
 export async function getFixedPrices(db) {
-  const snap = await getDoc(FP_REF(db));
-  return snap.exists() ? (snap.data().prices || []) : [];
+  const colSnap = await getDocs(query(FP_COL(db), limit(500)));
+  if (!colSnap.empty) {
+    return colSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+  const legacySnap = await getDoc(LEGACY_REF(db));
+  return legacySnap.exists() && !legacySnap.data().migrated
+    ? (legacySnap.data().prices || [])
+    : [];
 }
 
-/**
- * Find matching fixed price for a cost type + optional print type.
- * Returns the best match: exact printType match > no-printType entry > null.
- */
 export function lookupFixedPrice(prices, type, printType) {
   if (!type || !prices.length) return null;
   const nt = normalizeCostType(type);
@@ -45,9 +53,6 @@ export async function saveFixedPrice(db, { id, type, amount, printType, supplier
     ? await resolveSupplierName(db, supplierId, rawSupplierName).catch(() => rawSupplierName || '')
     : (rawSupplierName || '');
 
-  const snap = await getDoc(FP_REF(db));
-  const prices = snap.exists() ? (snap.data().prices || []) : [];
-
   const priceId = id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
   const entry = {
     id: priceId,
@@ -62,11 +67,8 @@ export async function saveFixedPrice(db, { id, type, amount, printType, supplier
     updatedBy: userName || '',
   };
 
-  const idx = prices.findIndex(p => p.id === priceId);
-  if (idx >= 0) prices[idx] = entry; else prices.push(entry);
-  await setDoc(FP_REF(db), { prices }, { merge: true });
+  await setDoc(FP_DOC(db, priceId), entry);
 
-  // fire-and-forget: sync fixed price → library pinnedPrice
   import('./cost-library-actions.js').then(({ searchCostLibrary, pinLibraryPrice }) => {
     searchCostLibrary({ db, type: type.trim() }).then(items => {
       for (const item of items) {
@@ -79,9 +81,23 @@ export async function saveFixedPrice(db, { id, type, amount, printType, supplier
 }
 
 export async function deleteFixedPrice(db, priceId) {
-  const snap = await getDoc(FP_REF(db));
-  if (!snap.exists()) return { ok: true };
-  const prices = (snap.data().prices || []).filter(p => p.id !== priceId);
-  await setDoc(FP_REF(db), { prices });
+  await deleteDoc(FP_DOC(db, priceId));
   return { ok: true };
+}
+
+export async function migrateFixedPrices(db) {
+  const legacySnap = await getDoc(LEGACY_REF(db));
+  if (!legacySnap.exists() || legacySnap.data().migrated) return { ok: true, migrated: 0 };
+  const prices = legacySnap.data().prices || [];
+  if (!prices.length) {
+    await setDoc(LEGACY_REF(db), { migrated: true, migratedAt: new Date().toISOString() }, { merge: true });
+    return { ok: true, migrated: 0 };
+  }
+  const batch = writeBatch(db);
+  for (const p of prices) {
+    batch.set(FP_DOC(db, p.id), p);
+  }
+  batch.set(LEGACY_REF(db), { migrated: true, migratedAt: new Date().toISOString() }, { merge: true });
+  await batch.commit();
+  return { ok: true, migrated: prices.length };
 }

@@ -552,6 +552,7 @@ import { collection, doc, onSnapshot, getDoc, query, where, limit } from "https:
 import { orderActions } from "./order-actions.js";
 import { getTmplMatches } from "./core/cost-template-matching.js";
 import { getFixedPrices, lookupFixedPrice, saveFixedPrice, deleteFixedPrice } from "./core/fixed-prices-actions.js";
+import { getExpectedCostTypes, resolveProductCategory } from './core/product-taxonomy.js';
 import { dataCache, cachedQuery } from './core/data-cache.js';
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
@@ -582,12 +583,7 @@ function getExpectedTypes(order){
   if(!masterCategories.length)return[];
   const types=new Set();
   (order.products||[]).forEach(p=>{
-    const pt=(p.printType||'').toLowerCase();
-    if(!pt)return;
-    // derive expected types from masterCategories using printTypes[] field set in settings
-    masterCategories
-      .filter(c=>c.isCostItem&&(c.printTypes||[]).some(x=>x===pt||pt.includes(x)||x.includes(pt)))
-      .forEach(c=>types.add(c.label));
+    getExpectedCostTypes(p,masterCategories).forEach(t=>types.add(t));
   });
   return[...types];
 }
@@ -603,14 +599,7 @@ function getCompleteness(order){
 }
 
 function getExpectedTypesForProduct(prod){
-  if(!masterCategories.length||!prod)return[];
-  const pt=(prod.printType||'').toLowerCase();
-  if(!pt)return[];
-  const types=new Set();
-  masterCategories
-    .filter(c=>c.isCostItem&&(c.printTypes||[]).some(x=>x===pt||pt.includes(x)||x.includes(pt)))
-    .forEach(c=>types.add(c.label));
-  return[...types];
+  return getExpectedCostTypes(prod,masterCategories);
 }
 function getProductCostItems(o,prodIdx){
   const all=(o.costItems||[]).filter(_isActiveCostItem);
@@ -2659,7 +2648,11 @@ let _tmplItems=[];
 let fixedPrices=[];
 
 async function _loadFixedPrices(){
-  try{fixedPrices=await getFixedPrices(db);_renderFixedPricesPanel();}catch(e){console.warn('fixed prices load:',e);}
+  try{
+    const{migrateFixedPrices}=await import('./core/fixed-prices-actions.js');
+    migrateFixedPrices(db).catch(()=>{});
+    fixedPrices=await getFixedPrices(db);_renderFixedPricesPanel();
+  }catch(e){console.warn('fixed prices load:',e);}
 }
 
 function _renderFixedPricesPanel(){
@@ -2732,7 +2725,8 @@ window.saveFixedPriceEntry=async function(){
 
 async function _loadCostTemplates(){
   try{
-    const{getCostTemplates}=await import('./core/cost-template-actions.js');
+    const{getCostTemplates,migrateCostTemplates}=await import('./core/cost-template-actions.js');
+    migrateCostTemplates(db).catch(()=>{});
     costTemplates=await getCostTemplates(db);
     _renderLibTemplates();
     if(activeId){const o=orders.find(x=>x._id===activeId);if(o)_renderTmplApply(o);}
