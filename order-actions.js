@@ -34,6 +34,8 @@ import {
   fmtDateAr,
   validateOrderResponsibility,
   ORDER_DESIGN_STAGES,
+  matchCostItemProduct,
+  resolveCostItemCategory,
 } from './orders.js';
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -1574,6 +1576,7 @@ export const orderActions = {
     wallets = [],
     isEdit = false, editIdx = -1,
     allowedTypes = [],
+    masterCats = [],
   }) {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
@@ -1600,9 +1603,13 @@ export const orderActions = {
       supplierId = '', supplierName: rawSupplierName = '',
       note = '', walletId = '',
       paperMeta = {},
+      itemQty: rawQty, unitPrice: rawUnitPrice, unit: rawUnit = '',
     } = payload;
     const type = normalizeCostType(rawType) || rawType;
     const total = parseFloat(rawTotal) || 0;
+    const itemQty   = parseFloat(rawQty) || 0;
+    const unitPrice = parseFloat(rawUnitPrice) || 0;
+    const unit      = (rawUnit || '').trim();
 
     // resolve fresh supplier name (non-blocking fallback to payload name)
     let supplierName = rawSupplierName;
@@ -1632,7 +1639,18 @@ export const orderActions = {
 
     // ── resolve stable productId alongside legacy prodIdx ──
     const _prod = prodIdx >= 0 ? (order.products || [])[prodIdx] : null;
-    const _productId = _prod?.productId || null;
+    const _productId = _prod?.productId || existingItem?.productId || null;
+
+    // ── T3: auto-derive category/subcategory from master categories ──
+    let _category = '', _subcategory = '';
+    if (masterCats.length) {
+      const resolved = resolveCostItemCategory(type, masterCats);
+      _category = resolved.category;
+      _subcategory = resolved.subcategory;
+    }
+
+    // ── T4: auto-derive printType from product ──
+    const _printType = _prod?.printType || '';
 
     // ── build new item ────────────────────────────────────
     const newItem = {
@@ -1645,6 +1663,12 @@ export const orderActions = {
       prodIdx: prodIdx >= 0 ? prodIdx : null,
       ...(_productId ? { productId: _productId } : {}),
       total,
+      ...(itemQty > 0 ? { itemQty } : {}),
+      ...(unitPrice > 0 ? { unitPrice } : {}),
+      ...(unit ? { unit } : {}),
+      ...(_category ? { category: _category } : {}),
+      ...(_subcategory ? { subcategory: _subcategory } : {}),
+      ...(_printType ? { printType: _printType } : {}),
       note,
       ...(paperMeta && Object.keys(paperMeta).length ? { paperMeta } : {}),
       date: new Date().toISOString().slice(0, 10),
@@ -1772,14 +1796,15 @@ export const orderActions = {
 
       // Fire-and-forget: auto-index in cost_item_library (non-blocking)
       if (!isEdit && type) {
-        const _prod = prodIdx >= 0 ? (order.products || [])[prodIdx] : (order.products || [])[0];
+        const _libProd = prodIdx >= 0 ? (order.products || [])[prodIdx] : (order.products || [])[0];
+        const _libQty = itemQty > 0 ? itemQty : (parseFloat(_libProd?.qty || 0) || 0);
         import('./core/cost-library-actions.js')
           .then(({ upsertCostLibraryItem }) => upsertCostLibraryItem({
             db, type,
-            productName: _prod?.name || '',
+            productName: _libProd?.name || '',
             supplierId: supplierId || '',
             supplierName: supplierName || '',
-            qty: parseFloat(_prod?.qty || 0) || 0,
+            qty: _libQty,
             total, orderId,
             userId: userId || '',
           }).catch(() => {}))
@@ -2167,8 +2192,12 @@ export const orderActions = {
     const removedProd = prods[prodIdx];
     prods.splice(prodIdx, 1);
     const ci = [...(order.costItems || [])];
+    const removedProductId = removedProd?.productId || null;
     const newCi = ci
-      .filter(c => c.prodIdx !== prodIdx)
+      .filter(c => {
+        if (removedProductId && c.productId === removedProductId) return false;
+        return c.prodIdx !== prodIdx;
+      })
       .map(c => ({ ...c, prodIdx: c.prodIdx > prodIdx ? c.prodIdx - 1 : c.prodIdx }));
     const removedPrice = parseFloat(removedProd?.salePrice || removedProd?.price || 0);
     const newSalePrice = Math.max(0, (parseFloat(order.salePrice) || 0) - removedPrice);
@@ -2305,7 +2334,12 @@ export const orderActions = {
     const prod = prodIdx >= 0 ? prods[prodIdx] : prods[0];
     if (!prod) return { ok: false, errors: ['⚠️ المنتج غير موجود'], warnings: [], orderId };
     const ci = order.costItems || [];
-    const prodCi = prodIdx >= 0 ? ci.filter(c => c.prodIdx === prodIdx || c.prodIdx == null) : ci;
+    const prodCi = prodIdx >= 0
+      ? ci.filter(c => {
+          const m = matchCostItemProduct(c, prods);
+          return m.index === prodIdx || m.index < 0;
+        })
+      : ci;
     if (!prodCi.length) return { ok: false, errors: ['⚠️ لا توجد بنود للحفظ'], warnings: [], orderId };
     const total = prodCi.reduce((s, c) => s + (parseFloat(c.total) || 0), 0);
     const today = new Date().toISOString().slice(0, 10);
@@ -2507,14 +2541,25 @@ export const orderActions = {
       let newI = 0;
       prods.forEach((_, i) => { if (!idxSet.has(i)) idxRemap.set(i, newI++); });
       const childCi = ci
-        .filter(c => c.prodIdx != null && idxSet.has(c.prodIdx))
+        .filter(c => {
+          const m = matchCostItemProduct(c, prods);
+          return m.index >= 0 && idxSet.has(m.index);
+        })
         .map(c => {
-          const childIdx = doneIdx.indexOf(c.prodIdx);
+          const m = matchCostItemProduct(c, prods);
+          const childIdx = doneIdx.indexOf(m.index);
           return { ...c, prodIdx: childIdx >= 0 ? childIdx : null };
         });
       const parentCi = ci
-        .filter(c => c.prodIdx == null || !idxSet.has(c.prodIdx))
-        .map(c => c.prodIdx == null ? c : { ...c, prodIdx: idxRemap.get(c.prodIdx) ?? null });
+        .filter(c => {
+          const m = matchCostItemProduct(c, prods);
+          return m.index < 0 || !idxSet.has(m.index);
+        })
+        .map(c => {
+          const m = matchCostItemProduct(c, prods);
+          if (m.index < 0) return c;
+          return { ...c, prodIdx: idxRemap.get(m.index) ?? null };
+        });
 
       const childData = {
         ...split.childOrderData,
