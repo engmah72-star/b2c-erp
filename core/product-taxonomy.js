@@ -104,25 +104,44 @@ export function getProductCategoryById(id) {
 export function getExpectedCostTypes(product, masterCategories) {
   if (!product || !masterCategories?.length) return [];
   const pt = (product.printType || '').toLowerCase();
-  if (!pt) return [];
+  const extras = Array.isArray(product.extras) ? product.extras : [];
 
-  const catId = product.productCategory || resolveProductCategory(product.name);
-  const cat = catId ? getProductCategoryById(catId) : null;
+  const seen = new Set();
+  const result = [];
+  const _add = label => { if (label && !seen.has(label)) { seen.add(label); result.push(label); } };
 
-  const base = masterCategories.filter(c =>
-    c.isCostItem !== false &&
-    (c.printTypes || []).some(x => x === pt || pt.includes(x) || x.includes(pt))
-  );
+  // 1) Extras selected in printing are the primary expected cost types
+  extras.forEach(ex => _add(ex));
 
-  if (!cat || !cat.costTypeHints?.length) {
-    return base.map(c => c.label);
+  // 2) Lamination selected → expect سلفنة-related cost
+  if (product.lamination && product.lamination !== 'بلا') {
+    const lamCat = masterCategories.find(c =>
+      c.isCostItem !== false && _norm(c.label).includes('سلفن')
+    );
+    if (lamCat) _add(lamCat.label);
   }
 
-  const hints = cat.costTypeHints.map(h => _norm(h));
-  const filtered = base.filter(c => {
-    const nl = _norm(c.label);
-    return hints.some(h => nl.includes(h) || h.includes(nl));
-  });
+  // 3) Fill from masterCategories matching printType (existing logic)
+  if (pt) {
+    const base = masterCategories.filter(c =>
+      c.isCostItem !== false &&
+      (c.printTypes || []).some(x => x === pt || pt.includes(x) || x.includes(pt))
+    );
 
-  return filtered.length ? filtered.map(c => c.label) : base.map(c => c.label);
+    const catId = product.productCategory || resolveProductCategory(product.name);
+    const cat = catId ? getProductCategoryById(catId) : null;
+
+    if (cat?.costTypeHints?.length) {
+      const hints = cat.costTypeHints.map(h => _norm(h));
+      const filtered = base.filter(c => {
+        const nl = _norm(c.label);
+        return hints.some(h => nl.includes(h) || h.includes(nl));
+      });
+      (filtered.length ? filtered : base).forEach(c => _add(c.label));
+    } else {
+      base.forEach(c => _add(c.label));
+    }
+  }
+
+  return result;
 }
