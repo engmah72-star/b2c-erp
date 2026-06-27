@@ -156,7 +156,7 @@ export async function rebuildFinancialProjection(db, orderId) {
     totalSettlementReversed: round2(totalSettlementReversed),
     totalReturnLoss: round2(totalReturnLoss),
     netGeneralExpense: round2(generalExpenseOut - generalExpenseIn),
-    ledgerEntries: ledgerSnap.size,
+    ledgerEntries: allDocs.length,
     reversedOps,
   };
 }

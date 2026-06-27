@@ -14,12 +14,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
-<script src="core/page-state.js"></script>
-<script src="sidebar-config.js"></script>
+<script src="core/page-state.js" defer></script>
+<script src="sidebar-config.js" defer></script>
 <script src="sidebar.js"></script>
 <link rel="stylesheet" href="approvals.css?v=1">
 <link rel="stylesheet" href="approval-workspace.css?v=2">
-<script src="financial-guard.js"></script>
+<script src="financial-guard.js" defer></script>
 <script type="module" src="inbox-badge.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
@@ -342,6 +342,7 @@ import { syncWorkspaceCtx, openWorkspace, closeWorkspace, wsSetTab } from './app
 import { initPageShortcuts } from './core/page-shortcuts.js';
 import { dataCache, cachedQuery } from './core/data-cache.js';
 import { getMasterList } from './core/static-store.js';
+import { fmtNum } from './core/dom-utils.js';
 
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let searchQuery = '';
@@ -382,7 +383,6 @@ let executingReq = null;
 let financialPolicy = null; // master_lists/financial_policy override (افتراضي advisory)
 let receivingReq = null;
 
-const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 const ICONS = { client_payment:'💰', refund:'↩️', salary:'👤', bonus:'🎁', deduction:'✂️', printer_payment:'🏭', shipper_payment:'🚚', shipping_cost:'🚚', shipping_settlement:'📦', transfer:'🔄', opening_balance:'🏦', adjustment:'⚖️', expense:'💸' };
 const CAT_AR = { client_payment:'دفعة عميل', refund:'استرداد عميل', salary:'راتب', bonus:'مكافأة', deduction:'خصم', printer_payment:'دفعة مطبعة', shipper_payment:'دفعة شركة شحن', shipping_cost:'تكلفة شحن', shipping_settlement:'تسوية شحن', transfer:'تحويل بين محافظ', opening_balance:'رصيد افتتاحي', adjustment:'تسوية رصيد', expense:'مصروف', admin_edit:'تعديل أدمن', transfer_fee:'رسوم تحويل', withdrawal:'سحب', withdrawal_fee:'رسوم سحب' };
 const REQ_TYPE_LBL = { supplier_payment:'🏭 دفعة مورد', salary:'👤 مرتب', advance:'💵 سلفة', bonus:'🎁 مكافأة', general:'💸 مصروف عام', client_refund:'↩️ استرداد عميل' };
@@ -536,48 +536,44 @@ function startListeners(){
   // Bounded — approvals page only needs orders for the ordersMap lookup
   // (display order code/client name on each approval row). Older archived
   // orders linked to historical approvals will fall back to id-only display.
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),
-    snap=>{ ordersMap.clear(); snap.docs.forEach(d=>ordersMap.set(d.id, {...d.data(), _id:d.id})); render(); },
-    err=>console.error('[approvals] orders:', err)
+  dataCache.subscribe(
+    cachedQuery('orders').orderBy('createdAt','desc').limit(3000).build(),
+    (docs) => { ordersMap.clear(); docs.forEach(d=>ordersMap.set(d._id, d)); render(); }
   );
 
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),
-    snap=>{ suppliers = snap.docs.map(d=>({...d.data(),_id:d.id})); },
-    err=>console.error('[approvals] suppliers:', err)
+  dataCache.subscribe(
+    cachedQuery('suppliers_v2').limit(500).build(),
+    (docs) => { suppliers = docs; }
   );
 
-  onSnapshot(query(collection(db,'employees'),limit(200)),
-    snap=>{ employees = snap.docs.map(d=>({...d.data(),_id:d.id})); },
-    err=>console.error('[approvals] employees:', err)
+  dataCache.subscribe(
+    cachedQuery('employees').limit(200).build(),
+    (docs) => { employees = docs; }
   );
 
   // C7: bounded — كان unbounded (listener realtime على transactions_v2 كاملاً).
   // أحدث 3000 tx تكفي للعمل اليومي (approval queue + recent history).
   // العمليات الأقدم تُقرأ من ledger.html / reports.html بـ pagination.
-  onSnapshot(query(collection(db,'transactions_v2'),orderBy('createdAt','desc'),limit(3000)),
-    snap=>{
-      allTxs = snap.docs.map(d=>({...d.data(),_id:d.id}))
-        .sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
+  dataCache.subscribe(
+    cachedQuery('transactions_v2').orderBy('createdAt','desc').limit(3000).build(),
+    (docs) => {
+      allTxs = docs.slice().sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
       txs = [...allTxs].filter(t=>t.approvalStatus)
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       updateCounts();
       render();_ps.markFresh();
-    },
-    err=>{
-      console.error('[approvals] tx error:', err);
-      document.getElementById('list-content').innerHTML = `<div class="empty-pl text-r">⛔ ${err.message}</div>`;
     }
   );
 
   // Bounded — recent payment requests only. Historical requests live
   // in their archives; the approvals queue is short-lived by design.
-  onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(1500)),
-    snap=>{
-      requests = snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(
+    cachedQuery('payment_requests').orderBy('requestedAt','desc').limit(1500).build(),
+    (docs) => {
+      requests = docs;
       updateCounts();
       render();
-    },
-    err=>console.error('[approvals] requests:', err)
+    }
   );
 }
 
@@ -666,13 +662,13 @@ function updateKPIs(){
   const monthRejected = [...txs,...requests].filter(x=>(x.approvalStatus==='rejected'||x.status==='rejected')&&(x.rejectedAt?.seconds||0)>=monthStart).length;
 
   const qEl=document.getElementById('kv-queue'); if(qEl) qEl.textContent = totalQueue;
-  const aEl=document.getElementById('kv-amount'); if(aEl) aEl.textContent = fn(totalAmt)+' ج';
-  const wEl=document.getElementById('kv-wallets'); if(wEl) wEl.textContent = fn(walletTotal)+' ج';
+  const aEl=document.getElementById('kv-amount'); if(aEl) aEl.textContent = fmtNum(totalAmt)+' ج';
+  const wEl=document.getElementById('kv-wallets'); if(wEl) wEl.textContent = fmtNum(walletTotal)+' ج';
   const wcEl=document.getElementById('kv-wallets-count'); if(wcEl) wcEl.textContent = walletsArr.length+' محفظة';
   const sEl=document.getElementById('kv-stale'); if(sEl) sEl.textContent = staleCount;
   const ssEl=document.getElementById('kv-stale-sub'); if(ssEl) ssEl.textContent = staleCount ? 'أقدمها '+_fmtAge(oldestHours) : 'كل الطلبات في الوقت';
   const sc=document.getElementById('kpi-stale'); if(sc) sc.style.setProperty('--kpi-c', staleCount>0?'var(--r)':'var(--g)');
-  const maEl=document.getElementById('kv-month-approved'); if(maEl) maEl.textContent = fn(monthAmt)+' ج';
+  const maEl=document.getElementById('kv-month-approved'); if(maEl) maEl.textContent = fmtNum(monthAmt)+' ج';
   const msEl=document.getElementById('kv-month-sub'); if(msEl) msEl.textContent = `${thisMonthApproved.length} معتمد · ${monthRejected} مرفوض`;
 }
 
@@ -687,7 +683,7 @@ function updateWalletsStrip(){
     return `<div class="wallet-chip">
       <span class="wallet-chip-ico">🏦</span>
       <span class="wallet-chip-name">${escapeHtml(w.name||w._id)}</span>
-      <span class="wallet-chip-bal" style="color:${bal<0?'var(--r)':bal===0?'var(--dim2)':'var(--g)'}">${fn(bal)} ج</span>
+      <span class="wallet-chip-bal" style="color:${bal<0?'var(--r)':bal===0?'var(--dim2)':'var(--g)'}">${fmtNum(bal)} ج</span>
     </div>`;
   }).join('');
 }
@@ -729,8 +725,8 @@ function _renderFilterChips(){
   const el=document.getElementById('active-filters-chips'); if(!el) return;
   const chips=[];
   if(filterType) chips.push(`نوع: ${REQ_TYPE_LBL[filterType]||filterType}`);
-  if(filterMin)  chips.push(`مبلغ ≥ ${fn(filterMin)} ج`);
-  if(filterMax)  chips.push(`مبلغ ≤ ${fn(filterMax)} ج`);
+  if(filterMin)  chips.push(`مبلغ ≥ ${fmtNum(filterMin)} ج`);
+  if(filterMax)  chips.push(`مبلغ ≤ ${fmtNum(filterMax)} ج`);
   if(filterFrom) chips.push(`من: ${filterFrom}`);
   if(filterTo)   chips.push(`إلى: ${filterTo}`);
   el.innerHTML = chips.map(c=>`<span class="filter-active-chip">${c}</span>`).join('');
@@ -836,7 +832,7 @@ function _renderGrouped(items, renderFn, bulkHtml=''){
   return bulkHtml + Object.entries(groups).map(([k,grpItems])=>{
     const total=grpItems.reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
     const lbl=REQ_TYPE_LBL[k]||CAT_AR[k]||k;
-    return `<div class="group-header"><span>${lbl} <b>(${grpItems.length})</b></span><span class="group-amt">${fn(total)} ج</span></div>`
+    return `<div class="group-header"><span>${lbl} <b>(${grpItems.length})</b></span><span class="group-amt">${fmtNum(total)} ج</span></div>`
       + grpItems.map(renderFn).join('');
   }).join('');
 }
@@ -899,7 +895,7 @@ function _updateSummary(items){
   const hasFilters = searchQuery||_hasActiveFilters();
   el.style.display = 'flex';
   el.innerHTML = `
-    <div class="summary-chip summary-amount"><b>${fn(total)} ج</b></div>
+    <div class="summary-chip summary-amount"><b>${fmtNum(total)} ج</b></div>
     <div class="summary-chip">${items.length} عنصر</div>
     ${typeChips}
     ${hasFilters?`<button type="button" onclick="clearSearch();clearAdvFilters()" style="margin-right:auto;padding:2px 10px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--dim2);cursor:pointer;font-family:inherit;font-size:var(--fs-xs)">✕ مسح الكل</button>`:''}
@@ -1102,7 +1098,7 @@ function renderRequestCard(r){
         <div class="apc-meta">${stIco} ${fmtDate(r.requestedAt)}${aging.isStale?' · <b style="color:var(--r)">⏳ متأخر</b>':''}${r.transferRef?' · <span style="font-family:monospace">'+escapeHtml(r.transferRef)+'</span>':''}</div>
       </div>
       <div class="apc-side">
-        <div class="apc-amt out">− ${fn(r.amount)} ج</div>
+        <div class="apc-amt out">− ${fmtNum(r.amount)} ج</div>
         ${_priorityBadge(r)}
       </div>
     </div>
@@ -1128,11 +1124,11 @@ function renderSuppliersDue(){
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <div style="flex:1;min-width:140px;background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.3);border-radius:var(--rad);padding:10px 14px">
         <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">💰 إجمالي المستحق (غير مطلوب)</div>
-        <div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--y)">${fn(grandUnpaid)} ج</div>
+        <div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--y)">${fmtNum(grandUnpaid)} ج</div>
       </div>
       <div style="flex:1;min-width:140px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.3);border-radius:var(--rad);padding:10px 14px">
         <div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold)">⏳ تحت طلب قائم</div>
-        <div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--p)">${fn(grandPending)} ج</div>
+        <div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--p)">${fmtNum(grandPending)} ج</div>
       </div>
     </div>
   `;
@@ -1149,8 +1145,8 @@ function renderSuppliersDue(){
           </div>
           <div class="text-left">
             <div class="txt-meta-sm">المستحق</div>
-            <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--y)">${fn(r.totalUnpaid)} ج</div>
-            ${r.totalPending > 0 ? `<div style="font-size:var(--fs-xs);color:var(--p)">+ ${fn(r.totalPending)} ج تحت طلب</div>` : ''}
+            <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--y)">${fmtNum(r.totalUnpaid)} ج</div>
+            ${r.totalPending > 0 ? `<div style="font-size:var(--fs-xs);color:var(--p)">+ ${fmtNum(r.totalPending)} ج تحت طلب</div>` : ''}
           </div>
           ${canRequest ? `<button type="button" onclick="requestForSupplier('${r.id}','${escapeHtml(r.name).replace(/'/g,"\\'")}','${r.type||''}')" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(0,217,126,.4);background:rgba(0,217,126,.12);color:var(--g);cursor:pointer;font-family:inherit;font-size:var(--fs-base);font-weight:var(--fw-extra)">💸 طلب دفع</button>` : ''}
         </div>
@@ -1165,7 +1161,7 @@ function renderSuppliersDue(){
                   ${i.note ? `<div class="txt-meta-xs">${escapeHtml(i.note)}</div>` : ''}
                 </div>
                 <div class="text-left">
-                  <span style="font-weight:var(--fw-extra);color:${i.pendingReqId?'var(--p)':'var(--y)'}">${fn(i.amount)} ج</span>
+                  <span style="font-weight:var(--fw-extra);color:${i.pendingReqId?'var(--p)':'var(--y)'}">${fmtNum(i.amount)} ج</span>
                   ${i.pendingReqId ? `<div style="font-size:var(--fs-tiny);color:var(--p)">⏳ تحت طلب</div>` : ''}
                 </div>
               </div>
@@ -1247,7 +1243,7 @@ window.refreshSupplierItemsList = function(){
         <div><b class="text-snow">${escapeHtml(i.type||'بند')}</b> <span class="text-muted">— ${escapeHtml(i.orderRefId)} — ${escapeHtml(i.clientName)}</span></div>
         ${i.note ? `<div style="color:var(--dim2);font-size:var(--fs-xs);margin-top:2px">${escapeHtml(i.note)}</div>` : ''}
       </div>
-      <span style="font-weight:var(--fw-extra);color:var(--y);font-size:var(--fs-base)">${fn(i.amount)} ج</span>
+      <span style="font-weight:var(--fw-extra);color:var(--y);font-size:var(--fs-base)">${fmtNum(i.amount)} ج</span>
     </label>
   `).join('');
   // خزّن العناصر للاستخدام لاحقاً
@@ -1277,7 +1273,7 @@ function updateSupItemsSum(){
   if(foot){
     foot.style.display = __supItemsSelected.length ? 'flex' : 'none';
     document.getElementById('rq-si-count').textContent = __supItemsSelected.length;
-    document.getElementById('rq-si-total').textContent = fn(sum);
+    document.getElementById('rq-si-total').textContent = fmtNum(sum);
   }
   // ملء المبلغ تلقائياً
   if(__supItemsSelected.length){
@@ -1304,7 +1300,7 @@ function renderCard(t){
         <div class="apc-meta">${escapeHtml(t.description||'—')} · ${escapeHtml(wName)}</div>
       </div>
       <div class="apc-side">
-        <div class="apc-amt ${isIn?'in':'out'}">${isIn?'+':'−'} ${fn(t.amount)} ج</div>
+        <div class="apc-amt ${isIn?'in':'out'}">${isIn?'+':'−'} ${fmtNum(t.amount)} ج</div>
         ${_priorityBadge(t)}
       </div>
     </div>
@@ -1431,13 +1427,13 @@ document.getElementById('rq-order')?.addEventListener('change', e=>{
   if(!o){ info.style.display='none'; return; }
   const totalCost = (o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
   info.style.display='block';
-  info.innerHTML = `📦 <b>${escapeHtml(o.orderId||o._id.slice(-6))}</b> — ${escapeHtml(o.clientName||'')} — مرحلة: <b>${STAGE_AR[o.stage]||o.stage}</b><br>💰 تكلفة الأوردر التراكمية: <b class="text-y">${fn(totalCost)} ج</b> (${(o.costItems||[]).length} بند)`;
+  info.innerHTML = `📦 <b>${escapeHtml(o.orderId||o._id.slice(-6))}</b> — ${escapeHtml(o.clientName||'')} — مرحلة: <b>${STAGE_AR[o.stage]||o.stage}</b><br>💰 تكلفة الأوردر التراكمية: <b class="text-y">${fmtNum(totalCost)} ج</b> (${(o.costItems||[]).length} بند)`;
   // بنود التكلفة (للـsupplier_payment فقط)
   if(activeReqType === 'supplier_payment' && (o.costItems||[]).length){
     fgCost.style.display = '';
     ciSel.innerHTML = '<option value="">— اختر بنداً للملء التلقائي —</option>' +
       (o.costItems||[]).map((c,idx)=>{
-        const lbl = `${c.type||'بند'} — ${fn(c.total||0)} ج${c.supplierName?' — '+c.supplierName:''}`;
+        const lbl = `${c.type||'بند'} — ${fmtNum(c.total||0)} ج${c.supplierName?' — '+c.supplierName:''}`;
         return `<option value="${idx}" data-amount="${c.total||0}" data-supplier-id="${c.supplierId||''}" data-supplier-name="${escapeHtml(c.supplierName||'')}" data-type="${escapeHtml(c.type||'')}">${escapeHtml(lbl)}</option>`;
       }).join('');
   } else if(fgCost){
@@ -1556,7 +1552,7 @@ window.saveRequest = async function(){
     reqData.costItemRefs = refs;
     const sumRefs = refs.reduce((s,r)=>s+r.amount, 0);
     if(Math.abs(sumRefs - amount) > 0.01){
-      return showToast(`⚠️ المبلغ (${fn(amount)}) لا يطابق مجموع البنود (${fn(sumRefs)})`,'err');
+      return showToast(`⚠️ المبلغ (${fmtNum(amount)}) لا يطابق مجموع البنود (${fmtNum(sumRefs)})`,'err');
     }
     // backward-compat: ضع البند الأول في الحقول المفردة
     const first = refs[0];
@@ -1588,11 +1584,11 @@ window.openExecuteModal = function(reqId){
   document.getElementById('exec-summary').innerHTML = `
     <div><b>${REQ_TYPE_LBL[r.type]||r.type}</b> — ${escapeHtml(supEmpName)}</div>
     <div style="color:var(--dim2);font-size:var(--fs-sm);margin-top:4px">السبب: ${escapeHtml(r.reason||'')}</div>
-    <div style="font-weight:var(--fw-heavy);color:var(--y);font-size:var(--fs-2xl);margin-top:6px">المبلغ: ${fn(r.amount)} ج</div>
+    <div style="font-weight:var(--fw-heavy);color:var(--y);font-size:var(--fs-2xl);margin-top:6px">المبلغ: ${fmtNum(r.amount)} ج</div>
     ${r.orderRefId?`<div style="color:var(--dim2);font-size:var(--fs-sm);margin-top:4px">📦 أوردر: ${escapeHtml(r.orderRefId)} (${escapeHtml(r.clientName||'')})</div>`:''}
   `;
   const wSel = document.getElementById('exec-wallet');
-  wSel.innerHTML = '<option value="">— اختر المحفظة —</option>' + walletsArr.map(w=>`<option value="${w._id}" data-name="${escapeHtml(w.name||'')}" data-bal="${w.balance||0}">${escapeHtml(w.name||'')} (رصيد: ${fn(w.balance||0)} ج)</option>`).join('');
+  wSel.innerHTML = '<option value="">— اختر المحفظة —</option>' + walletsArr.map(w=>`<option value="${w._id}" data-name="${escapeHtml(w.name||'')}" data-bal="${w.balance||0}">${escapeHtml(w.name||'')} (رصيد: ${fmtNum(w.balance||0)} ج)</option>`).join('');
   document.getElementById('exec-note').value = '';
   document.getElementById('exec-transfer-ref').value = '';
   const rf = document.getElementById('exec-receipt-file'); if(rf) rf.value = '';
@@ -1619,7 +1615,7 @@ window.executeRequest = async function(){
   const wOpt = wSel.selectedOptions[0];
   const wName = wOpt.dataset.name;
   const wBal = parseFloat(wOpt.dataset.bal)||0;
-  if(wBal < r.amount) return showToast(`⚠️ رصيد المحفظة غير كافٍ (${fn(wBal)} < ${fn(r.amount)})`,'err');
+  if(wBal < r.amount) return showToast(`⚠️ رصيد المحفظة غير كافٍ (${fmtNum(wBal)} < ${fmtNum(r.amount)})`,'err');
   const note = document.getElementById('exec-note').value.trim();
   const transferRef = document.getElementById('exec-transfer-ref').value.trim();
   if(!transferRef) return showToast('⚠️ أدخل رقم/مرجع التحويل','err');
@@ -1746,7 +1742,7 @@ window.confirmRequest = async function(reqId){
   if(!r.txId) return showToast('⚠️ لا توجد معاملة مرتبطة بالطلب','err');
   const tx = allTxs.find(t=>t._id===r.txId);
   if(!tx) return showToast('⚠️ المعاملة المرتبطة غير محمّلة — حدّث الصفحة','err');
-  if(!confirm(`تأكيد الطلب — ${fn(r.amount)} ج لـ ${r.supplierName||r.employeeName||r.clientName||'—'}؟`)) return;
+  if(!confirm(`تأكيد الطلب — ${fmtNum(r.amount)} ج لـ ${r.supplierName||r.employeeName||r.clientName||'—'}؟`)) return;
   const result = await approvalActions.confirmTransaction({db,tx,userId:currentUid,userName:currentUserName});
   if(!result.ok) return showToast('❌ '+((result.errors||[]).join(' · ')||'فشل التأكيد'),'err');
   showToast('✅ تم التأكيد — بانتظار اعتماد الأدمن','ok');
@@ -1758,7 +1754,7 @@ window.approveRequest = async function(reqId){
   const r = requests.find(x=>x._id===reqId);
   if(!r) return;
   if(!['pending','confirmed'].includes(r.status)) return showToast('⛔ هذا الطلب لا يمكن اعتماده الآن','err');
-  if(!confirm(`اعتماد نهائي للطلب — ${fn(r.amount)} ج لـ ${r.supplierName||r.employeeName||r.clientName||'—'}?`)) return;
+  if(!confirm(`اعتماد نهائي للطلب — ${fmtNum(r.amount)} ج لـ ${r.supplierName||r.employeeName||r.clientName||'—'}?`)) return;
   const result = await approvalActions.approvePaymentRequest({db,requestId:reqId,userId:currentUid,userName:currentUserName,policy:financialPolicy,requestStatus:r.status,confirmedBy:r.confirmedBy||''});
   if(!result.ok) return showToast('❌ '+((result.errors||[]).join(' · ')||'فشل'),'err');
   showToast('✅ تم الاعتماد النهائي + قُفل السجل','ok');
@@ -1841,7 +1837,7 @@ window.openOrderDetails = function(orderId){
   const orderTxs = allTxs.filter(t => t.orderId === orderId);
   const orderRequests = requests.filter(r => r.orderId === orderId);
 
-  const productsHtml = (o.products || []).map(p => `<li>${escapeHtml(p.name||'منتج')}${p.qty>1?' × '+p.qty:''}${p.unitPrice?` <span class="text-muted">(${fn(p.unitPrice)} ج)</span>`:''}</li>`).join('') || '—';
+  const productsHtml = (o.products || []).map(p => `<li>${escapeHtml(p.name||'منتج')}${p.qty>1?' × '+p.qty:''}${p.unitPrice?` <span class="text-muted">(${fmtNum(p.unitPrice)} ج)</span>`:''}</li>`).join('') || '—';
 
   // التصميم — عرض كل الـ files
   const designFiles = [];
@@ -1857,7 +1853,7 @@ window.openOrderDetails = function(orderId){
       <tr>
         <td>${escapeHtml(c.type||'بند')}</td>
         <td>${escapeHtml(c.supplierName||'—')}</td>
-        <td class="mono">${fn(c.total||0)} ج</td>
+        <td class="mono">${fmtNum(c.total||0)} ج</td>
         <td>${c.paid ? `<span class="text-g">✓ مدفوع</span><div class="txt-meta-tiny">${escapeHtml(c.paidVia||'')} · ${escapeHtml(c.paidTransferRef||'')}</div>` : '<span class="text-y">⏳ غير مدفوع</span>'}</td>
       </tr>`).join('')
     : '<tr><td colspan="4" style="text-align:center;color:var(--dim2)">لا توجد بنود</td></tr>';
@@ -1869,7 +1865,7 @@ window.openOrderDetails = function(orderId){
         const stIco = t.approvalStatus==='approved'?'🔒':t.approvalStatus==='confirmed'?'🔵':t.approvalStatus==='pending'?'⏳':t.approvalStatus==='rejected'?'❌':'';
         return `<div style="padding:6px 0;border-bottom:1px dashed var(--line);font-size:var(--fs-sm)">
           <div class="row-between">
-            <span style="color:${isIn?'var(--g)':'var(--r)'};font-weight:var(--fw-bold)">${isIn?'+':'−'} ${fn(t.amount)} ج</span>
+            <span style="color:${isIn?'var(--g)':'var(--r)'};font-weight:var(--fw-bold)">${isIn?'+':'−'} ${fmtNum(t.amount)} ج</span>
             <span style="color:var(--dim2);font-family:monospace">${escapeHtml(t.date||'')}</span>
           </div>
           <div class="text-snow">${escapeHtml(t.description||t.category||'')}</div>
@@ -1883,7 +1879,7 @@ window.openOrderDetails = function(orderId){
     ? orderRequests.sort((a,b)=>(b.requestedAt?.seconds||0)-(a.requestedAt?.seconds||0)).map(r => {
         const stMap = {requested:'⏳ بانتظار التنفيذ', awaiting_receipt:'📥 بانتظار الاستلام', pending:'⏳ بانتظار التأكيد', confirmed:'🔵 بانتظار الاعتماد', approved:'🔒 معتمدة', rejected:'❌ مرفوضة'};
         return `<div style="padding:6px 0;border-bottom:1px dashed var(--line);font-size:var(--fs-sm)">
-          <div>${REQ_TYPE_LBL[r.type]||r.type} — <b>${fn(r.amount)} ج</b> — ${escapeHtml(r.supplierName||r.employeeName||'')}</div>
+          <div>${REQ_TYPE_LBL[r.type]||r.type} — <b>${fmtNum(r.amount)} ج</b> — ${escapeHtml(r.supplierName||r.employeeName||'')}</div>
           <div class="txt-meta-xs">${escapeHtml(r.reason||'')} · ${stMap[r.status]||r.status} · ${escapeHtml(r.requestedByName||'')} · ${fmtDate(r.requestedAt)}</div>
         </div>`;
       }).join('')
@@ -1909,14 +1905,14 @@ window.openOrderDetails = function(orderId){
     <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)">
       <div style="font-size:var(--fs-sm);color:var(--dim2);font-weight:var(--fw-extra);margin-bottom:6px">💰 الأرقام المالية</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:6px;font-size:var(--fs-sm)">
-        <div><span class="text-muted">السعر:</span> <b>${fn(sale)}</b></div>
-        ${disc>0?`<div><span class="text-muted">خصم:</span> <b class="text-r">−${fn(disc)}</b></div>`:''}
-        ${sFee>0?`<div><span class="text-muted">شحن العميل:</span> <b>${fn(sFee)}</b></div>`:''}
-        <div><span class="text-muted">الصافي:</span> <b>${fn(net)}</b></div>
-        <div><span class="text-muted">المدفوع:</span> <b class="text-g">${fn(paid)}</b></div>
-        <div><span class="text-muted">المتبقي:</span> <b style="color:${rem>0?'var(--r)':'var(--g)'}">${fn(rem)}</b></div>
-        <div><span class="text-muted">التكلفة:</span> <b class="text-y">${fn(totalCost)}</b></div>
-        <div><span class="text-muted">المدفوع للموردين:</span> <b>${fn(paidCost)}</b></div>
+        <div><span class="text-muted">السعر:</span> <b>${fmtNum(sale)}</b></div>
+        ${disc>0?`<div><span class="text-muted">خصم:</span> <b class="text-r">−${fmtNum(disc)}</b></div>`:''}
+        ${sFee>0?`<div><span class="text-muted">شحن العميل:</span> <b>${fmtNum(sFee)}</b></div>`:''}
+        <div><span class="text-muted">الصافي:</span> <b>${fmtNum(net)}</b></div>
+        <div><span class="text-muted">المدفوع:</span> <b class="text-g">${fmtNum(paid)}</b></div>
+        <div><span class="text-muted">المتبقي:</span> <b style="color:${rem>0?'var(--r)':'var(--g)'}">${fmtNum(rem)}</b></div>
+        <div><span class="text-muted">التكلفة:</span> <b class="text-y">${fmtNum(totalCost)}</b></div>
+        <div><span class="text-muted">المدفوع للموردين:</span> <b>${fmtNum(paidCost)}</b></div>
       </div>
     </div>
 
@@ -1960,9 +1956,9 @@ window.openAdjustWallet = function(walletId, expected, current){
   document.getElementById('adjust-summary').innerHTML = `
     <div><b>المحفظة:</b> ${escapeHtml(wName)}</div>
     <div style="margin-top:6px;color:var(--dim)">
-      الرصيد المحسوب من الـtx: <b class="mono">${fn(expected)} ج</b><br>
-      الرصيد المحفوظ الآن: <b class="mono">${fn(current)} ج</b><br>
-      الفرق: <b style="color:${drift>=0?'var(--g)':'var(--r)'};font-family:monospace">${drift>=0?'+':''}${fn(drift)} ج</b>
+      الرصيد المحسوب من الـtx: <b class="mono">${fmtNum(expected)} ج</b><br>
+      الرصيد المحفوظ الآن: <b class="mono">${fmtNum(current)} ج</b><br>
+      الفرق: <b style="color:${drift>=0?'var(--g)':'var(--r)'};font-family:monospace">${drift>=0?'+':''}${fmtNum(drift)} ج</b>
     </div>
   `;
   document.getElementById('adjust-target').value = current; // المعتاد: نضبط الكشف يطابق المحفظة
@@ -1988,7 +1984,7 @@ window.saveAdjustment = async function(){
     if(!handled) showToast('❌ '+((result.errors||[]).join(' · ')||'فشل الضبط'),'err');
     return;
   }
-  showToast(`⚖️ ضُبط الرصيد لـ ${fn(target)} ج (فرق ${diff>=0?'+':''}${fn(diff)}) — في انتظار الاعتماد`,'ok');
+  showToast(`⚖️ ضُبط الرصيد لـ ${fmtNum(target)} ج (فرق ${diff>=0?'+':''}${fmtNum(diff)}) — في انتظار الاعتماد`,'ok');
   cM('adjust');
   adjustingWalletId = null;
 };
@@ -2032,12 +2028,12 @@ function _renderSemanticGrouped(items, renderFn){
           <span class="sem-icon">${g.l.split(' ')[0]}</span>
           <div>
             <div class="sem-title">${g.l.split(' ').slice(1).join(' ')}</div>
-            <div class="sem-sub">${gi.length} طلب · متوسط ${fn(avg)} ج</div>
+            <div class="sem-sub">${gi.length} طلب · متوسط ${fmtNum(avg)} ج</div>
           </div>
         </div>
         <div class="sem-total-wrap">
           <div class="sem-total-lbl">إجمالي</div>
-          <div class="sem-total-val">${fn(tot)} ج</div>
+          <div class="sem-total-val">${fmtNum(tot)} ج</div>
         </div>
       </div>
       <div class="sem-body">${gi.map(renderFn).join('')}</div>
@@ -2059,9 +2055,9 @@ function _updateSelBar(){
   const tot=sel.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
   const wAgg={};
   sel.forEach(t=>{if(!t.walletId)return;if(!wAgg[t.walletId])wAgg[t.walletId]={n:t.walletName||walletsMap.get(t.walletId)||'?',s:0};wAgg[t.walletId].s+=(t.type==='out'?-1:1)*(parseFloat(t.amount)||0);});
-  const wLines=Object.entries(wAgg).map(([id,w])=>{const cur=parseFloat((walletsArr.find(x=>x._id===id)||{}).balance)||0;const aft=cur+w.s;return `<span>${escapeHtml(w.n)}: <b style="font-family:monospace">${fn(cur)} → <span style="color:${aft<0?'var(--r)':'var(--g)'}">${fn(aft)}</span> ج</b></span>`;}).join('');
+  const wLines=Object.entries(wAgg).map(([id,w])=>{const cur=parseFloat((walletsArr.find(x=>x._id===id)||{}).balance)||0;const aft=cur+w.s;return `<span>${escapeHtml(w.n)}: <b style="font-family:monospace">${fmtNum(cur)} → <span style="color:${aft<0?'var(--r)':'var(--g)'}">${fmtNum(aft)}</span> ج</b></span>`;}).join('');
   document.getElementById('sel-count').textContent=selectedTxIds.size+' محدد';
-  document.getElementById('sel-total').textContent=fn(tot)+' ج';
+  document.getElementById('sel-total').textContent=fmtNum(tot)+' ج';
   document.getElementById('sel-wallets').innerHTML=wLines;
   const hasPend=sel.some(t=>t.approvalStatus==='pending');
   const hasConf=sel.some(t=>t.approvalStatus==='confirmed');
@@ -2077,7 +2073,7 @@ async function _runSelBulk(action){
   const eligible=_selectBulkEligible(allTxs.filter(t=>selectedTxIds.has(t._id)),{action,userId:currentUid,strict});
   if(!eligible.length) return showToast('لا عمليات مؤهَّلة للتنفيذ','err');
   const wSum={};eligible.forEach(t=>{if(!t.walletId)return;if(!wSum[t.walletId])wSum[t.walletId]={n:t.walletName||'?',s:0};wSum[t.walletId].s+=(t.type==='out'?-1:1)*(parseFloat(t.amount)||0);});
-  const wMsg=Object.entries(wSum).map(([id,w])=>{const c=parseFloat((walletsArr.find(x=>x._id===id)||{}).balance)||0;return `${w.n}: ${fn(c)} → ${fn(c+w.s)} ج`;}).join('\n');
+  const wMsg=Object.entries(wSum).map(([id,w])=>{const c=parseFloat((walletsArr.find(x=>x._id===id)||{}).balance)||0;return `${w.n}: ${fmtNum(c)} → ${fmtNum(c+w.s)} ج`;}).join('\n');
   const verb=action==='confirm'?'تأكيد':'اعتماد';
   if(!confirm(`${verb} ${eligible.length} عملية؟\n\nتأثير المحافظ:\n${wMsg||'—'}`)) return;
   let ok=0,fail=0;
@@ -2118,9 +2114,9 @@ window.bulkApprove = () => _runBulk('approve');
 window.rejectTx = async function(txId){
   const tx = txs.find(x=>x._id===txId);
   if(!tx) return;
-  const reason = prompt(`سبب الرفض (إجباري):\n\nسيتم عكس العملية: ${fn(tx.amount)} ج ستعود لـ ${tx.walletName||'المحفظة'}`);
+  const reason = prompt(`سبب الرفض (إجباري):\n\nسيتم عكس العملية: ${fmtNum(tx.amount)} ج ستعود لـ ${tx.walletName||'المحفظة'}`);
   if(!reason || !reason.trim()) return;
-  if(!confirm(`تأكيد الرفض؟\n\nالعملية ستُعكَس بالكامل:\n• ${fn(tx.amount)} ج تعود للمحفظة\n• tx عكسية تُنشأ\n• قيد ledger عكسي\n${tx.spId?'• supplier_payments تُعلَّم محذوفة\n':''}${tx.epId?'• employee_payments تُعلَّم محذوفة\n':''}`)) return;
+  if(!confirm(`تأكيد الرفض؟\n\nالعملية ستُعكَس بالكامل:\n• ${fmtNum(tx.amount)} ج تعود للمحفظة\n• tx عكسية تُنشأ\n• قيد ledger عكسي\n${tx.spId?'• supplier_payments تُعلَّم محذوفة\n':''}${tx.epId?'• employee_payments تُعلَّم محذوفة\n':''}`)) return;
   const paymentRequest = tx.paymentRequestId ? requests.find(x=>x._id===tx.paymentRequestId) : null;
   const result = await approvalActions.rejectTransaction({db,tx,paymentRequest,reason,userId:currentUid,userName:currentUserName});
   if(!result.ok){
@@ -2128,7 +2124,7 @@ window.rejectTx = async function(txId){
     if(!handled) showToast('❌ '+((result.errors||[]).join(' · ')||'فشل الرفض'),'err');
     return;
   }
-  showToast(`❌ تم الرفض + العكس الكامل: ${fn(tx.amount)} ج`,'ok');
+  showToast(`❌ تم الرفض + العكس الكامل: ${fmtNum(tx.amount)} ج`,'ok');
 };
 
 // ══════════════ Lightbox لعرض صور الإيصالات ══════════════

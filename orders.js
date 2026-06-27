@@ -518,6 +518,76 @@ export function orderIsOffset(order) {
   return (order.printType || '').toString().toLowerCase().includes('offset');
 }
 
+// T8: cost item statuses
+export const COST_ITEM_STATUSES = { ACTIVE: 'active', VOIDED: 'voided', ADJUSTED: 'adjusted' };
+
+/**
+ * isActiveCostItem — T8: checks if a cost item is active (not voided).
+ * Items without a status field are treated as active (backward compatible).
+ */
+export function isActiveCostItem(ci) {
+  if (!ci) return false;
+  return !ci.status || ci.status === COST_ITEM_STATUSES.ACTIVE || ci.status === COST_ITEM_STATUSES.ADJUSTED;
+}
+
+/**
+ * matchCostItemProduct — T2: prodIdx→productId migration helper.
+ * Resolves which product a cost item belongs to:
+ *   1. productId (stable ID, preferred)
+ *   2. prodIdx   (legacy array index, fallback)
+ * Returns { product, index } or { product: null, index: -1 }.
+ */
+export function matchCostItemProduct(ci, products) {
+  if (!ci || !Array.isArray(products) || !products.length) return { product: null, index: -1 };
+  if (ci.productId) {
+    const idx = products.findIndex(p => p.productId === ci.productId);
+    if (idx >= 0) return { product: products[idx], index: idx };
+  }
+  const pi = ci.prodIdx != null ? Number(ci.prodIdx) : -1;
+  if (pi >= 0 && pi < products.length) return { product: products[pi], index: pi };
+  return { product: null, index: -1 };
+}
+
+/**
+ * resolveCostItemCategory — T3: auto-derive category/subcategory from master categories.
+ * T5: also returns defaultUnit, expectedPriceRange, keywords from enriched master cats.
+ * @param {string} type — cost item type (e.g. 'طباعة ديجيتال')
+ * @param {Array}  masterCats — [{label, group, keywords?, defaultUnit?, expectedPriceRange?, ...}]
+ * @returns {{ category, subcategory, defaultUnit, expectedPriceRange }}
+ */
+export function resolveCostItemCategory(type, masterCats) {
+  const empty = { category: '', subcategory: '', defaultUnit: '', expectedPriceRange: null };
+  if (!type || !Array.isArray(masterCats) || !masterCats.length) return empty;
+  const norm = normalizeCostType(type);
+  const match = masterCats.find(c =>
+    c.label === type || normalizeCostType(c.label) === norm
+  );
+  if (!match) return empty;
+  return {
+    category: match.group || '',
+    subcategory: match.label || '',
+    defaultUnit: match.defaultUnit || '',
+    expectedPriceRange: match.expectedPriceRange || null,
+  };
+}
+
+/**
+ * matchCostItemByKeywords — T5: search master categories by keywords.
+ * Used in the drawer popover to broaden search beyond label matching.
+ */
+export function matchCostItemByKeywords(query, masterCats) {
+  if (!query || !Array.isArray(masterCats) || !masterCats.length) return [];
+  const q = query.trim().toLowerCase();
+  if (!q) return masterCats;
+  return masterCats.filter(cat => {
+    if ((cat.label || '').toLowerCase().includes(q)) return true;
+    if (Array.isArray(cat.keywords)) {
+      return cat.keywords.some(kw => (kw || '').toLowerCase().includes(q));
+    }
+    return false;
+  });
+}
+
 /**
  * عمر الأوردر في مرحلته الحالية بالساعات.
  * يستخدم order.stageEnteredAt[stage] إن وجد، وإلا يرجع 0.
@@ -1177,7 +1247,7 @@ export function validateStageRequirements(order, fromStage) {
   }
   else if (stage === 'production') {
     // 🛡 Phase 4: cost items — تحذير قابل للتجاوز (التكاليف تُسجَّل لاحقاً من مركز التكاليف).
-    const costItems = order.costItems || [];
+    const costItems = (order.costItems || []).filter(isActiveCostItem);
     if (!costItems.length) {
       warnings.push('⚠️ لم تُسجَّل تكاليف بعد — يمكن تسجيلها لاحقاً من مركز التكاليف');
     }
@@ -1220,11 +1290,15 @@ export function validateStageRequirements(order, fromStage) {
       const isReadyStatus = (ps) => ps === PRODUCT_STATUSES.READY
                                  || ps === PRODUCT_STATUSES.PRINTED
                                  || ps === PRODUCT_STATUSES.DONE;
-      const hasGlobalCost = costItems.some(ci => ci && (ci.prodIdx == null));
+      const hasGlobalCost = costItems.some(ci => ci && (ci.prodIdx == null && !ci.productId));
       const productsMissingCost = [];
       products.forEach((p, pi) => {
         if (!isReadyStatus(p.productStatus)) return;
-        const linked = costItems.some(ci => ci && Number(ci.prodIdx) === pi);
+        const linked = costItems.some(ci => {
+          if (!ci) return false;
+          const m = matchCostItemProduct(ci, products);
+          return m.index === pi;
+        });
         if (!linked && !hasGlobalCost) productsMissingCost.push(p.name || `منتج ${pi + 1}`);
       });
       if (productsMissingCost.length) {
@@ -1243,7 +1317,7 @@ export function validateStageRequirements(order, fromStage) {
     const sale = parseFloat(order.salePrice) || 0;
     const paid = parseFloat(order.totalPaid) || parseFloat(order.paid) || 0;
     const rem  = Math.max(0, sale - paid);
-    if (!(order.costItems || []).length) warnings.push('سجّل تكلفة الأوردر أولاً');
+    if (!(order.costItems || []).filter(isActiveCostItem).length) warnings.push('سجّل تكلفة الأوردر أولاً');
     if (rem > 0) warnings.push(`المتبقي ${rem} ج لم يُسوَّى — حصِّل أو سجّل المبلغ`);
     if (order.shipMethod === 'company' && !order.shipSettled) warnings.push('شركة الشحن لم تتم تسويتها');
     // المرتجع المعلَّق = خطأ صلب (يجب معالجته فعلاً قبل الأرشفة)
@@ -2183,13 +2257,13 @@ export function validateReverseSettle({ order, role }) {
  *
  * @param {Object} args
  * @param {Object} args.order            — الأوردر المستهدف
- * @param {Object} args.payload          — { type, total, supplierId, supplierName, note, walletId, paperMeta }
+ * @param {Object} args.payload          — { type, total, supplierId, supplierName, note, walletId, paperMeta, itemQty, unitPrice, unit }
  * @param {string} args.role             — دور المستخدم
  * @param {Array}  [args.wallets=[]]     — قائمة المحافظ (للتحقق من الرصيد)
  * @param {boolean}[args.isEdit=false]   — هل العملية تعديل بند موجود؟
  * @returns { ok, errors, warnings }
  */
-export function validateCostItem({ order, payload, role, wallets = [], isEdit = false, allowedTypes = [], refPrice = 0 }) {
+export function validateCostItem({ order, payload, role, wallets = [], isEdit = false, allowedTypes = [], refPrice = 0, masterCats = [] }) {
   const errors = [];
   const warnings = [];
 
@@ -2198,6 +2272,8 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
 
   const { type = '', total, walletId = '', supplierId = '' } = payload;
   const amt = parseFloat(total) || 0;
+  const itemQty   = parseFloat(payload.itemQty) || 0;
+  const unitPrice = parseFloat(payload.unitPrice) || 0;
 
   // النوع
   if (!type || !type.trim()) errors.push('اختر نوع البند');
@@ -2206,6 +2282,15 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
 
   // المبلغ
   if (amt <= 0) errors.push('أدخل تكلفة صحيحة');
+
+  // T1: qty×unitPrice consistency check (warning only — total stays primary)
+  if (itemQty > 0 && unitPrice > 0) {
+    const expected = Math.round(itemQty * unitPrice * 100) / 100;
+    const diff = Math.abs(amt - expected);
+    if (diff > 0.5) {
+      warnings.push(`⚠️ الإجمالي (${amt.toLocaleString('ar-EG')}) لا يطابق الكمية × سعر الوحدة (${expected.toLocaleString('ar-EG')})`);
+    }
+  }
 
   // الـ stage
   const cur = order.stage || '';
@@ -2240,6 +2325,19 @@ export function validateCostItem({ order, payload, role, wallets = [], isEdit = 
       warnings.push(`⚠️ التكلفة أعلى بـ ${Math.round(deviation)}% من السعر المرجعي (${ref.toLocaleString('ar-EG')} ج)`);
     } else if (deviation < -20) {
       warnings.push(`ℹ️ التكلفة أقل بـ ${Math.round(Math.abs(deviation))}% من السعر المرجعي (${ref.toLocaleString('ar-EG')} ج)`);
+    }
+  }
+
+  // T5: expectedPriceRange from master categories (non-blocking warning)
+  if (masterCats.length && amt > 0 && type) {
+    const resolved = resolveCostItemCategory(type, masterCats);
+    const range = resolved.expectedPriceRange;
+    if (range) {
+      if (range.min > 0 && amt < range.min) {
+        warnings.push(`ℹ️ التكلفة (${amt.toLocaleString('ar-EG')} ج) أقل من النطاق المتوقع (${range.min.toLocaleString('ar-EG')} — ${(range.max || '∞').toLocaleString?.('ar-EG') || range.max} ج)`);
+      } else if (range.max > 0 && amt > range.max) {
+        warnings.push(`⚠️ التكلفة (${amt.toLocaleString('ar-EG')} ج) أعلى من النطاق المتوقع (${range.min?.toLocaleString?.('ar-EG') || 0} — ${range.max.toLocaleString('ar-EG')} ج)`);
+      }
     }
   }
 

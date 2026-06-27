@@ -90,13 +90,15 @@ export async function processFullReturn({
     const depAmt = Math.max(0, (parseFloat(order.totalPaid) || parseFloat(order.deposit) || 0) - settledAmt);
     let depWalletId = order.depositWalletId || order.walletId || '';
     if (!depWalletId && depAmt > 0) {
-      const depSnap = await getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', ordId), where('category', '==', 'deposit')));
+      const depSnap = await getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', ordId), where('category', '==', 'deposit'), limit(50)));
       depWalletId = depSnap.docs[0]?.data()?.walletId || '';
     }
 
     // pre-fetch: collection + collection_adjustment transactions to reverse from wallets
-    const colSnap = await getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', ordId), where('category', '==', 'collection')));
-    const adjSnap = await getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', ordId), where('category', '==', 'collection_adjustment')));
+    const [colSnap, adjSnap] = await Promise.all([
+      getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', ordId), where('category', '==', 'collection'), limit(200))),
+      getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', ordId), where('category', '==', 'collection_adjustment'), limit(200))),
+    ]);
     const colTxDocs = [...colSnap.docs, ...adjSnap.docs];
 
     // H1.2: wrapped in withIdempotency to prevent double-spend on double-click

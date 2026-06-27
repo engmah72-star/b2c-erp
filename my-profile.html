@@ -16,9 +16,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
-<script src="sidebar-config.js"></script>
+<script src="sidebar-config.js" defer></script>
 <script src="sidebar.js"></script>
-<script src="sync-monitor.js"></script>
+<script src="sync-monitor.js" defer></script>
 <script type="module" src="inbox-badge.js"></script>
 <link rel="stylesheet" href="my-profile.css?v=1">
 <script src="smart-sidebar.js?v=1" defer></script>
@@ -96,6 +96,7 @@
 import { app, auth, db } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { collection, doc, onSnapshot, query, where, orderBy, limit, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
 import { employeeActions } from "./employee-actions.js";
 import { annotateRecurrence, isVoided, APPEAL_STATUS } from "./core/incident-reasons.js";
 import { computeScore } from "./core/employee-scoring.js";
@@ -854,7 +855,9 @@ onAuthStateChanged(auth,async u=>{
     return;
   }
 
-  // Subscribe to my data
+  // Subscribe to my data — using dataCache.subscribe for cache-first + live sync
+  const _unsubs = [];
+
   // Attendance: by employeeUid (covers staff dashboards) AND employeeId (covers profile)
   let __attA=new Map(),__attB=new Map();
   const __mergeA=()=>{
@@ -862,55 +865,81 @@ onAuthStateChanged(auth,async u=>{
     myAttendance=[...m.values()];
     if(me)renderAll();
   };
-  onSnapshot(query(collection(db,'attendance'),where('employeeUid','==',myAuthUid),limit(1000)),s=>{
-    __attA=new Map(s.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));__mergeA();
-  },err=>console.warn('att-uid:',err.message));
-  onSnapshot(query(collection(db,'attendance'),where('employeeId','==',myEmpId),limit(1000)),s=>{
-    __attB=new Map(s.docs.map(d=>[d.id,{...d.data(),_id:d.id}]));__mergeA();
-  },err=>console.warn('att-id:',err.message));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('attendance').where('employeeUid','==',myAuthUid).limit(1000).build(),
+    (docs)=>{__attA=new Map(docs.map(d=>[d._id,d]));__mergeA();}
+  ));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('attendance').where('employeeId','==',myEmpId).limit(1000).build(),
+    (docs)=>{__attB=new Map(docs.map(d=>[d._id,d]));__mergeA();}
+  ));
 
-  onSnapshot(query(collection(db,'employee_payments'),where('employeeId','==',myEmpId),limit(500)),s=>{
-    myPayments=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    renderAll();
-  },err=>console.warn('pay:',err.message));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('employee_payments').where('employeeId','==',myEmpId).limit(500).build(),
+    (docs)=>{
+      myPayments=docs.slice().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      renderAll();
+    }
+  ));
 
-  onSnapshot(query(collection(db,'employee_incidents'),where('authUid','==',myAuthUid),limit(200)),s=>{
-    myIncidents=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-    renderAll();
-  },err=>console.warn('inc:',err.message));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('employee_incidents').where('authUid','==',myAuthUid).limit(200).build(),
+    (docs)=>{
+      myIncidents=docs.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+      renderAll();
+    }
+  ));
 
-  onSnapshot(query(collection(db,'employee_evaluations'),where('employeeId','==',myEmpId),limit(60)),s=>{
-    myEvaluations=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-    renderAll();
-  },err=>console.warn('eval:',err.message));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('employee_evaluations').where('employeeId','==',myEmpId).limit(60).build(),
+    (docs)=>{
+      myEvaluations=docs.slice().sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+      renderAll();
+    }
+  ));
 
-  onSnapshot(query(collection(db,'employee_goals'),where('employeeId','==',myEmpId),limit(60)),s=>{
-    myGoals=s.docs.map(d=>({...d.data(),_id:d.id}));
-    renderAll();
-  },err=>console.warn('goal:',err.message));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('employee_goals').where('employeeId','==',myEmpId).limit(60).build(),
+    (docs)=>{
+      myGoals=docs;
+      renderAll();
+    }
+  ));
 
   // Tasks assigned to me
-  onSnapshot(query(collection(db,'tasks'),where('assignedTo','==',myAuthUid),limit(200)),s=>{
-    myTasks=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>{
-      if(a.status==='pending'&&b.status!=='pending')return -1;
-      if(a.status!=='pending'&&b.status==='pending')return 1;
-      return (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0);
-    });
-    renderAll();
-  },err=>console.warn('tasks:',err.message));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('tasks').where('assignedTo','==',myAuthUid).limit(200).build(),
+    (docs)=>{
+      myTasks=docs.slice().sort((a,b)=>{
+        if(a.status==='pending'&&b.status!=='pending')return -1;
+        if(a.status!=='pending'&&b.status==='pending')return 1;
+        return (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0);
+      });
+      renderAll();
+    }
+  ));
 
   // My leaves
-  onSnapshot(query(collection(db,'employee_leaves'),where('employeeId','==',myEmpId),limit(200)),s=>{
-    myLeaves=s.docs.map(d=>({...d.data(),_id:d.id})).sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
-    renderAll();
-  },err=>console.warn('leaves:',err.message));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('employee_leaves').where('employeeId','==',myEmpId).limit(200).build(),
+    (docs)=>{
+      myLeaves=docs.slice().sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
+      renderAll();
+    }
+  ));
 
   // Orders relevant to me — for productivity score + KPIs (bounded, RULE G3).
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),s=>{
-    allOrdersRaw=s.docs.map(d=>({...d.data(),_id:d.id}));
-    myOrders=filterEmployeeOrders({orders:allOrdersRaw,employee:me,employeeId:myEmpId,uid:myAuthUid});
-    renderAll();
-  },err=>console.warn('orders:',err.message));
+  _unsubs.push(dataCache.subscribe(
+    cachedQuery('orders').orderBy('createdAt','desc').limit(3000).build(),
+    (docs)=>{
+      allOrdersRaw=docs;
+      myOrders=filterEmployeeOrders({orders:allOrdersRaw,employee:me,employeeId:myEmpId,uid:myAuthUid});
+      renderAll();
+    }
+  ));
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload',()=>_unsubs.forEach(u=>u?.()),{once:true});
 });
 </script>
 <script src="sw-register.js"></script>

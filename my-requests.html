@@ -15,9 +15,9 @@
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
 <link rel="stylesheet" href="my-requests.css?v=1">
-<script src="sidebar-config.js"></script>
+<script src="sidebar-config.js" defer></script>
 <script src="sidebar.js"></script>
-<script src="financial-guard.js"></script>
+<script src="financial-guard.js" defer></script>
 <script type="module" src="inbox-badge.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
@@ -176,11 +176,13 @@
 <script type="module">
 import { app, auth, db, storage } from "./core/firebase-init.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, getDoc, onSnapshot, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { dataCache, cachedQuery } from './core/data-cache.js';
 import { approvalActions } from "./approval-actions.js";
 import { employeeActions } from "./employee-actions.js";
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 import { STAGE_AR, ROLE_LABELS } from "./core/shared-constants.js";
+import { fmtNum } from './core/dom-utils.js';
 let currentUid='', currentUserName='', currentRole='', currentPerms={};
 let requests = [];
 let activeTab = 'active';
@@ -195,7 +197,6 @@ let myLeaves = [];
 const LEAVE_TYPE_LBL = { annual:'سنوية', sick:'مرضية', casual:'عارضة', emergency:'طارئة', unpaid:'بدون أجر' };
 const LEAVE_STATUS_LBL = { pending:'⏳ بانتظار موافقة الإدارة', approved:'✅ تمت الموافقة', rejected:'❌ مرفوض' };
 
-const fn = n => (parseFloat(n)||0).toLocaleString('ar-EG');
 const escapeHtml = s => String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const REQ_TYPE_LBL = { supplier_payment:'🏭 دفعة مورد', salary:'👤 مرتب/سلفة', client_refund:'↩️ استرداد عميل', general:'💸 مصروف عام' };
 const REQ_TYPE_CARDS = {
@@ -326,44 +327,41 @@ onAuthStateChanged(auth, async u=>{
 
 function startListeners(){
   // طلباتي فقط (RULE G3: bounded per user — 500 historical requests max).
-  onSnapshot(query(collection(db,'payment_requests'), where('requestedBy','==',currentUid), limit(500)),
-    snap=>{
-      requests = snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(
+    cachedQuery('payment_requests').where('requestedBy','==',currentUid).limit(500).build(),
+    (docs)=>{
+      requests = docs;
       requests.sort((a,b)=>{
         const ta = a.requestedAt?.toMillis?.()||0;
         const tb = b.requestedAt?.toMillis?.()||0;
         return tb - ta;
       });
       render();
-    },
-    err=>{
-      console.error('[my-requests] requests:', err);
-      document.getElementById('list-content').innerHTML = `<div class="empty-pl">⚠️ فشل تحميل الطلبات: ${escapeHtml(err.message)}</div>`;
     }
   );
 
   // orders are only used as a lookup map for displayed request rows. Recent 3000.
-  onSnapshot(query(collection(db,'orders'),orderBy('createdAt','desc'),limit(3000)),
-    snap=>{ ordersMap.clear(); snap.docs.forEach(d=>ordersMap.set(d.id, {...d.data(), _id:d.id})); },
-    err=>console.error('[my-requests] orders:', err)
+  dataCache.subscribe(
+    cachedQuery('orders').orderBy('createdAt','desc').limit(3000).build(),
+    (docs)=>{ ordersMap.clear(); docs.forEach(d=>ordersMap.set(d._id, d)); }
   );
-  onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),
-    snap=>{ suppliers = snap.docs.map(d=>({...d.data(),_id:d.id})); },
-    err=>console.error('[my-requests] suppliers:', err)
+  dataCache.subscribe(
+    cachedQuery('suppliers_v2').limit(500).build(),
+    (docs)=>{ suppliers = docs; }
   );
-  onSnapshot(query(collection(db,'employees_v2'),limit(200)),
-    snap=>{ employees = snap.docs.map(d=>({...d.data(),_id:d.id})); },
-    err=>console.error('[my-requests] employees:', err)
+  dataCache.subscribe(
+    cachedQuery('employees_v2').limit(200).build(),
+    (docs)=>{ employees = docs; }
   );
 
   // إجازاتي (RULE G3: bounded — آخر 100 طلب لي).
-  onSnapshot(query(collection(db,'employee_leaves'), where('requestedBy','==',currentUid), limit(100)),
-    snap=>{
-      myLeaves = snap.docs.map(d=>({...d.data(),_id:d.id}));
+  dataCache.subscribe(
+    cachedQuery('employee_leaves').where('requestedBy','==',currentUid).limit(100).build(),
+    (docs)=>{
+      myLeaves = docs;
       myLeaves.sort((a,b)=>(b.requestedAt?.toMillis?.()||0)-(a.requestedAt?.toMillis?.()||0));
       renderLeaves();
-    },
-    err=>console.error('[my-requests] leaves:', err)
+    }
   );
 }
 
@@ -509,9 +507,9 @@ function renderCard(r){
         <div class="rc-meta">${escapeHtml(r.reason||'—')}</div>
         <span class="rc-status st-${statusKey}">${STATUS_LBL[statusKey]||statusKey}</span>
       </div>
-      <div class="rc-amount">${fn(r.amount)} ج</div>
+      <div class="rc-amount">${fmtNum(r.amount)} ج</div>
     </div>
-    ${r.costItemRefs && r.costItemRefs.length > 1 ? `<div class="rc-body"><div class="rc-field mr-rc-grouped">📋 طلب مُجمَّع<b>${r.costItemRefs.length} بند من ${new Set(r.costItemRefs.map(x=>x.orderId)).size} أوردر</b><div class="mr-rc-grouped-list">${r.costItemRefs.map(x=>`• ${escapeHtml(x.type||'بند')} — ${escapeHtml(x.orderRefId||'')} — ${escapeHtml(x.clientName||'')} — ${fn(x.amount)} ج`).join('<br>')}</div></div></div>` : (orderInfo ? `<div class="rc-body"><div class="rc-field">📦 الأوردر<b>${orderInfo}</b></div>${r.orderStage ? `<div class="rc-field">المرحلة<b>${escapeHtml(STAGE_AR[r.orderStage]||r.orderStage)}</b></div>` : ''}${r.costItemIndex !== undefined ? `<div class="rc-field">بند<b>#${r.costItemIndex+1}</b></div>` : ''}</div>` : '')}
+    ${r.costItemRefs && r.costItemRefs.length > 1 ? `<div class="rc-body"><div class="rc-field mr-rc-grouped">📋 طلب مُجمَّع<b>${r.costItemRefs.length} بند من ${new Set(r.costItemRefs.map(x=>x.orderId)).size} أوردر</b><div class="mr-rc-grouped-list">${r.costItemRefs.map(x=>`• ${escapeHtml(x.type||'بند')} — ${escapeHtml(x.orderRefId||'')} — ${escapeHtml(x.clientName||'')} — ${fmtNum(x.amount)} ج`).join('<br>')}</div></div></div>` : (orderInfo ? `<div class="rc-body"><div class="rc-field">📦 الأوردر<b>${orderInfo}</b></div>${r.orderStage ? `<div class="rc-field">المرحلة<b>${escapeHtml(STAGE_AR[r.orderStage]||r.orderStage)}</b></div>` : ''}${r.costItemIndex !== undefined ? `<div class="rc-field">بند<b>#${r.costItemIndex+1}</b></div>` : ''}</div>` : '')}
     <div class="rc-timeline">${tl.join('')}</div>
     ${receiptHtml}
     ${actions.length ? `<div class="rc-actions">${actions.join('')}</div>` : ''}
@@ -651,7 +649,7 @@ window.refreshSupplierItemsList = function(){
         <div><b class="text-snow">${escapeHtml(i.type||'بند')}</b> <span class="text-muted">— ${escapeHtml(i.orderRefId)} — ${escapeHtml(i.clientName)}</span></div>
         ${i.note ? `<div class="mr-supitem-note">${escapeHtml(i.note)}</div>` : ''}
       </div>
-      <span class="mr-supitem-amt">${fn(i.amount)} ج</span>
+      <span class="mr-supitem-amt">${fmtNum(i.amount)} ج</span>
     </label>
   `).join('');
   listEl.__items = items;
@@ -682,7 +680,7 @@ function updateSupItemsSum(){
     foot.classList.toggle('is-shown', hasSel);
     foot.classList.toggle('hide-soft', !hasSel);
     const cEl = document.getElementById('rq-si-count'); if(cEl) cEl.textContent = __supItemsSelected.length;
-    const tEl = document.getElementById('rq-si-total'); if(tEl) tEl.textContent = fn(sum);
+    const tEl = document.getElementById('rq-si-total'); if(tEl) tEl.textContent = fmtNum(sum);
   }
   if(__supItemsSelected.length){
     const amtEl = document.getElementById('rq-amount');
@@ -709,13 +707,13 @@ document.getElementById('rq-order')?.addEventListener('change', e=>{
   if(!o) return;
   const totalCost = (o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0), 0);
   info.classList.remove('hide-soft');
-  info.innerHTML = `📦 <b>${escapeHtml(o.orderId||o._id.slice(-6))}</b> — ${escapeHtml(o.clientName||'')} — مرحلة: <b>${STAGE_AR[o.stage]||o.stage}</b><br>💰 تكلفة الأوردر: <b class="text-y">${fn(totalCost)} ج</b> (${(o.costItems||[]).length} بند)`;
+  info.innerHTML = `📦 <b>${escapeHtml(o.orderId||o._id.slice(-6))}</b> — ${escapeHtml(o.clientName||'')} — مرحلة: <b>${STAGE_AR[o.stage]||o.stage}</b><br>💰 تكلفة الأوردر: <b class="text-y">${fmtNum(totalCost)} ج</b> (${(o.costItems||[]).length} بند)`;
 
   if(activeReqType === 'supplier_payment' && fgCost && ciSel){
     const unpaid = (o.costItems||[]).map((c,i)=>({...c,_idx:i})).filter(c => !c.paid && !c.pendingPaymentRequestId && c.supplierId);
     if(unpaid.length){
       fgCost.classList.remove('hide-soft');
-      ciSel.innerHTML = '<option value="">— اختر أو املأ يدوياً —</option>' + unpaid.map(c=>`<option value="${c._idx}" data-amount="${c.total||0}" data-sup-id="${c.supplierId||''}" data-sup-name="${escapeHtml(c.supplierName||'')}">#${c._idx+1} ${escapeHtml(c.type||'')} — ${escapeHtml(c.supplierName||'')} — ${fn(c.total||0)} ج</option>`).join('');
+      ciSel.innerHTML = '<option value="">— اختر أو املأ يدوياً —</option>' + unpaid.map(c=>`<option value="${c._idx}" data-amount="${c.total||0}" data-sup-id="${c.supplierId||''}" data-sup-name="${escapeHtml(c.supplierName||'')}">#${c._idx+1} ${escapeHtml(c.type||'')} — ${escapeHtml(c.supplierName||'')} — ${fmtNum(c.total||0)} ج</option>`).join('');
     } else {
       fgCost.classList.add('hide-soft');
     }
@@ -816,7 +814,7 @@ window.saveRequest = async function(){
     reqData.costItemRefs = refs;
     const sumRefs = refs.reduce((s,r)=>s+r.amount, 0);
     if(Math.abs(sumRefs - amount) > 0.01){
-      return showToast(`⚠️ المبلغ (${fn(amount)}) لا يطابق مجموع البنود (${fn(sumRefs)})`,'err');
+      return showToast(`⚠️ المبلغ (${fmtNum(amount)}) لا يطابق مجموع البنود (${fmtNum(sumRefs)})`,'err');
     }
     const first = refs[0];
     reqData.orderId = first.orderId;

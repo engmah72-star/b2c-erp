@@ -181,9 +181,11 @@ import { ensureOrderThread } from "./inbox-actions.js";
 import { addIncident } from "./employee-actions.js";
 import { DEFAULT_INCIDENT_REASONS, REASON_TYPE_META } from "./core/incident-reasons.js";
 import { getSettings } from './core/static-store.js';
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { toast } from './shared.js';
+import { esc } from './core/dom-utils.js';
 
 const $ = id => document.getElementById(id);
-const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 let orders = [], slaTable = null, currentRole = '', currentUser = null, userName = '';
 
@@ -223,13 +225,14 @@ onAuthStateChanged(auth, async u => {
     renderList();
   });
 
-  onSnapshot(query(collection(db,'orders'), orderBy('createdAt','desc'), limit(500)), snap => {
-    orders = snap.docs.map(d => ({...d.data(), _id:d.id}));
-    $('sub').textContent = orders.length + ' أوردر';
-    renderList();
-  }, err => {
-    $('list').innerHTML = '<div class="empty"><div class="empty-ico">⚠️</div><div class="empty-title">تعذّر تحميل الأوردرات</div><div>تحقق من الاتصال أو الصلاحيات</div></div>';
-  });
+  dataCache.subscribe(
+    cachedQuery('orders').orderBy('createdAt','desc').limit(500).build(),
+    (docs) => {
+      orders = docs;
+      $('sub').textContent = orders.length + ' أوردر';
+      renderList();
+    }
+  );
 });
 
 function stationsFor(o) {
@@ -392,7 +395,6 @@ function renderPanel(o) {
   $('panel-body').innerHTML = html;
 }
 
-function toast(m,t=''){const c=$('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+(t==='ok'?'ok':t==='err'?'err':'');el.textContent=m;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 
 window.quickConversation = async function(id) {
   const o = orders.find(x=>x._id===id);

@@ -20,9 +20,9 @@
 <link rel="modulepreload" href="./order-actions.js">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
-<script src="sidebar-config.js"></script>
+<script src="sidebar-config.js" defer></script>
 <script src="sidebar.js"></script>
-<script src="sync-monitor.js"></script>
+<script src="sync-monitor.js" defer></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
@@ -397,6 +397,9 @@ import { canSeeField, maskPhone as _centralMaskPhone, ROLE_CAN_SEE_COST } from "
 import { PRODUCT_STATUS, STAGES, STAGE_PERMISSIONS, ORDER_DESIGN_STAGES, getStageDurations, getStageResponsibilities, getOrderDates, getOrderAlerts } from "./orders.js";
 import { makeSearchable } from "./core/searchable-select.js";
 import { getSettings } from './core/static-store.js';
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { toast } from './shared.js';
+import { esc } from './core/dom-utils.js';
 
 // ── State ──
 const orderId = new URLSearchParams(location.search).get('id');
@@ -425,7 +428,6 @@ let __ssSupplier = null;
 
 // ── Utils ──
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtMoney = (n) => (Number(n)||0).toLocaleString('ar-EG') + ' ج';
 const fmtDate = (ts) => {
   if (!ts) return '—';
@@ -448,15 +450,6 @@ function maskPhone(phone) {
   if (!phone) return '';
   const canSee = canSeeField('client_phone', currentRole, currentUserPerms);
   return _centralMaskPhone(phone, canSee);
-}
-
-function toast(msg, kind) {
-  const el = $('toasts'); if (!el) return;
-  const t = document.createElement('div');
-  t.className = 'toast ' + (kind || '');
-  t.textContent = msg;
-  el.appendChild(t);
-  setTimeout(() => t.remove(), 3500);
 }
 
 // ── Render ──
@@ -1058,7 +1051,7 @@ window.cancelOrder = async function() {
     const r = await orderActions.cancelOrder({
       db, orderId: currentOrder._id,
       reason: reason.trim(), note: note.trim(),
-      userId: currentUser?.uid || '', userName,
+      userId: currentUser?.uid || '', userName, role: currentRole,
     });
     if (!r.ok) return toast('❌ ' + (r.errors||[]).join(' · '), 'err');
     toast('❌ تم إلغاء الأوردر', 'ok');
@@ -1251,11 +1244,10 @@ onAuthStateChanged(auth, async u => {
   // production → shipping (RULE C2: central STAGE_PERMISSIONS, no hardcoded list).
   if ((STAGE_PERMISSIONS.production || []).includes(currentRole)) {
     try {
-      onSnapshot(query(collection(db,'employees'), where('role','==','shipping_officer'), limit(100)), snap => {
+      dataCache.subscribe(cachedQuery('employees').where('role','==','shipping_officer').limit(100).build(),(docs)=>{
         const seen = new Set();
-        shipOfficers = snap.docs.map(d => ({ ...d.data(), _id: d.id }))
-          .filter(e => { if (seen.has(e._id)) return false; seen.add(e._id); return true; });
-      }, err => console.warn('ship officers load skipped', err?.message));
+        shipOfficers = docs.filter(e => { if (seen.has(e._id)) return false; seen.add(e._id); return true; });
+      });
     } catch (e) { console.warn('ship officers load error', e?.message); }
   }
 
@@ -1264,8 +1256,8 @@ onAuthStateChanged(auth, async u => {
   const canRecordCost = ['admin','operation_manager','production_agent'].includes(currentRole);
   if (canRecordCost) {
     try {
-      onSnapshot(query(collection(db,'suppliers_v2'), limit(500)), snap => {
-        suppliers = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+      dataCache.subscribe(cachedQuery('suppliers_v2').limit(500).build(),(docs)=>{
+        suppliers = docs;
         repopulateCostModalLists();
       });
       getDoc(doc(db,'master_lists','supplier_categories')).then(s => {

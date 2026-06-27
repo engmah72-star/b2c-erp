@@ -16,13 +16,13 @@
 <link rel="modulepreload" href="./core/data-cache.js">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
-<script src="core/page-state.js"></script>
-<script src="sidebar-config.js"></script>
+<script src="core/page-state.js" defer></script>
+<script src="sidebar-config.js" defer></script>
 <script src="sidebar.js"></script>
-<script src="sync-monitor.js"></script>
+<script src="sync-monitor.js" defer></script>
 <script type="module" src="inbox-badge.js"></script>
 <link rel="stylesheet" href="reports.css?v=1">
-<script src="financial-guard.js"></script>
+<script src="financial-guard.js" defer></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="pwa-install.js?v=1" defer></script>
@@ -251,7 +251,7 @@ const SBPAGES=[{file:'clients.html',label:'العملاء',ico:'👤',perm:'clie
 const RMAP={admin:'accounts.html',operation_manager:'ops-dashboard.html',customer_service:'cs-dashboard.html',graphic_designer:'designer-dashboard.html',design_operator:'designer-dashboard.html',production_agent:'production-dashboard.html',shipping_officer:'shipping-dashboard.html',wallet_manager:'accounts.html'};
 function buildSidebar(ud,cur){ B2CSidebar.build(ud, cur||'reports.html'); }
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { collection, doc, getDoc, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { dedupEmployees, resolveDesigner, isDelivered, getStageDurations, formatDurationAr } from "./orders.js";
 import { calcRem, isPostDesignWithRem, POST_DESIGN_STAGES } from "./core/order-math.js";
 import { maskPhone, canSeeField } from "./core/permissions-matrix.js";
@@ -271,6 +271,7 @@ import { buildApprovalsTabHTML } from "./features/reports/views/render-approvals
 import { buildShippingTabHTML, buildClientsTabHTML } from "./features/reports/views/render-shipping-clients.js";
 import { buildDesignersTabHTML, buildSalesTabHTML, buildStagePerformanceTabHTML } from "./features/reports/views/render-designers-sales.js";
 import { renderOverviewDetailedView } from "./features/reports/views/render-overview-detailed.js";
+import { toast } from './shared.js';
 let orders=[],clients=[],employees=[],suppliers=[],shippers=[],payments=[],transactions=[],wallets=[],returns=[],paymentRequests=[];
 let appSettings={}; // settings/main — monthly targets (الأهداف الشهرية)
 // ══ Listener lifecycle (memory-leak fix) ══
@@ -360,12 +361,12 @@ const __lazyStarted={};
 function _ensureCollection(name){
   if(__lazyStarted[name])return;
   __lazyStarted[name]=true;
-  if(name==='employees') __rptUnsubs.push(onSnapshot(query(collection(db,'employees'),limit(500)),s=>{const raw=s.docs.map(d=>({...d.data(),_id:d.id}));employees=dedupEmployees(raw);__loaded.employees=true;scheduleRender();}));
-  else if(name==='suppliers_v2') __rptUnsubs.push(onSnapshot(query(collection(db,'suppliers_v2'),limit(500)),s=>{suppliers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.suppliers=true;scheduleRender();}));
-  else if(name==='shippers_v2') __rptUnsubs.push(onSnapshot(query(collection(db,'shippers_v2'),limit(500)),s=>{shippers=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.shippers=true;scheduleRender();}));
-  else if(name==='supplier_payments') __rptUnsubs.push(onSnapshot(query(collection(db,'supplier_payments'),limit(5000)),s=>{payments=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.payments=true;scheduleRender();}));
-  else if(name==='returns_tickets') __rptUnsubs.push(onSnapshot(query(collection(db,'returns_tickets'),where('isDeleted','==',false),limit(2000)),s=>{returns=s.docs.map(d=>({...d.data(),_id:d.id}));__loaded.returns=true;scheduleRender();},err=>{console.warn('[reports] returns listener:',err.message);__loaded.returns=true;}));
-  else if(name==='payment_requests') __rptUnsubs.push(onSnapshot(query(collection(db,'payment_requests'),orderBy('requestedAt','desc'),limit(5000)),s=>{paymentRequests=s.docs.map(d=>({...d.data(),_id:d.id}));scheduleRender();},err=>{console.warn('[reports] payment_requests listener:',err.message);}));
+  if(name==='employees') __rptUnsubs.push(dataCache.subscribe(cachedQuery('employees').limit(500).build(),(docs)=>{employees=dedupEmployees(docs);__loaded.employees=true;scheduleRender();}));
+  else if(name==='suppliers_v2') __rptUnsubs.push(dataCache.subscribe(cachedQuery('suppliers_v2').limit(500).build(),(docs)=>{suppliers=docs;__loaded.suppliers=true;scheduleRender();}));
+  else if(name==='shippers_v2') __rptUnsubs.push(dataCache.subscribe(cachedQuery('shippers_v2').limit(500).build(),(docs)=>{shippers=docs;__loaded.shippers=true;scheduleRender();}));
+  else if(name==='supplier_payments') __rptUnsubs.push(dataCache.subscribe(cachedQuery('supplier_payments').limit(5000).build(),(docs)=>{payments=docs;__loaded.payments=true;scheduleRender();}));
+  else if(name==='returns_tickets') __rptUnsubs.push(dataCache.subscribe(cachedQuery('returns_tickets').where('isDeleted','==',false).limit(2000).build(),(docs)=>{returns=docs;__loaded.returns=true;scheduleRender();}));
+  else if(name==='payment_requests') __rptUnsubs.push(dataCache.subscribe(cachedQuery('payment_requests').orderBy('requestedAt','desc').limit(5000).build(),(docs)=>{paymentRequests=docs;scheduleRender();}));
 }
 function _ensureDomainDeps(domain){(__DOMAIN_DEPS[domain]||[]).forEach(c=>_ensureCollection(c));}
 const fn=fmtNum;
@@ -539,7 +540,7 @@ const orderHasCost=o=>(o.costItems||[]).some(c=>(parseFloat(c.total)||0)>0);
 const orderTotalCost=o=>(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
 const isMissingCost=o=>parseFloat(o.salePrice)>0&&['production','shipping','archived'].includes(o.stage)&&!orderHasCost(o);
 
-function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
+
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};

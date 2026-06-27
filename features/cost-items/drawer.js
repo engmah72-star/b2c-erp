@@ -77,6 +77,7 @@
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
       supplierId:'', supplierName:'', supplierSpecialties:[],
       type:'', total:'', note:'', paperMeta:null,
+      itemQty:'', unitPrice:'', unit:'',
     };
   }
 
@@ -119,10 +120,19 @@
     const qty = parseFloat(prod?.qty || prods[0]?.qty) || 0;
 
     const allCi = o.costItems || [];
+    const _filterProd = _prodIdx >= 0 ? prods[_prodIdx] : null;
+    const _filterProdId = _filterProd?.productId || null;
     const ci = _prodIdx >= 0
-      ? allCi.filter(x => x.prodIdx === _prodIdx || x.prodIdx == null)
+      ? allCi.filter(x => {
+          if (_filterProdId && x.productId === _filterProdId) return true;
+          if (x.productId && _filterProdId && x.productId !== _filterProdId) return false;
+          return x.prodIdx === _prodIdx || x.prodIdx == null;
+        })
       : allCi;
-    const existingTotal = ci.reduce((s,x) => s + (parseFloat(x.total)||0), 0);
+    // T8: only sum active items in totals
+    const _isActive = (x) => !x.status || x.status === 'active' || x.status === 'adjusted';
+    const activeCi = ci.filter(_isActive);
+    const existingTotal = activeCi.reduce((s,x) => s + (parseFloat(x.total)||0), 0);
     const pendingTotal  = _editIdx >= 0
       ? (parseFloat(_editDraft?.total)||0)
       : _drafts.reduce((s,r) => s + (parseFloat(r.total)||0), 0);
@@ -292,10 +302,15 @@
 
   // ── Existing items grouped by SUPPLIER ────────────────────
   function _renderExistingItems(ci, allCi){
-    const total = ci.reduce((s,x) => s + (parseFloat(x.total)||0), 0);
-    // Group by supplier
+    // T8: separate active and voided items
+    const _isActive = (x) => !x.status || x.status === 'active' || x.status === 'adjusted';
+    const activeItems = ci.filter(_isActive);
+    const voidedItems = ci.filter(x => x.status === 'voided');
+    const total = activeItems.reduce((s,x) => s + (parseFloat(x.total)||0), 0);
+
+    // Group by supplier (active items only)
     const bySupplier = {};
-    ci.forEach(item => {
+    activeItems.forEach(item => {
       const gi  = allCi.indexOf(item);
       const key = item.supplierId || '__none__';
       if(!bySupplier[key]) bySupplier[key] = { name: item.supplierName || '— بدون مورد', items:[], subtotal:0 };
@@ -326,16 +341,37 @@
       </div>
     `).join('');
 
+    // T8: render voided items (collapsed, dimmed)
+    const voidedHtml = voidedItems.length ? `
+      <div class="cid-voided-section">
+        <div class="cid-sect-label cid-sect-toggle" data-action="toggle-voided" role="button" tabindex="0" style="opacity:.6;font-size:var(--fs-xs)">
+          <span>🗑️ بنود ملغاة (${voidedItems.length})</span>
+          <span class="cid-toggle-ico">▸</span>
+        </div>
+        <div class="cid-voided-body" style="display:none">
+          ${voidedItems.map(it => `
+            <div class="cid-item-row is-voided">
+              <div class="cid-item-main">
+                <div class="cid-item-name">${getCostIco(it.type)} <s>${escapeHtml(it.type||'—')}</s></div>
+                ${it.voidedByName ? `<div class="cid-item-sub">ألغاه: ${escapeHtml(it.voidedByName)}${it.voidedAt ? ` — ${it.voidedAt.slice(0,10)}` : ''}</div>` : ''}
+              </div>
+              <div class="cid-item-amt" style="text-decoration:line-through;opacity:.5">${fn(it.total)} ج</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>` : '';
+
     return `
       <section class="cid-sect cid-existing-sect">
         <div class="cid-sect-label cid-sect-toggle" data-action="toggle-existing" role="button" tabindex="0">
-          <span>📋 البنود المسجّلة (${ci.length})</span>
+          <span>📋 البنود المسجّلة (${activeItems.length})</span>
           <span class="cid-line"></span>
           <span class="cid-hint">إجمالي ${fn(total)} ج</span>
           <span class="cid-toggle-ico">▾</span>
         </div>
         <div class="cid-existing-body">
           ${groups}
+          ${voidedHtml}
         </div>
       </section>`;
   }
@@ -438,6 +474,20 @@
         <div class="cid-cell cid-del-cell">
           <button class="cid-row-x" type="button" data-action="remove-row" data-rid="${row.id}" title="حذف الصف">✕</button>
         </div>
+      </div>
+      <div class="cid-qty-row" data-rid="${row.id}">
+        <label class="cid-qty-label">الكمية
+          <input type="number" placeholder="0" value="${escapeHtml(String(row.itemQty||''))}"
+                 data-cid-field="itemQty" data-rid="${row.id}" inputmode="numeric" min="0"/>
+        </label>
+        <label class="cid-qty-label">سعر الوحدة
+          <input type="number" placeholder="0" value="${escapeHtml(String(row.unitPrice||''))}"
+                 data-cid-field="unitPrice" data-rid="${row.id}" inputmode="decimal" min="0" step="0.01"/>
+        </label>
+        <label class="cid-qty-label cid-unit-label">الوحدة
+          <input type="text" placeholder="قطعة" value="${escapeHtml(row.unit||'')}"
+                 data-cid-field="unit" data-rid="${row.id}"/>
+        </label>
       </div>`;
   }
 
@@ -513,6 +563,20 @@
       <div class="cid-note-row">
         <label class="cid-note-label">📝 ملاحظة (اختياري)
           <input type="text" placeholder="مثال: دفعة جزئية، طلب خاص..." value="${escapeHtml(d?.note||'')}" data-cid-field="note" data-rid="edit"/>
+        </label>
+      </div>
+      <div class="cid-qty-row" data-rid="edit">
+        <label class="cid-qty-label">الكمية
+          <input type="number" placeholder="0" value="${escapeHtml(String(d?.itemQty||''))}"
+                 data-cid-field="itemQty" data-rid="edit" inputmode="numeric" min="0"/>
+        </label>
+        <label class="cid-qty-label">سعر الوحدة
+          <input type="number" placeholder="0" value="${escapeHtml(String(d?.unitPrice||''))}"
+                 data-cid-field="unitPrice" data-rid="edit" inputmode="decimal" min="0" step="0.01"/>
+        </label>
+        <label class="cid-qty-label cid-unit-label">الوحدة
+          <input type="text" placeholder="قطعة" value="${escapeHtml(d?.unit||'')}"
+                 data-cid-field="unit" data-rid="edit"/>
         </label>
       </div>`;
   }
@@ -600,6 +664,19 @@
       });
     });
 
+    // Toggle voided items section (T8)
+    _drawer.querySelectorAll('[data-action="toggle-voided"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const body = el.closest('.cid-voided-section')?.querySelector('.cid-voided-body');
+        const ico = el.querySelector('.cid-toggle-ico');
+        if(body){
+          const show = body.style.display === 'none';
+          body.style.display = show ? '' : 'none';
+          if(ico) ico.textContent = show ? '▾' : '▸';
+        }
+      });
+    });
+
     // Supplier/type popover triggers
     _drawer.querySelectorAll('[data-action="open-supplier-pop"]').forEach(el => {
       el.addEventListener('click', (e) => _openSupplierPop(e.currentTarget, el.dataset.rid));
@@ -642,6 +719,27 @@
       });
     });
 
+    // Qty/unitPrice/unit inputs (T1)
+    _drawer.querySelectorAll('[data-cid-field="itemQty"][data-rid],[data-cid-field="unitPrice"][data-rid],[data-cid-field="unit"][data-rid]').forEach(el => {
+      const rid = el.dataset.rid;
+      const field = el.dataset.cidField;
+      el.addEventListener('input', (e) => {
+        const row = rid === 'edit' ? _editDraft : _drafts.find(x => x.id === rid);
+        if(!row) return;
+        row[field] = e.target.value;
+        if(field === 'itemQty' || field === 'unitPrice'){
+          const q = parseFloat(row.itemQty) || 0;
+          const u = parseFloat(row.unitPrice) || 0;
+          if(q > 0 && u > 0){
+            row.total = String(Math.round(q * u * 100) / 100);
+            const ti = _drawer.querySelector(`[data-cid-field="total"][data-rid="${rid}"]`);
+            if(ti) ti.value = row.total;
+            _updateTotals();
+          }
+        }
+      });
+    });
+
     // Paper calc inputs (edit mode only)
     _drawer.querySelectorAll('[data-cid-paper]').forEach(el => {
       el.addEventListener('input', (e) => {
@@ -666,7 +764,16 @@
     const o = c?.getOrder(_orderId);
     if(!o) return;
     const allCi = o.costItems || [];
-    const ci = _prodIdx >= 0 ? allCi.filter(x => x.prodIdx === _prodIdx || x.prodIdx == null) : allCi;
+    const prods = o.products || [];
+    const _fp = _prodIdx >= 0 ? prods[_prodIdx] : null;
+    const _fpId = _fp?.productId || null;
+    const ci = _prodIdx >= 0
+      ? allCi.filter(x => {
+          if (_fpId && x.productId === _fpId) return true;
+          if (x.productId && _fpId && x.productId !== _fpId) return false;
+          return x.prodIdx === _prodIdx || x.prodIdx == null;
+        })
+      : allCi;
     const existingTotal = ci.reduce((s,x)=>s+(parseFloat(x.total)||0), 0);
     const batchTotal    = _drafts.reduce((s,r)=>s+(parseFloat(r.total)||0), 0);
     const validCount    = _drafts.filter(r => r.supplierId && r.type && parseFloat(r.total) > 0).length;
@@ -754,28 +861,56 @@
     const masterCats = c?.getMasterCategories ? c.getMasterCategories() : [];
     const specs = currentRow.supplierSpecialties || [];
 
+    // T5: resolve product printType for applicableProductTypes filtering
+    const o = c?.getOrder(_orderId);
+    const prods = o?.products || [];
+    const prod = _prodIdx >= 0 ? prods[_prodIdx] : prods[0];
+    const prodPrintType = prod?.printType || '';
+
+    // T5: filter master categories by applicableProductTypes if present
+    const filteredCats = masterCats.filter(cat => {
+      if (!Array.isArray(cat.applicableProductTypes) || !cat.applicableProductTypes.length) return true;
+      if (!prodPrintType) return true;
+      return cat.applicableProductTypes.includes(prodPrintType);
+    });
+
     let bodyHtml;
-    if(masterCats.length){
+    if(filteredCats.length){
       const specSet = new Set(specs);
-      // Supplier-specific items first, then grouped master categories
-      const specItems = specs.filter(s => masterCats.some(mc => mc.label === s));
+      const specItems = specs.filter(s => filteredCats.some(mc => mc.label === s));
+      // T7: sort within groups by usageCount (most-used first)
       const groups = {};
-      masterCats.forEach(cat => {
+      filteredCats.forEach(cat => {
         const g = cat.group || 'أخرى';
         if(!groups[g]) groups[g] = [];
-        groups[g].push(cat.label);
+        groups[g].push(cat);
       });
+      Object.values(groups).forEach(arr => arr.sort((a, b) => (b.usageCount||0) - (a.usageCount||0)));
+
+      // T5: build search string including keywords
+      const searchStr = (cat) => {
+        let s = (cat.label || '').toLowerCase();
+        if (Array.isArray(cat.keywords)) s += ' ' + cat.keywords.join(' ').toLowerCase();
+        return s;
+      };
+
       bodyHtml = (specItems.length ? `<div class="cid-pop-section" style="color:var(--b)">🏭 خدمات المورد (${specItems.length})</div>
-        ${specItems.map(l => `
-          <div class="cid-pop-item is-supplier-svc ${currentRow.type===l?'is-active':''}" data-action="pick-type" data-val="${escapeHtml(l)}" data-search="${escapeHtml(l.toLowerCase())}">
-            ${getCostIco(l)} <span>${escapeHtml(l)}</span><span class="cid-pop-badge">✓</span>
-          </div>`).join('')}` : '')
-        + Object.entries(groups).map(([g, labels]) => `
+        ${specItems.map(l => {
+          const cat = filteredCats.find(mc => mc.label === l);
+          return `
+          <div class="cid-pop-item is-supplier-svc ${currentRow.type===l?'is-active':''}" data-action="pick-type" data-val="${escapeHtml(l)}" data-search="${escapeHtml(searchStr(cat||{label:l}))}">
+            ${getCostIco(l)} <span>${escapeHtml(l)}</span>${cat?.usageCount ? `<span class="cid-pop-usage">${cat.usageCount}</span>` : ''}<span class="cid-pop-badge">✓</span>
+          </div>`;
+        }).join('')}` : '')
+        + Object.entries(groups).map(([g, cats]) => `
         <div class="cid-pop-section">${escapeHtml(g)}</div>
-        ${labels.map(l => `
-          <div class="cid-pop-item ${currentRow.type===l?'is-active':''} ${specSet.has(l)?'is-supplier-svc':''}" data-action="pick-type" data-val="${escapeHtml(l)}" data-search="${escapeHtml(l.toLowerCase())}">
-            ${getCostIco(l)} <span>${escapeHtml(l)}</span>${specSet.has(l) && !specItems.includes(l)?'<span class="cid-pop-badge">✓ المورد</span>':''}
-          </div>`).join('')}
+        ${cats.map(cat => {
+          const l = cat.label;
+          return `
+          <div class="cid-pop-item ${currentRow.type===l?'is-active':''} ${specSet.has(l)?'is-supplier-svc':''}" data-action="pick-type" data-val="${escapeHtml(l)}" data-search="${escapeHtml(searchStr(cat))}"${cat.defaultUnit ? ` data-default-unit="${escapeHtml(cat.defaultUnit)}"` : ''}>
+            ${getCostIco(l)} <span>${escapeHtml(l)}</span>${cat.usageCount ? `<span class="cid-pop-usage">${cat.usageCount}</span>` : ''}${specSet.has(l) && !specItems.includes(l)?'<span class="cid-pop-badge">✓ المورد</span>':''}
+          </div>`;
+        }).join('')}
       `).join('');
     } else if(specs.length){
       bodyHtml = `<div class="cid-pop-section">تخصصات المورد</div>`
@@ -787,7 +922,7 @@
       bodyHtml = `<div class="cid-pop-section" style="color:var(--err);padding:12px 8px">⚠️ لا توجد خدمات مُعرّفة — عرّف الخدمات من الإعدادات أولاً</div>`;
     }
 
-    const hasItems = masterCats.length || specs.length;
+    const hasItems = filteredCats.length || specs.length;
     const pop = document.createElement('div');
     pop.className = 'cid-pop';
     const rect = anchor.getBoundingClientRect();
@@ -863,6 +998,8 @@
       if(!(row.type.toLowerCase().includes('ورق') || row.type.toLowerCase().includes('كرتون'))){
         row.paperMeta = null;
       }
+      // T5: auto-fill defaultUnit from master category
+      if(!row.unit && el.dataset.defaultUnit) row.unit = el.dataset.defaultUnit;
       // Auto-fill amount from library reference if empty
       if(!row.total || row.total === '0'){
         const ref = _getRefPriceForType(row.type);
@@ -993,6 +1130,7 @@
     const o = c?.getOrder(_orderId);
     const item = (o?.costItems || [])[gi];
     if(!item){ toast('⚠️ البند غير موجود', 'err'); return; }
+    if(item.status === 'voided'){ toast('⛔ البند ملغى — لا يمكن تعديله', 'warn'); return; }
     if(item.paid){ toast('⛔ البند مدفوع — التعديل من اللوحة القديمة فقط (admin only)', 'warn'); return; }
     const suppliers = c?.getSuppliers ? c.getSuppliers() : [];
     const sup = suppliers.find(s => s._id === item.supplierId);
@@ -1002,6 +1140,7 @@
       supplierId: item.supplierId||'', supplierName: item.supplierName||'',
       supplierSpecialties: specs, type: item.type||'',
       total: String(item.total||''), note: item.note||'', paperMeta: item.paperMeta||null,
+      itemQty: String(item.itemQty||''), unitPrice: String(item.unitPrice||''), unit: item.unit||'',
     };
     render();
     setTimeout(() => _drawer.querySelector('[data-cid-field="total"][data-rid="edit"]')?.focus(), 50);
@@ -1059,9 +1198,11 @@
           type: row.type, total: parseFloat(row.total),
           supplierId: row.supplierId, supplierName: row.supplierName,
           note: row.note||'', walletId:'', paperMeta: row.paperMeta||{},
+          itemQty: row.itemQty||'', unitPrice: row.unitPrice||'', unit: row.unit||'',
         },
         role, userId, userName, wallets, isEdit:false, editIdx:-1,
         allowedTypes: masterCats.map(x => x.label),
+        masterCats,
       });
       if(res.ok){
         okCount++;
@@ -1099,12 +1240,14 @@
         supplierId: _editDraft.supplierId, supplierName: _editDraft.supplierName,
         note: _editDraft.note||'', walletId:'', paperMeta: _editDraft.paperMeta||{},
         isExternal: true,
+        itemQty: _editDraft.itemQty||'', unitPrice: _editDraft.unitPrice||'', unit: _editDraft.unit||'',
       },
       role: c.getCurrentRole ? c.getCurrentRole() : '',
       userId: (c.getCurrentUser && c.getCurrentUser()?.uid)||'',
       userName: c.getUserName ? c.getUserName() : '',
       wallets, isEdit:true, editIdx: _editIdx,
       allowedTypes: masterCats.map(x => x.label),
+      masterCats,
     });
     if(!res.ok){ toast('❌ '+(res.errors?.[0]||'فشل التعديل'), 'err'); return; }
     toast(`✅ تم التعديل — ${fn(total)} ج`, 'ok');
@@ -1119,8 +1262,9 @@
     const o = c?.getOrder(_orderId);
     const item = (o?.costItems||[])[gi];
     if(!item){ toast('⚠️ البند غير موجود', 'err'); return; }
+    if(item.status === 'voided'){ toast('⚠️ البند ملغى بالفعل', 'warn'); return; }
     if(typeof window.rmCost !== 'function'){ toast('❌ نظام الحذف غير متاح', 'err'); return; }
-    if(!item.paid && !confirm(`حذف البند: ${item.type||''} — ${fn(item.total||0)} ج؟`)) return;
+    if(!item.paid && !confirm(`إلغاء البند: ${item.type||''} — ${fn(item.total||0)} ج؟`)) return;
     try {
       await window.rmCost(gi);
       if(_editIdx === gi) _cancelEdit();

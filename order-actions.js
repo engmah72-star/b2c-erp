@@ -34,6 +34,10 @@ import {
   fmtDateAr,
   validateOrderResponsibility,
   ORDER_DESIGN_STAGES,
+  matchCostItemProduct,
+  resolveCostItemCategory,
+  isActiveCostItem,
+  COST_ITEM_STATUSES,
 } from './orders.js';
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -1489,9 +1493,9 @@ export const orderActions = {
 
       // اجمع كل المستندات المرتبطة (قبل بناء الـ batch لفحص الحجم)
       const [txSnap, ledgerSnap, returnsSnap] = await Promise.all([
-        getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', orderId))),
-        getDocs(query(collection(db, 'financial_ledger'), where('orderId', '==', orderId))),
-        getDocs(query(collection(db, 'returns_tickets'), where('orderId', '==', orderId))),
+        getDocs(query(collection(db, 'transactions_v2'), where('orderId', '==', orderId), limit(500))),
+        getDocs(query(collection(db, 'financial_ledger'), where('orderId', '==', orderId), limit(500))),
+        getDocs(query(collection(db, 'returns_tickets'), where('orderId', '==', orderId), limit(100))),
       ]);
       const supplierOrderIds = [...new Set(
         (order.costItems || []).map(ci => ci?.supplierOrderId).filter(Boolean)
@@ -1574,11 +1578,12 @@ export const orderActions = {
     wallets = [],
     isEdit = false, editIdx = -1,
     allowedTypes = [],
+    masterCats = [],
   }) {
     const order = await _loadOrder(db, orderId);
     if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
 
-    const v = validateCostItem({ order, payload, role, wallets, isEdit, allowedTypes });
+    const v = validateCostItem({ order, payload, role, wallets, isEdit, allowedTypes, masterCats });
     if (!v.ok) return { ...v, orderId };
 
     // Reference price lookup (non-blocking — enriches warnings only)
@@ -1600,9 +1605,13 @@ export const orderActions = {
       supplierId = '', supplierName: rawSupplierName = '',
       note = '', walletId = '',
       paperMeta = {},
+      itemQty: rawQty, unitPrice: rawUnitPrice, unit: rawUnit = '',
     } = payload;
     const type = normalizeCostType(rawType) || rawType;
     const total = parseFloat(rawTotal) || 0;
+    const itemQty   = parseFloat(rawQty) || 0;
+    const unitPrice = parseFloat(rawUnitPrice) || 0;
+    const unit      = (rawUnit || '').trim();
 
     // resolve fresh supplier name (non-blocking fallback to payload name)
     let supplierName = rawSupplierName;
@@ -1632,12 +1641,21 @@ export const orderActions = {
 
     // ── resolve stable productId alongside legacy prodIdx ──
     const _prod = prodIdx >= 0 ? (order.products || [])[prodIdx] : null;
-    const _productId = _prod?.productId || null;
+    const _productId = _prod?.productId || existingItem?.productId || null;
+
+    // ── T4: auto-derive printType from product ──
+    const _printType = _prod?.printType || '';
+
+    // ── T3+T5: resolve category/subcategory/defaultUnit from master categories ──
+    const _resolved = masterCats.length ? resolveCostItemCategory(type, masterCats) : null;
+    const _category = _resolved?.category || '';
+    const _subcategory = _resolved?.subcategory || '';
 
     // ── build new item ────────────────────────────────────
     const newItem = {
       costItemId,
       orderId,
+      status: isEdit ? (existingItem?.status || COST_ITEM_STATUSES.ACTIVE) : COST_ITEM_STATUSES.ACTIVE,
       ...(supplierOrderId ? { supplierOrderId } : {}),
       type,
       supplierId,
@@ -1645,6 +1663,12 @@ export const orderActions = {
       prodIdx: prodIdx >= 0 ? prodIdx : null,
       ...(_productId ? { productId: _productId } : {}),
       total,
+      ...(itemQty > 0 ? { itemQty } : {}),
+      ...(unitPrice > 0 ? { unitPrice } : {}),
+      ...(unit ? { unit } : ((_resolved?.defaultUnit && !isEdit) ? { unit: _resolved.defaultUnit } : {})),
+      ...(_category ? { category: _category } : {}),
+      ...(_subcategory ? { subcategory: _subcategory } : {}),
+      ...(_printType ? { printType: _printType } : {}),
       note,
       ...(paperMeta && Object.keys(paperMeta).length ? { paperMeta } : {}),
       date: new Date().toISOString().slice(0, 10),
@@ -1772,18 +1796,28 @@ export const orderActions = {
 
       // Fire-and-forget: auto-index in cost_item_library (non-blocking)
       if (!isEdit && type) {
-        const _prod = prodIdx >= 0 ? (order.products || [])[prodIdx] : (order.products || [])[0];
+        const _libProd = prodIdx >= 0 ? (order.products || [])[prodIdx] : (order.products || [])[0];
+        const _libQty = itemQty > 0 ? itemQty : (parseFloat(_libProd?.qty || 0) || 0);
         import('./core/cost-library-actions.js')
           .then(({ upsertCostLibraryItem }) => upsertCostLibraryItem({
             db, type,
-            productName: _prod?.name || '',
+            productName: _libProd?.name || '',
             supplierId: supplierId || '',
             supplierName: supplierName || '',
-            qty: parseFloat(_prod?.qty || 0) || 0,
+            qty: _libQty,
             total, orderId,
             userId: userId || '',
           }).catch(() => {}))
           .catch(() => {});
+
+        // T7: fire-and-forget — update usageCount + lastUsedAt on master category
+        if (_resolved?.subcategory) {
+          import('./master-lists-actions.js')
+            .then(({ updateCategoryUsage }) => updateCategoryUsage({
+              db, categoryLabel: _resolved.subcategory,
+            }).catch(() => {}))
+            .catch(() => {});
+        }
       }
 
       return {
@@ -1843,18 +1877,28 @@ export const orderActions = {
       return { ok: false, errors: ['البند غير موجود'], warnings: [] };
     }
     const item = items[costItemIdx];
+    if (item.status === COST_ITEM_STATUSES.VOIDED) {
+      return { ok: false, errors: ['⚠️ البند محذوف بالفعل'], warnings: [] };
+    }
     if (item.paid || item.walletId || item.txId || item.spId) {
       return { ok: false, errors: ['⛔ هذا البند مرتبط بدفعة — استخدم حذف البند المدفوع من الحسابات'], warnings: [] };
     }
-    items.splice(costItemIdx, 1);
+    // T8: soft-delete — mark as voided instead of removing from array
+    items[costItemIdx] = {
+      ...item,
+      status: COST_ITEM_STATUSES.VOIDED,
+      voidedAt: new Date().toISOString(),
+      voidedBy: userId,
+      voidedByName: userName,
+    };
     try {
       const batch = writeBatch(db);
       batch.update(order._ref, {
         costItems: items,
         timeline: [...(order.timeline || []), auditEntry({
-          action: `🗑️ حذف بند تكلفة: ${item.type || ''} — ${parseFloat(item.total) || 0} ج${item.supplierName ? ' — ' + item.supplierName : ''}`,
+          action: `🗑️ إلغاء بند تكلفة: ${item.type || ''} — ${parseFloat(item.total) || 0} ج${item.supplierName ? ' — ' + item.supplierName : ''}`,
           userId, userName, kind: 'edit',
-          meta: { costItemIndex: costItemIdx, type: item.type, total: item.total, supplierId: item.supplierId },
+          meta: { costItemIndex: costItemIdx, type: item.type, total: item.total, supplierId: item.supplierId, status: 'voided' },
         })],
         updatedAt: serverTimestamp(),
       });
@@ -1874,6 +1918,51 @@ export const orderActions = {
       return { ok: true, errors: [], warnings: [], orderId, action: 'remove_cost_item' };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
+    }
+  },
+
+  async toggleProductCostComplete({
+    db = defaultDb, orderId, prodIdx,
+    role, userId, userName,
+  }) {
+    if (!userId) return { ok: false, errors: ['userId مطلوب'], warnings: [] };
+    if (!orderId) return { ok: false, errors: ['orderId مطلوب'], warnings: [] };
+    if (prodIdx == null || prodIdx < 0) return { ok: false, errors: ['prodIdx مطلوب'], warnings: [] };
+    if (!['admin', 'operation_manager', 'production_agent'].includes(role)) {
+      return { ok: false, errors: ['ليس لديك صلاحية إغلاق/فتح تسجيل بنود التكلفة'], warnings: [] };
+    }
+    const order = await _loadOrder(db, orderId);
+    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [] };
+    const prods = order.products || [];
+    if (prodIdx >= prods.length) return { ok: false, errors: ['المنتج غير موجود'], warnings: [] };
+
+    const map = { ...(order.costCompletedProds || {}) };
+    const key = String(prodIdx);
+    const wasComplete = !!map[key];
+
+    if (wasComplete) {
+      delete map[key];
+    } else {
+      map[key] = { at: new Date().toISOString(), by: userId, byName: userName || '' };
+    }
+
+    const prodName = prods[prodIdx].name || `منتج ${prodIdx + 1}`;
+    const action = wasComplete
+      ? `🔓 إعادة فتح تسجيل بنود: ${prodName}`
+      : `✅ إنهاء تسجيل بنود: ${prodName}`;
+
+    try {
+      await updateDoc(order._ref, {
+        costCompletedProds: map,
+        timeline: [...(order.timeline || []), auditEntry({
+          action, userId, userName, kind: 'edit',
+          meta: { prodIdx, prodName, completed: !wasComplete },
+        })],
+        updatedAt: serverTimestamp(),
+      });
+      return { ok: true, errors: [], warnings: [], completed: !wasComplete, prodIdx };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشل التحديث'], warnings: [] };
     }
   },
 
@@ -1898,7 +1987,7 @@ export const orderActions = {
     }
     if (!targetStage) return { ok: false, errors: ['⚠️ targetStage مطلوب'], warnings: [], orderId };
     if (targetStage === order.stage) return { ok: false, errors: ['⚠️ نفس المرحلة الحالية'], warnings: [], orderId };
-    if (targetStage === 'archived' && !(order.costItems || []).length) {
+    if (targetStage === 'archived' && !(order.costItems || []).filter(isActiveCostItem).length) {
       return { ok: false, errors: ['⚠️ لا يمكن الأرشفة — سجّل تكلفة الأوردر أولاً'], warnings: [], orderId };
     }
     const labels = { design: 'تصميم', printing: 'طباعة', production: 'تنفيذ', shipping: 'شحن', archived: 'أرشيف' };
@@ -2167,8 +2256,12 @@ export const orderActions = {
     const removedProd = prods[prodIdx];
     prods.splice(prodIdx, 1);
     const ci = [...(order.costItems || [])];
+    const removedProductId = removedProd?.productId || null;
     const newCi = ci
-      .filter(c => c.prodIdx !== prodIdx)
+      .filter(c => {
+        if (removedProductId && c.productId === removedProductId) return false;
+        return c.prodIdx !== prodIdx;
+      })
       .map(c => ({ ...c, prodIdx: c.prodIdx > prodIdx ? c.prodIdx - 1 : c.prodIdx }));
     const removedPrice = parseFloat(removedProd?.salePrice || removedProd?.price || 0);
     const newSalePrice = Math.max(0, (parseFloat(order.salePrice) || 0) - removedPrice);
@@ -2304,8 +2397,13 @@ export const orderActions = {
     const prods = order.products || [];
     const prod = prodIdx >= 0 ? prods[prodIdx] : prods[0];
     if (!prod) return { ok: false, errors: ['⚠️ المنتج غير موجود'], warnings: [], orderId };
-    const ci = order.costItems || [];
-    const prodCi = prodIdx >= 0 ? ci.filter(c => c.prodIdx === prodIdx || c.prodIdx == null) : ci;
+    const ci = (order.costItems || []).filter(isActiveCostItem);
+    const prodCi = prodIdx >= 0
+      ? ci.filter(c => {
+          const m = matchCostItemProduct(c, prods);
+          return m.index === prodIdx || m.index < 0;
+        })
+      : ci;
     if (!prodCi.length) return { ok: false, errors: ['⚠️ لا توجد بنود للحفظ'], warnings: [], orderId };
     const total = prodCi.reduce((s, c) => s + (parseFloat(c.total) || 0), 0);
     const today = new Date().toISOString().slice(0, 10);
@@ -2500,21 +2598,32 @@ export const orderActions = {
     }
     try {
       const prods = order.products || [];
-      const ci = order.costItems || [];
+      const ci = (order.costItems || []).filter(isActiveCostItem);
       const now = nowStr();
       const idxSet = new Set(doneIdx);
       const idxRemap = new Map();
       let newI = 0;
       prods.forEach((_, i) => { if (!idxSet.has(i)) idxRemap.set(i, newI++); });
       const childCi = ci
-        .filter(c => c.prodIdx != null && idxSet.has(c.prodIdx))
+        .filter(c => {
+          const m = matchCostItemProduct(c, prods);
+          return m.index >= 0 && idxSet.has(m.index);
+        })
         .map(c => {
-          const childIdx = doneIdx.indexOf(c.prodIdx);
+          const m = matchCostItemProduct(c, prods);
+          const childIdx = doneIdx.indexOf(m.index);
           return { ...c, prodIdx: childIdx >= 0 ? childIdx : null };
         });
       const parentCi = ci
-        .filter(c => c.prodIdx == null || !idxSet.has(c.prodIdx))
-        .map(c => c.prodIdx == null ? c : { ...c, prodIdx: idxRemap.get(c.prodIdx) ?? null });
+        .filter(c => {
+          const m = matchCostItemProduct(c, prods);
+          return m.index < 0 || !idxSet.has(m.index);
+        })
+        .map(c => {
+          const m = matchCostItemProduct(c, prods);
+          if (m.index < 0) return c;
+          return { ...c, prodIdx: idxRemap.get(m.index) ?? null };
+        });
 
       const childData = {
         ...split.childOrderData,
@@ -3593,7 +3702,7 @@ export const orderActions = {
   async cancelOrder({
     db = defaultDb, orderId,
     reason = '', note = '',
-    userId, userName,
+    userId, userName, role = '',
   }) {
     if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
     if (!reason) return { ok: false, errors: ['⛔ سبب الإلغاء مطلوب'], warnings: [], orderId };
@@ -3602,8 +3711,8 @@ export const orderActions = {
     if (order.stage === 'cancelled') {
       return { ok: false, errors: ['الأوردر ملغي بالفعل'], warnings: [], orderId };
     }
-    if (order.stage === 'archived') {
-      return { ok: false, errors: ['لا يمكن إلغاء أوردر مؤرشف'], warnings: [], orderId };
+    if (order.stage === 'archived' && role !== 'admin') {
+      return { ok: false, errors: ['لا يمكن إلغاء أوردر مؤرشف — الأدمن فقط'], warnings: [], orderId };
     }
     try {
       const entry = auditEntry({

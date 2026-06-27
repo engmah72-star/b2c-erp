@@ -24,10 +24,10 @@
 <link rel="modulepreload" href="./order-actions.js">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
-<script src="core/page-state.js"></script>
-<script src="sidebar-config.js"></script>
+<script src="core/page-state.js" defer></script>
+<script src="sidebar-config.js" defer></script>
 <script src="sidebar.js"></script>
-<script src="sync-monitor.js"></script>
+<script src="sync-monitor.js" defer></script>
 <script type="module" src="inbox-badge.js"></script>
 <!-- God-page decomp PR-16: inline <style> extracted to clients.css. -->
 <link rel="stylesheet" href="./clients.css?v=5">
@@ -36,7 +36,7 @@
      no visual change unless the CC DOM is rendered. -->
 <link id="bsheet-styles" rel="stylesheet" href="./core/bottom-sheet.css">
 <link rel="stylesheet" href="./clients-control-center.css">
-<script src="financial-guard.js"></script>
+<script src="financial-guard.js" defer></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <!-- Unified sidebar (active على هذه الصفحة) — رجوع فوري بـ ?feat.sidebarV2=0 -->
 <script type="module" src="app-sidebar.js?v=3"></script>
@@ -228,8 +228,11 @@ import { collection, doc, onSnapshot, getDoc, getDocs, query, where, orderBy, li
 import { dataCache, cachedQuery } from "./core/data-cache.js";
 import { staggerSubs } from "./core/lazy-subs.js";
 import { warmupForRole } from "./core/offline-warmup.js";
+import { getSettings, getMasterList } from "./core/static-store.js";
 import { warmImages, extractOrderImageUrls, extractClientImageUrls } from "./core/image-cache.js";
 import { initPageShortcuts } from './core/page-shortcuts.js';
+import { toast } from './shared.js';
+import { fmtNum } from './core/dom-utils.js';
 
 // ══ Global Error Handler ══
 window.addEventListener('unhandledrejection', e=>{
@@ -346,7 +349,6 @@ function showPhone(p){ return canSee('client_phone') ? p : _maskPhone(p); }
 // God-page decomp PR-23: TAG_LABELS/COL + STAGE_AR/COL/HREF extracted to clients-constants.js
 
 // ══ UTILS ══
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 // calcRem is loaded from core/order-math.js via clients-bridge.js → window.calcRem
 // (classic script can't use `import` at top level, so we resolve via window at call time)
 
@@ -365,7 +367,7 @@ const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 window.renderSegmentStrip=function(){
   const strip=document.getElementById('segment-strip');
   if(!strip)return;
-  const html=segmentStripHTML({clients,segments:clientSegments,currentSeg:gv('f-segment'),SEG_STYLE,fn});
+  const html=segmentStripHTML({clients,segments:clientSegments,currentSeg:gv('f-segment'),SEG_STYLE,fn:fmtNum});
   if(!html){strip.style.display='none';return;}
   strip.style.display='block';
   strip.innerHTML=html;
@@ -393,11 +395,6 @@ const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 // isThisMonth — extracted to clients-render.js (window.isThisMonth)
 
-function toast(msg,t=''){
-  const c=document.getElementById('toasts');if(!c)return;
-  const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;
-  c.appendChild(el);setTimeout(()=>el.remove(),3200);
-}
 
 // ══ NAV ══
 function toggleNav(){document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');}
@@ -568,11 +565,8 @@ onAuthStateChanged(auth, async u=>{
     { priority:1, fn:()=>dataCache.subscribe(
       cachedQuery('wallets').limit(100).build(),
       (docs)=>{ wallets=docs; })},
-    // ── P1: settings (for governorate dropdown) — single doc, raw onSnapshot ──
-    { priority:1, fn:()=>onSnapshot(doc(db,'settings','main'),snap=>{
-      if(snap.exists()) settings=snap.data();
-      fillGovSelect();
-    })},
+    // ── P1: settings (for governorate dropdown) — cached one-shot ──
+    { priority:1, fn:()=>{ getSettings((data)=>{ if(data) settings=data; fillGovSelect(); }); }},
     // ── P1: products ──
     { priority:1, fn:()=>dataCache.subscribe(
       cachedQuery('products_v2').limit(500).build(),
@@ -604,22 +598,17 @@ onAuthStateChanged(auth, async u=>{
         });
         designers=out.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
       })},
-    // ── P1: egypt_admin (single doc, raw onSnapshot) ──
-    { priority:1, fn:()=>onSnapshot(doc(db,'master_lists','egypt_admin'),snap=>{
-      if(snap.exists()){
-        const data=snap.data();
-        const items=data?.items;
-        if(items && typeof items==='object' && Object.keys(items).length>0){
-          EGYPT=items;
-        }else{
-          EGYPT={...EGYPT_FALLBACK};
-        }
+    // ── P1: egypt_admin (cached one-shot via static-store) ──
+    { priority:1, fn:()=>{ getMasterList('egypt_admin',(data)=>{
+      const items=data?.items;
+      if(items && typeof items==='object' && Object.keys(items).length>0){
+        EGYPT=items;
       }else{
         EGYPT={...EGYPT_FALLBACK};
       }
       fillGovSelect();
       fillFilters();
-    },err=>{ console.warn('egypt_admin listener:',err?.message||err); })},
+    }).catch(err=>{ console.warn('egypt_admin load:',err?.message||err); }); }},
     // ── P2: followups ──
     { priority:2, fn:()=>dataCache.subscribe(
       cachedQuery('client_followups').orderBy('createdAt','desc').limit(FU_LIMIT).build(),
@@ -673,8 +662,8 @@ function updateStats(){
     clients, orders:allOrders, calcRem, ordersIndex:buildClientOrdersIndex(),
   });
   // Legacy (hidden) — keep populated for any drawer/code still reading these IDs
-  setText('s-sales',fn(stats.totals.sales)+' ج');
-  setText('s-rem',fn(stats.totals.rem)+' ج');
+  setText('s-sales',fmtNum(stats.totals.sales)+' ج');
+  setText('s-rem',fmtNum(stats.totals.rem)+' ج');
   setText('sub',stats.totals.clientCount+' عميل');
 
   // ── New runtime KPI strip ─────────────────────────────────────
@@ -684,9 +673,9 @@ function updateStats(){
     const v=Math.abs(parseFloat(n)||0);
     if(v>=1e6) return (v/1e6).toFixed(2).replace(/\.0+$/,'')+'M';
     if(v>=1e3) return (v/1e3).toFixed(0)+'K';
-    return fn(v);
+    return fmtNum(v);
   };
-  const fmtInt=(n)=>fn(Math.round(parseFloat(n)||0));
+  const fmtInt=(n)=>fmtNum(Math.round(parseFloat(n)||0));
   setText('kpi-total-clients',fmtInt(T.clientCount));
   setText('kpi-active-clients',fmtInt(T.activeClientCount));
   setText('kpi-open-orders',fmtInt(T.openOrdersCount));
@@ -712,11 +701,11 @@ function updateStats(){
   // ──────────────────────────────────────────────────────────────
 
   const P=stats.periods;
-  setText('tp-today-n',P.today.n);     setText('tp-today-r',fn(P.today.r)+' ج');
-  setText('tp-yest-n',P.yesterday.n);  setText('tp-yest-r',fn(P.yesterday.r)+' ج');
-  setText('tp-week-n',P.week.n);       setText('tp-week-r',fn(P.week.r)+' ج');
-  setText('tp-month-n',P.month.n);     setText('tp-month-r',fn(P.month.r)+' ج');
-  setText('tp-lm-n',P.lastMonth.n);    setText('tp-lm-r',fn(P.lastMonth.r)+' ج');
+  setText('tp-today-n',P.today.n);     setText('tp-today-r',fmtNum(P.today.r)+' ج');
+  setText('tp-yest-n',P.yesterday.n);  setText('tp-yest-r',fmtNum(P.yesterday.r)+' ج');
+  setText('tp-week-n',P.week.n);       setText('tp-week-r',fmtNum(P.week.r)+' ج');
+  setText('tp-month-n',P.month.n);     setText('tp-month-r',fmtNum(P.month.r)+' ج');
+  setText('tp-lm-n',P.lastMonth.n);    setText('tp-lm-r',fmtNum(P.lastMonth.r)+' ج');
   // MoM delta
   const compEl=document.getElementById('tp-lm-c');
   if(compEl){
@@ -868,7 +857,7 @@ function renderGrid(){
     const _nowMs=Date.now();
     const _nowSec=_nowMs/1000;
     const cardCtx={
-      getOrders: getClientOrders, calcRem, fn,
+      getOrders: getClientOrders, calcRem, fn:fmtNum,
       countOpenReminders, getSegment: (id)=>clientSegments.get(id),
       SEG_STYLE, TAG_LABELS,
       nowMs: _nowMs, nowSec: _nowSec,
@@ -1124,7 +1113,7 @@ function renderPanel(id){
     segments:clientSegments,
     SEG_STYLE,TAG_LABELS,TAG_COL,
     renderClientFollowups,renderPanelOrders,renderBizCardTab,
-    fn,pRow,fmtOccasion,
+    fn:fmtNum,pRow,fmtOccasion,
   });
 
   window.__panelOrds=d.cOrds;
@@ -1245,7 +1234,7 @@ function _canDeleteOrder(){
 }
 function renderPanelOrders(ords, filter){
   return panelOrdersHTML({
-    orders: ords, filter, calcRem, fn,
+    orders: ords, filter, calcRem, fn:fmtNum,
     STAGE_COL, STAGE_HREF, STAGE_AR,
     canDelete: _canDeleteOrder(),
   });
@@ -1585,7 +1574,7 @@ function openNewOrder(){
     desSel.innerHTML=window.__buildDesignerOptions?.(designers,window.__computeDesignerLoad?.(allOrders)||{})||'';
   }
   const walSel=document.getElementById('no-wallet');
-  if(walSel)walSel.innerHTML=window.__buildWalletOptionsHTML?.(wallets,fn)||'';
+  if(walSel)walSel.innerHTML=window.__buildWalletOptionsHTML?.(wallets,fmtNum)||'';
   setText('order-modal-title','✏️ طلب جديد — '+cl.name);
   document.getElementById('ov-order').classList.add('open');
 }
@@ -1599,7 +1588,7 @@ window.calcNoRemaining=function(){
   const remVal=document.getElementById('no-rem-val');
   if(preview&&remVal){
     preview.style.display=sale>0?'flex':'none';
-    remVal.textContent=fn(rem)+' ج';
+    remVal.textContent=fmtNum(rem)+' ج';
   }
   // Receipt section: required when deposit > 0
   const receiptWrap=document.getElementById('no-receipt-wrap');
@@ -2224,7 +2213,7 @@ function renderListView(data){
     el.innerHTML='<div class="empty"><div class="empty-icon">👤</div><div class="empty-text">لا يوجد عملاء</div></div>';
     return;
   }
-  const rowCtx={getOrders:getClientOrders,calcRem,fn,TAG_LABELS,TAG_COL};
+  const rowCtx={getOrders:getClientOrders,calcRem,fn:fmtNum,TAG_LABELS,TAG_COL};
   el.innerHTML=data.map((c,i)=>clientListRowHTML(c,i,{...rowCtx,color:COLORS[i%COLORS.length]})).join('');
 }
 
@@ -2561,7 +2550,7 @@ window.renderControlGrid=function(){
   // God-page decomp PR-10: stats KPI markup extracted to clients-render.js
   // (window.controlGridStatsHTML). Wrapper computes via the pure builder.
   const statsEl=document.getElementById('cg-stats-row');
-  if(statsEl) statsEl.innerHTML=controlGridStatsHTML({data,calcRem,fn,selectedCount:__cgSel.size});
+  if(statsEl) statsEl.innerHTML=controlGridStatsHTML({data,calcRem,fn:fmtNum,selectedCount:__cgSel.size});
 
   const tbody=document.getElementById('cgrid-body');
   if(!data.length){tbody.innerHTML='<tr><td colspan="20" style="text-align:center;padding:28px;color:var(--dim2)">لا توجد نتائج</td></tr>';return;}
@@ -2576,7 +2565,7 @@ window.renderControlGrid=function(){
   // God-page decomp PR-11: per-row HTML extracted to clients-render.js
   // (window.controlGridRowHTML). Wrapper computes per-row state then delegates.
   const rowCtx={
-    designers, calcRem, fn, fmtDate,
+    designers, calcRem, fn:fmtNum, fmtDate,
     CGRID_STATUS_BG, CGRID_STATUS_CLR, CGRID_STATUS_MAP,
   };
   tbody.innerHTML=data.map(o=>{
@@ -2731,9 +2720,9 @@ window.cgridSaveFinancial=async function(orderId,field,newVal,oldVal,walletId){
         .filter(t => t.isLocked === true && !t.isReversal);
       if(lockedTxs.length > 0){
         const totalLocked = lockedTxs.reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-        const txsList = lockedTxs.slice(0,5).map(t=>`• ${t.description||t.category||'حركة'} — ${fn(t.amount)} ج (${t.type==='in'?'دخل':'خرج'})`).join('\n');
+        const txsList = lockedTxs.slice(0,5).map(t=>`• ${t.description||t.category||'حركة'} — ${fmtNum(t.amount)} ج (${t.type==='in'?'دخل':'خرج'})`).join('\n');
         const more = lockedTxs.length > 5 ? `\n• +${lockedTxs.length-5} حركات أخرى` : '';
-        const warn = `⚠️ هذا الأوردر فيه ${lockedTxs.length} معاملات معتمدة ومقفولة!\n\nمجموع المعاملات: ${fn(totalLocked)} ج\n\n${txsList}${more}\n\nالتعديل المباشر على ${fLabel} قد يخلق فجوة بين الأوردر والـ tx.\n\n⛔ التعديل يجب أن يتم عبر:\n1. طلب استرداد (لو totalPaid)\n2. أو عبر tx جديدة\n\nاضغط OK للمتابعة (سيُسجَّل التعديل في timeline + قيد ledger).`;
+        const warn = `⚠️ هذا الأوردر فيه ${lockedTxs.length} معاملات معتمدة ومقفولة!\n\nمجموع المعاملات: ${fmtNum(totalLocked)} ج\n\n${txsList}${more}\n\nالتعديل المباشر على ${fLabel} قد يخلق فجوة بين الأوردر والـ tx.\n\n⛔ التعديل يجب أن يتم عبر:\n1. طلب استرداد (لو totalPaid)\n2. أو عبر tx جديدة\n\nاضغط OK للمتابعة (سيُسجَّل التعديل في timeline + قيد ledger).`;
         if(!confirm(warn)) return;
         const reason = prompt('سبب التعديل (إجباري — سيُحفظ في timeline والـ ledger):');
         if(!reason || !reason.trim()) return;
@@ -2748,8 +2737,8 @@ window.cgridSaveFinancial=async function(orderId,field,newVal,oldVal,walletId){
 
   const wEl=walletId?wallets.find(x=>x._id===walletId):null;
   const tlAction = editReason
-    ? `💰 [أدمن] تعديل ${fLabel}: "${fn(oldVal)}" → "${fn(newVal)}" ج · سبب: ${editReason}`
-    : `💰 [أدمن] تعديل ${fLabel}: "${fn(oldVal)}" → "${fn(newVal)}" ج`;
+    ? `💰 [أدمن] تعديل ${fLabel}: "${fmtNum(oldVal)}" → "${fmtNum(newVal)}" ج · سبب: ${editReason}`
+    : `💰 [أدمن] تعديل ${fLabel}: "${fmtNum(oldVal)}" → "${fmtNum(newVal)}" ج`;
 
   try{
     const r = await window.orderActions.editOrderPayment({
@@ -2907,8 +2896,8 @@ window.cgridSaveRowEdit=async function(orderId){
   const changeFields={};
   if(newName!==oldName){ changes.push(`الاسم: "${oldName}"→"${newName}"`); changeFields.clientName=newName; }
   if(newBiz!==oldBiz){   changes.push(`الشركة: "${oldBiz}"→"${newBiz}"`); changeFields.clientBusiness=newBiz; }
-  if(Math.abs(newSale-oldSale)>0.01){ changes.push(`السعر: ${fn(oldSale)}→${fn(newSale)} ج`); changeFields.salePrice=newSale; }
-  if(Math.abs(newPaid-oldPaid)>0.01){ changes.push(`المدفوع: ${fn(oldPaid)}→${fn(newPaid)} ج`); changeFields.totalPaid=newPaid; }
+  if(Math.abs(newSale-oldSale)>0.01){ changes.push(`السعر: ${fmtNum(oldSale)}→${fmtNum(newSale)} ج`); changeFields.salePrice=newSale; }
+  if(Math.abs(newPaid-oldPaid)>0.01){ changes.push(`المدفوع: ${fmtNum(oldPaid)}→${fmtNum(newPaid)} ج`); changeFields.totalPaid=newPaid; }
   const emp=designers.find(e=>e._id===newEmpUid||e.uid===newEmpUid);
   if(newEmpUid&&newEmpUid!==oldEmpUid&&emp){
     changes.push('تغيير الموظف');
@@ -2963,7 +2952,7 @@ window.cgridDeleteOrder=async function(orderId){
     return;
   }
   if(r.idempotent&&!r.pending)return toast('ℹ️ الأوردر محذوف مسبقاً','ok');
-  toast(`✅ تم الحذف النهائي${r.refundedAmount>0?` — استرداد ${fn(r.refundedAmount)} ج`:''}`,'ok');
+  toast(`✅ تم الحذف النهائي${r.refundedAmount>0?` — استرداد ${fmtNum(r.refundedAmount)} ج`:''}`,'ok');
 };
 
 window.deleteClientPanelOrder=async function(orderId){
@@ -3027,7 +3016,7 @@ Object.assign(window, {
   doLogout, closePanel, openClient, openNewOrder, closeNav, toggleNav,
   openAddClient, openAddLegacy, closeClientModal, closeOrderModal,
   editClient, deleteClient, saveClient, saveNewOrder, renderPanel,
-  toast, canSee, showPhone, fn, renderGrid, updateStats, isClientModalOpen,
+  toast, canSee, showPhone, fn:fmtNum, renderGrid, updateStats, isClientModalOpen,
   getClientOrders, checkPhone, updateClientSaveState,
   onClientNameInput, checkIntlPhone, fillCities, renderDesignFilesList,
   renderReceiptList, selectOrderType, addNoProdRow, exportCSV,

@@ -13,11 +13,13 @@ const ROLE_WARMUP = {
   admin: [
     'accounts.html', 'clients.html', 'orders', 'design.html',
     'shipping.html', 'production.html', 'reports.html', 'employees.html',
-    'approvals.html', 'suppliers.html', 'returns.html',
+    'approvals.html', 'suppliers.html', 'returns.html', 'print.html',
+    'exec-workspace.html', 'settings.html',
   ],
   operation_manager: [
     'clients.html', 'orders', 'design.html', 'shipping.html',
     'production.html', 'reports.html', 'employees.html', 'approvals.html',
+    'exec-workspace.html',
   ],
   customer_service: [
     'clients.html', 'orders', 'design.html', 'approvals.html',
@@ -29,7 +31,8 @@ const ROLE_WARMUP = {
     'design.html', 'orders',
   ],
   production_agent: [
-    'production.html', 'orders', 'suppliers.html',
+    'production.html', 'orders', 'suppliers.html', 'print.html',
+    'exec-workspace.html',
   ],
   shipping_officer: [
     'shipping.html', 'orders', 'shipping-accounts',
@@ -75,6 +78,16 @@ const COLLECTION_SPECS = {
   'shipping-accounts': [
     () => cachedQuery('shipping_settlements').orderBy('createdAt', 'desc').limit(500),
   ],
+  'print.html': [
+    () => cachedQuery('products_v2').limit(500),
+    () => cachedQuery('shippers_v2').limit(200),
+  ],
+  'exec-workspace.html': [
+    () => cachedQuery('suppliers_v2').limit(500),
+  ],
+  'settings.html': [
+    () => cachedQuery('wallets').limit(100),
+  ],
 };
 
 let _warmedThisSession = false;
@@ -88,6 +101,7 @@ export function warmupForRole(role) {
   const seen = new Set();
 
   requestIdleCallback(() => {
+    const queue = [];
     for (const page of pages) {
       const specs = COLLECTION_SPECS[page];
       if (!specs) continue;
@@ -97,10 +111,20 @@ export function warmupForRole(role) {
           const key = spec.collection;
           if (seen.has(key)) continue;
           seen.add(key);
-          prefetch(spec.collection, spec.descriptors, spec.firestoreConstraints).catch(() => {});
+          queue.push(spec);
         } catch (_) {}
       }
     }
+    let i = 0;
+    function next() {
+      if (i >= queue.length) return;
+      const spec = queue[i++];
+      prefetch(spec.collection, spec.descriptors, spec.firestoreConstraints)
+        .catch(() => {})
+        .finally(() => setTimeout(next, 200));
+    }
+    const concurrency = Math.min(2, queue.length);
+    for (let c = 0; c < concurrency; c++) next();
   }, { timeout: 5000 });
 }
 

@@ -25,6 +25,7 @@ import {
   query, where, orderBy, limit,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { collectionRegistry } from './collection-registry.js';
+import { trackCacheHit, trackCacheMiss, trackQuery } from './perf-monitor.js';
 
 // ═══════════════════════════════════════
 // ثوابت
@@ -36,6 +37,20 @@ const STORE_QUERIES = 'queries';
 const STORE_META = 'meta';
 
 const DEFAULT_MAX_AGE = 30 * 60 * 1000;     // 30 دقيقة — بعدها الكاش stale (لا يُحذف، يُعرض مع revalidation)
+const COLLECTION_MAX_AGE = {
+  orders: 5 * 60 * 1000,
+  shipping_settlements: 5 * 60 * 1000,
+  returns_tickets: 10 * 60 * 1000,
+  transactions_v2: 10 * 60 * 1000,
+  clients: 15 * 60 * 1000,
+  employees: 30 * 60 * 1000,
+  wallets: 30 * 60 * 1000,
+  settings: 60 * 60 * 1000,
+  master_lists: 60 * 60 * 1000,
+  products_v2: 60 * 60 * 1000,
+  suppliers_v2: 30 * 60 * 1000,
+  shippers_v2: 60 * 60 * 1000,
+};
 const DEFAULT_QUERY_LIMIT = 200;             // RULE G3
 const DEDUP_WINDOW_MS = 2000;               // نافذة منع القراءات المكررة (2 ثانية)
 const MAX_MEMORY_ENTRIES = 500;             // أقصى عدد مدخلات في L1 قبل الـ eviction
@@ -159,6 +174,32 @@ function idbBatchPut(storeName, items) {
   }).catch(err => console.warn('[data-cache] idbBatchPut error:', err));
 }
 
+function idbBatchDelete(storeName, keys) {
+  if (!keys.length) return Promise.resolve();
+  return openDB().then(idb => {
+    return new Promise((resolve, reject) => {
+      const tx = idb.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      for (const key of keys) store.delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }).catch(err => console.warn('[data-cache] idbBatchDelete error:', err));
+}
+
+// ═══════════════════════════════════════
+// Smart Retry — exponential backoff for fetch failures
+// ═══════════════════════════════════════
+async function _retryWithBackoff(fn, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try { return await fn(); } catch (err) {
+      if (attempt === maxRetries) throw err;
+      const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
 // ═══════════════════════════════════════
 // Query Key Hashing
 // ═══════════════════════════════════════
@@ -194,8 +235,7 @@ function memSet(key, value, collectionName) {
 function memInvalidate(key) {
   _memoryCache.delete(key);
   _memoryCacheMeta.delete(key);
-  const idx = _accessOrder.indexOf(key);
-  if (idx !== -1) _accessOrder.splice(idx, 1);
+  _lruMap.delete(key);
 }
 
 function memClear() {
@@ -223,30 +263,30 @@ function dedupRead(key, fetchFn) {
 }
 
 // ═══════════════════════════════════════
-// LRU Eviction — إدارة ضغط الذاكرة
+// LRU Eviction — إدارة ضغط الذاكرة (O(1) via Map insertion order)
 // ═══════════════════════════════════════
-const _accessOrder = [];
+const _lruMap = new Map();
 
 function _trackAccess(key) {
-  const idx = _accessOrder.indexOf(key);
-  if (idx !== -1) _accessOrder.splice(idx, 1);
-  _accessOrder.push(key);
+  _lruMap.delete(key);
+  _lruMap.set(key, 1);
 }
 
 function _evictIfNeeded() {
   if (_memoryCache.size <= MAX_MEMORY_ENTRIES) return;
-  const toEvict = _accessOrder.length - MAX_MEMORY_ENTRIES;
+  const toEvict = _lruMap.size - MAX_MEMORY_ENTRIES;
   if (toEvict <= 0) return;
 
-  const evicted = _accessOrder.splice(0, toEvict);
-  for (const key of evicted) {
-    // لا نحذف مدخلات لها listeners نشطة
-    const isActive = _activeListeners.has(key);
-    if (!isActive) {
+  let count = 0;
+  for (const key of _lruMap.keys()) {
+    if (count >= toEvict) break;
+    if (!_activeListeners.has(key)) {
       _memoryCache.delete(key);
       _memoryCacheMeta.delete(key);
+      _lruMap.delete(key);
       _stats.evictions++;
     }
+    count++;
   }
 }
 
@@ -397,13 +437,14 @@ export const dataCache = {
    */
   async getDoc(collectionName, docId, opts = {}) {
     const cacheKey = `${collectionName}/${docId}`;
-    const maxAge = opts.maxAge || DEFAULT_MAX_AGE;
+    const maxAge = opts.maxAge || COLLECTION_MAX_AGE[collectionName] || DEFAULT_MAX_AGE;
 
     // L1: Memory
     const memHit = memGet(cacheKey);
     if (memHit) {
       const meta = _memoryCacheMeta.get(cacheKey);
       if (meta && (Date.now() - meta.syncedAt) < maxAge) {
+        trackCacheHit('memory');
         return { data: memHit, source: 'memory' };
       }
     }
@@ -416,20 +457,23 @@ export const dataCache = {
       memSet(cacheKey, deserialized, collectionName);
 
       if ((Date.now() - idbHit._syncedAt) < maxAge) {
+        trackCacheHit('cache');
         return { data: deserialized, source: 'cache' };
       }
       // stale — return but revalidate
+      trackCacheHit('cache');
       this._revalidateDoc(collectionName, docId, cacheKey);
       return { data: deserialized, source: 'cache' };
     }
 
     // L3: Firestore (with dedup)
+    trackCacheMiss();
     return dedupRead(cacheKey, () => this._fetchDoc(collectionName, docId, cacheKey));
   },
 
   async _fetchDoc(collectionName, docId, cacheKey) {
     try {
-      const snap = await getDoc(doc(db, collectionName, docId));
+      const snap = await _retryWithBackoff(() => getDoc(doc(db, collectionName, docId)));
       if (!snap.exists()) return { data: null, source: 'server' };
 
       const data = { ...snap.data(), _id: snap.id };
@@ -446,7 +490,7 @@ export const dataCache = {
 
       return { data, source: 'server' };
     } catch (err) {
-      console.warn('[data-cache] fetchDoc error:', err);
+      console.warn('[data-cache] fetchDoc error after retries:', err);
       return { data: null, source: 'server' };
     }
   },
@@ -530,6 +574,7 @@ export const dataCache = {
     const q = query(collection(db, spec.collection), ...constraints);
 
     const subscribers = new Set([callback]);
+    const _subCreatedAt = performance.now();
 
     const unsub = onSnapshot(q, (snap) => {
       const docs = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
@@ -552,6 +597,7 @@ export const dataCache = {
 
       _stats.serverSyncs++;
       _stats.lastSyncAt = Date.now();
+      if (source === 'server') trackQuery(spec.collection, performance.now() - _subCreatedAt);
 
       // إعلام كل المشتركين
       for (const cb of subscribers) {
@@ -586,6 +632,7 @@ export const dataCache = {
       if (memHit) {
         if (_getQueryState(queryKey).state === 'synced') return;
         _stats.cacheHits++;
+        trackCacheHit('memory');
         _setQueryState(queryKey, 'cached', { source: 'memory', docCount: memHit.length });
         collectionRegistry.touch(collectionName);
         callback(memHit, 'memory');
@@ -603,6 +650,7 @@ export const dataCache = {
         });
         memSet(queryKey, docs, collectionName);
         _stats.cacheHits++;
+        trackCacheHit('cache');
         _setQueryState(queryKey, 'cached', { source: 'indexeddb', docCount: docs.length });
         collectionRegistry.touch(collectionName);
         if (typeof window !== 'undefined' && window.showCacheIndicator) {
@@ -613,8 +661,10 @@ export const dataCache = {
       }
 
       _stats.cacheMisses++;
+      trackCacheMiss();
     } catch (err) {
       _stats.cacheMisses++;
+      trackCacheMiss();
       console.warn('[data-cache] hydrate error:', err);
     }
   },
@@ -693,15 +743,10 @@ export const dataCache = {
 
     try {
       const allDocs = await idbGetAll(STORE_DOCS, 'collection', collectionName);
-      for (const d of allDocs) {
-        await idbDelete(STORE_DOCS, d._cacheKey);
-      }
+      await idbBatchDelete(STORE_DOCS, allDocs.map(d => d._cacheKey));
       const allQueries = await idbGetAll(STORE_QUERIES);
-      for (const q of allQueries) {
-        if (q.collection === collectionName) {
-          await idbDelete(STORE_QUERIES, q.queryKey);
-        }
-      }
+      const queryKeys = allQueries.filter(q => q.collection === collectionName).map(q => q.queryKey);
+      await idbBatchDelete(STORE_QUERIES, queryKeys);
     } catch (err) {
       console.warn('[data-cache] invalidateCollection error:', err);
     }
@@ -767,20 +812,14 @@ export const dataCache = {
     const cutoff = Date.now() - (maxAge || DEFAULT_MAX_AGE * 4);
     try {
       const allDocs = await idbGetAll(STORE_DOCS);
-      let evicted = 0;
-      for (const d of allDocs) {
-        if (d._syncedAt && d._syncedAt < cutoff) {
-          await idbDelete(STORE_DOCS, d._cacheKey);
-          evicted++;
-        }
-      }
+      const staleDocKeys = allDocs.filter(d => d._syncedAt && d._syncedAt < cutoff).map(d => d._cacheKey);
+      await idbBatchDelete(STORE_DOCS, staleDocKeys);
+
       const allQueries = await idbGetAll(STORE_QUERIES);
-      for (const q of allQueries) {
-        if (q.syncedAt && q.syncedAt < cutoff) {
-          await idbDelete(STORE_QUERIES, q.queryKey);
-          evicted++;
-        }
-      }
+      const staleQueryKeys = allQueries.filter(q => q.syncedAt && q.syncedAt < cutoff).map(q => q.queryKey);
+      await idbBatchDelete(STORE_QUERIES, staleQueryKeys);
+
+      const evicted = staleDocKeys.length + staleQueryKeys.length;
       if (evicted > 0) _stats.evictions += evicted;
       return evicted;
     } catch (err) {
@@ -794,14 +833,21 @@ export const dataCache = {
    */
   async enforceIDBLimit() {
     try {
-      const allDocs = await idbGetAll(STORE_DOCS);
-      if (allDocs.length <= MAX_IDB_ENTRIES) return 0;
-      allDocs.sort((a, b) => (a._syncedAt || 0) - (b._syncedAt || 0));
-      const toRemove = allDocs.slice(0, allDocs.length - MAX_IDB_ENTRIES);
       let removed = 0;
-      for (const d of toRemove) {
-        await idbDelete(STORE_DOCS, d._cacheKey);
-        removed++;
+      const allDocs = await idbGetAll(STORE_DOCS);
+      if (allDocs.length > MAX_IDB_ENTRIES) {
+        allDocs.sort((a, b) => (a._syncedAt || 0) - (b._syncedAt || 0));
+        const toRemove = allDocs.slice(0, allDocs.length - MAX_IDB_ENTRIES);
+        await idbBatchDelete(STORE_DOCS, toRemove.map(d => d._cacheKey));
+        removed += toRemove.length;
+      }
+      const maxQueries = Math.floor(MAX_IDB_ENTRIES / 2);
+      const allQueries = await idbGetAll(STORE_QUERIES);
+      if (allQueries.length > maxQueries) {
+        allQueries.sort((a, b) => (a.syncedAt || 0) - (b.syncedAt || 0));
+        const toRemoveQ = allQueries.slice(0, allQueries.length - maxQueries);
+        await idbBatchDelete(STORE_QUERIES, toRemoveQ.map(q => q.queryKey));
+        removed += toRemoveQ.length;
       }
       _stats.evictions += removed;
       return removed;
@@ -1122,8 +1168,10 @@ export async function prefetch(collectionName, constraintDescriptors, firestoreC
   const q = query(collection(db, collectionName), ...allConstraints);
 
   try {
-    const snap = await getDocs(q);
+    const t0 = performance.now();
+    const snap = await _retryWithBackoff(() => getDocs(q), 2);
     const docs = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    trackQuery(collectionName, performance.now() - t0);
     memSet(queryKey, docs, collectionName);
     await dataCache._persistQueryResult(queryKey, collectionName, docs);
   } catch (err) {
@@ -1144,6 +1192,17 @@ if (typeof window !== 'undefined') {
       if (n > 0) console.log(`[data-cache] evicted ${n} IDB entries (over limit)`);
     });
   }, 10 * 60 * 1000);
+}
+
+// ═══════════════════════════════════════
+// Visibility-based eviction — trigger IDB cleanup when tab hidden
+// ═══════════════════════════════════════
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      dataCache.evictStaleEntries().catch(() => {});
+    }
+  });
 }
 
 // ═══════════════════════════════════════

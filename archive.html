@@ -19,9 +19,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="shared.css?v=45">
 <link rel="stylesheet" href="design-system/components.css?v=1">
-<script src="sidebar-config.js"></script>
+<script src="sidebar-config.js" defer></script>
 <script src="sidebar.js"></script>
-<script src="sync-monitor.js"></script>
+<script src="sync-monitor.js" defer></script>
 <script type="module" src="inbox-badge.js"></script>
 <style>
 .ocard{background:var(--bg2);border:1px solid var(--line);border-radius:var(--rad2);padding:14px;cursor:pointer;transition:var(--trans);border-right:3px solid var(--g)}
@@ -168,6 +168,9 @@ import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/f
 import { collection, doc, onSnapshot, getDoc, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { orderActions } from "./order-actions.js";
 import { initPageShortcuts } from './core/page-shortcuts.js';
+import { dataCache, cachedQuery } from './core/data-cache.js';
+import { toast } from './shared.js';
+import { fmtNum } from './core/dom-utils.js';
 let orders=[],currentUser=null,userName='',activeId=null,currentRole='';
 
 // RULE 8 — قناع رقم العميل للأدوار غير المصرّحة
@@ -179,14 +182,12 @@ function _maskPh(p){
   return s.length>=6 ? s.slice(0,3)+'****'+s.slice(-3) : '****';
 }
 
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const gv=id=>document.getElementById(id)?.value||'';
 const setText=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 
 const ROLES_MAP={admin:{label:'Admin',col:'var(--p)'},operation_manager:{label:'Ops Mgr',col:'var(--b)'},customer_service:{label:'CS',col:'var(--c)'},graphic_designer:{label:'Designer',col:'var(--p)'},design_operator:{label:'Design Op',col:'var(--y)'},production_agent:{label:'Production',col:'var(--r)'},shipping_officer:{label:'Shipping',col:'var(--c)'},wallet_manager:{label:'Wallet',col:'var(--g)'}};
 
-function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3500);}
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 window.doLogout=async()=>{const {signOut}=await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js");await signOut(auth);window.location.href='login.html';};
@@ -234,17 +235,14 @@ onAuthStateChanged(auth,async u=>{
 
   // RULE G3: bounded archive view — recent 5000 archived orders. Older
   // archives are accessed through reports.html with date filters.
-  onSnapshot(
-    query(collection(db,'orders'),where('stage','==','archived'),orderBy('createdAt','desc'),limit(5000)),
-    snap=>{
-      orders=snap.docs.map(d=>({...d.data(),_id:d.id}));
-      renderAll();
-      if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
-        __urlOpened = true;
-        setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 300);
-      }
+  dataCache.subscribe(cachedQuery('orders').where('stage','==','archived').orderBy('createdAt','desc').limit(5000).build(),(docs)=>{
+    orders=docs;
+    renderAll();
+    if(__urlOrderId && !__urlOpened && orders.find(o=>o._id===__urlOrderId)){
+      __urlOpened = true;
+      setTimeout(()=>window.openOrder && window.openOrder(__urlOrderId), 300);
     }
-  );
+  });
 });
 
 // ── Helpers ──
@@ -275,12 +273,12 @@ function updateDashboard(){
   const retCount=orders.filter(hasReturn).length;
   const retRate=n>0?Math.round(retCount/n*100):0;
   setText('s-total',n.toLocaleString('ar-EG'));
-  setText('s-rev',fn(rev)+' ج');
-  setText('s-profit',fn(profit)+' ج');
+  setText('s-rev',fmtNum(rev)+' ج');
+  setText('s-profit',fmtNum(profit)+' ج');
   const profEl=document.getElementById('s-profit');
   if(profEl)profEl.style.color=profit>=0?'var(--g)':'var(--r)';
   setText('s-margin',margin+'%');
-  setText('s-avg',fn(avg)+' ج');
+  setText('s-avg',fmtNum(avg)+' ج');
   setText('s-ret',retRate+'%');
   setText('sub',n+' طلب مكتمل');
 }
@@ -308,7 +306,7 @@ function renderAnalytics(){
           <div class="txt-meta-xs">${c.count} طلب · ${c.phone}</div>
           <div class="anal-bar"><div class="anal-bar-inner" style="width:${Math.round(c.total/maxRev*100)}%"></div></div>
         </div>
-        <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--g)">${fn(c.total)} ج</div>
+        <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--g)">${fmtNum(c.total)} ج</div>
       </div>`).join('')
       :'<div style="text-align:center;color:var(--dim2);font-size:var(--fs-sm);padding:var(--space-md)">لا توجد بيانات</div>';
   }
@@ -334,7 +332,7 @@ function renderAnalytics(){
         <div class="anal-rank">${ranks[i]||i+1}</div>
         <div class="flex-1">
           <div class="txt-strong-base">${p.name}</div>
-          <div class="txt-meta-xs">${p.count} طلب · إجمالي ${fn(p.qty)} قطعة</div>
+          <div class="txt-meta-xs">${p.count} طلب · إجمالي ${fmtNum(p.qty)} قطعة</div>
           <div class="anal-bar"><div class="anal-bar-inner" style="width:${Math.round(p.count/maxCnt*100)}%;background:linear-gradient(90deg,var(--y),var(--r))"></div></div>
         </div>
         <div style="font-size:var(--fs-base);font-weight:var(--fw-extra);color:var(--b)">${p.count}×</div>
@@ -395,13 +393,13 @@ window.renderList=function(){
         <div class="oc-client">${o.clientName||'—'}</div>
         <div class="oc-product">${prods}</div>
         <div style="display:flex;gap:var(--space-sm);font-size:var(--fs-sm);margin-bottom:6px">
-          <span class="text-b">💰 ${fn(sale)} ج</span>
-          <span class="text-r">🏭 ${fn(cost)} ج</span>
-          ${rem>0?`<span class="text-r">⚠ متبقي ${fn(rem)} ج</span>`:''}
+          <span class="text-b">💰 ${fmtNum(sale)} ج</span>
+          <span class="text-r">🏭 ${fmtNum(cost)} ج</span>
+          ${rem>0?`<span class="text-r">⚠ متبقي ${fmtNum(rem)} ج</span>`:''}
         </div>
         <div class="oc-foot">
           <span class="badge bg-g">✅ مكتمل</span>
-          <span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:${profit>=0?'var(--g)':'var(--r)'}">${profit>=0?'ربح':'خسارة'} ${fn(Math.abs(profit))} ج</span>
+          <span style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:${profit>=0?'var(--g)':'var(--r)'}">${profit>=0?'ربح':'خسارة'} ${fmtNum(Math.abs(profit))} ج</span>
         </div>
       </div>`;
     }).join('')}
@@ -489,20 +487,20 @@ window.openOrder=function(id){
       <div class="sec-t">💰 الملخص المالي</div>
       <div style="background:rgba(0,217,126,.05);border:1px solid rgba(0,217,126,.15);border-radius:12px;padding:14px;margin-bottom:10px">
         <div class="kpi-grid" style="margin-bottom:10px">
-          <div class="kpi-box"><div class="kpi-val text-b">${fn(sale)} ج</div><div class="kpi-lbl">إجمالي البيع</div></div>
-          <div class="kpi-box"><div class="kpi-val text-g">${fn(paid)} ج</div><div class="kpi-lbl">التحصيل</div></div>
-          <div class="kpi-box"><div class="kpi-val" style="color:${rem>0?'var(--r)':'var(--dim2)'}">${rem>0?fn(rem)+' ج':'—'}</div><div class="kpi-lbl">المتبقي</div></div>
+          <div class="kpi-box"><div class="kpi-val text-b">${fmtNum(sale)} ج</div><div class="kpi-lbl">إجمالي البيع</div></div>
+          <div class="kpi-box"><div class="kpi-val text-g">${fmtNum(paid)} ج</div><div class="kpi-lbl">التحصيل</div></div>
+          <div class="kpi-box"><div class="kpi-val" style="color:${rem>0?'var(--r)':'var(--dim2)'}">${rem>0?fmtNum(rem)+' ج':'—'}</div><div class="kpi-lbl">المتبقي</div></div>
         </div>
         <div class="kpi-grid">
-          <div class="kpi-box"><div class="kpi-val text-r">${fn(cost)} ج</div><div class="kpi-lbl">التكلفة الفعلية</div></div>
-          <div class="kpi-box"><div class="kpi-val" style="color:${profit>=0?'var(--g)':'var(--r)'}">${fn(Math.abs(profit))} ج</div><div class="kpi-lbl">${profit>=0?'صافي الربح':'صافي الخسارة'}</div></div>
+          <div class="kpi-box"><div class="kpi-val text-r">${fmtNum(cost)} ج</div><div class="kpi-lbl">التكلفة الفعلية</div></div>
+          <div class="kpi-box"><div class="kpi-val" style="color:${profit>=0?'var(--g)':'var(--r)'}">${fmtNum(Math.abs(profit))} ج</div><div class="kpi-lbl">${profit>=0?'صافي الربح':'صافي الخسارة'}</div></div>
           <div class="kpi-box"><div class="kpi-val" style="color:${margin>=0?'var(--p)':'var(--r)'}">${margin}%</div><div class="kpi-lbl">هامش الربح</div></div>
         </div>
       </div>
       ${(o.costItems||[]).length?`<div style="font-size:var(--fs-xs);font-weight:var(--fw-extra);color:var(--dim2);margin-bottom:6px">بنود التكلفة</div>
       ${o.costItems.map(c=>`<div style="display:flex;justify-content:space-between;font-size:var(--fs-base);padding:5px 8px;border-radius:6px;margin-bottom:3px;background:var(--bg3)">
         <span>${c.type||'—'} ${c.note?'('+c.note+')':''}</span>
-        <span style="color:var(--r);font-weight:var(--fw-bold)">${fn(c.total)} ج</span>
+        <span style="color:var(--r);font-weight:var(--fw-bold)">${fmtNum(c.total)} ج</span>
       </div>`).join('')}`:''}
     </div>
 
@@ -536,8 +534,8 @@ window.openOrder=function(id){
       <div style="background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:12px;padding:var(--space-md)">
         <div class="kpi-grid" style="margin-bottom:8px">
           <div class="kpi-box"><div class="kpi-val text-p">${clientOrders.length}</div><div class="kpi-lbl">طلبات سابقة</div></div>
-          <div class="kpi-box"><div class="kpi-val text-b">${fn(ltv)} ج</div><div class="kpi-lbl">إجمالي المشتريات</div></div>
-          <div class="kpi-box"><div class="kpi-val text-g">${fn(ltvAvg)} ج</div><div class="kpi-lbl">متوسط الطلب</div></div>
+          <div class="kpi-box"><div class="kpi-val text-b">${fmtNum(ltv)} ج</div><div class="kpi-lbl">إجمالي المشتريات</div></div>
+          <div class="kpi-box"><div class="kpi-val text-g">${fmtNum(ltvAvg)} ج</div><div class="kpi-lbl">متوسط الطلب</div></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm)">
           ${iRow('آخر تعامل',lastOrder?.deliveredDate||lastOrder?.createdDate||'—')}
@@ -625,7 +623,7 @@ window.openReorder=function(){
     <div class="fg" style="margin:0 0 12px"><label>ملاحظات</label><input class="inp" id="ro-notes" placeholder="ملاحظات الطلب..."></div>
     <div style="background:rgba(0,217,126,.07);border:1px solid rgba(0,217,126,.2);border-radius:var(--rad);padding:10px 14px">
       <div class="txt-meta-sm">إجمالي البيع المحسوب</div>
-      <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--g)" id="ro-total">${fn(totalSale)} ج</div>
+      <div style="font-size:var(--fs-2xl);font-weight:var(--fw-heavy);color:var(--g)" id="ro-total">${fmtNum(totalSale)} ج</div>
     </div>`;
   document.getElementById('ov-reorder').classList.add('open');
 };
@@ -639,7 +637,7 @@ window.__recalcReorder=function(){
   });
   const saleEl=document.getElementById('ro-sale');
   if(saleEl)saleEl.value=total;
-  setText('ro-total',fn(total)+' ج');
+  setText('ro-total',fmtNum(total)+' ج');
 };
 
 window.closeReorder=()=>{document.getElementById('ov-reorder').classList.remove('open');};

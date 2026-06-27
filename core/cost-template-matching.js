@@ -18,12 +18,10 @@ export function normAr(s) {
 function _similarity(a, b) {
   if (!a || !b) return 0;
   if (a === b) return 1;
-  // substring match: scale by length ratio (short inside long = weaker match)
   if (a.includes(b) || b.includes(a)) {
     const ratio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
     return 0.5 + ratio * 0.4;
   }
-  // trigram overlap (more precise than bigrams for Arabic)
   const ga = _trigrams(a);
   const gb = _trigrams(b);
   if (!ga.length || !gb.length) return 0;
@@ -37,52 +35,69 @@ function _trigrams(s) {
   return t;
 }
 
-function _extractQtyFromProd(p) {
-  return String(p.qty || '').replace(/[^0-9]/g, '') || '';
+export function extractQty(p) {
+  return parseInt(String(p.qty || '').replace(/[^0-9]/g, '')) || 0;
+}
+
+/**
+ * Hard pre-filters: printType and qty range.
+ * A template passes if:
+ *   - printType: template has no printType, OR matches product's printType
+ *   - qty: template has no qty, product has no qty, OR ratio ≥ 0.5 (within ±50%)
+ */
+export function tmplPassesFilters(template, product) {
+  if (product.printType && template.printType && template.printType !== product.printType) {
+    return false;
+  }
+  const pQty = extractQty(product);
+  const tQty = parseInt(template.qty || 0);
+  if (pQty && tQty) {
+    const ratio = Math.min(pQty, tQty) / Math.max(pQty, tQty);
+    if (ratio < 0.5) return false;
+  }
+  return true;
 }
 
 /**
  * Score a template against a product (0–1).
- * Weights: name 50%, qty 25%, extras coverage 20%, print type 5%.
+ * Only called on templates that already passed hard filters.
+ * Weights: name 55%, qty 25%, extras 10%, print type 10%.
  */
 export function scoreTmpl(template, product) {
   let score = 0;
   const reasons = [];
 
-  // 1. Name (50% — dominant signal)
+  // 1. Name (55% — dominant signal)
   const ns = _similarity(normAr(product.name), normAr(template.name));
-  score += ns * 0.5;
+  score += ns * 0.55;
   if (ns >= 0.85) reasons.push('اسم مطابق');
   else if (ns >= 0.6) reasons.push('اسم مشابه');
 
   // 2. Quantity (25%)
-  const pQty = parseInt(_extractQtyFromProd(product)) || 0;
+  const pQty = extractQty(product);
   const tQty = parseInt(template.qty || 0);
   if (pQty && tQty) {
     const r = Math.min(pQty, tQty) / Math.max(pQty, tQty);
     score += r * 0.25;
     if (r === 1) reasons.push(`كمية ×${pQty} مطابقة`);
-    else if (r >= 0.6) reasons.push('كمية قريبة');
+    else if (r >= 0.8) reasons.push('كمية قريبة');
   } else if (!tQty) {
-    score += 0.08;
+    score += 0.05;
   }
 
-  // 3. Extras coverage (20%)
+  // 3. Extras coverage (10%)
   const extras = product.extras || [];
   if (extras.length) {
     const ctypes = (template.costItems || []).map(c => normAr(c.type || ''));
     const covered = extras.filter(e => ctypes.some(ct => ct.includes(normAr(e)) || normAr(e).includes(ct)));
-    score += covered.length / extras.length * 0.20;
+    score += covered.length / extras.length * 0.10;
     if (covered.length) reasons.push('يشمل ' + covered.join('+'));
   }
 
-  // 4. Print type (5%)
-  if (product.printType) {
-    const ptn = product.printType === 'digital' ? 'ديجيتال' : 'اوفست';
-    if ((template.costItems || []).some(c => normAr(c.type || '').includes(normAr(ptn)))) {
-      score += 0.05;
-      reasons.push(product.printType === 'digital' ? 'ديجيتال' : 'أوفست');
-    }
+  // 4. Print type (10%)
+  if (product.printType && template.printType && template.printType === product.printType) {
+    score += 0.10;
+    reasons.push(product.printType === 'digital' ? 'ديجيتال' : 'أوفست');
   }
 
   return { score, reasons };
@@ -90,9 +105,8 @@ export function scoreTmpl(template, product) {
 
 /**
  * Match templates against all products in an order.
+ * Hard-filters by printType and qty first, then scores remaining.
  * Returns { matched: [...], library: [...] } sorted by score.
- *   matched: score ≥ 0.65 (strong suggestion)
- *   library: 0.30 ≤ score < 0.65 (related)
  */
 export function getTmplMatches(templates, order) {
   if (!templates.length) return { matched: [], library: [] };
@@ -103,6 +117,7 @@ export function getTmplMatches(templates, order) {
       const key = t.id + '|' + prodIdx;
       if (seen.has(key)) return;
       seen.add(key);
+      if (!tmplPassesFilters(t, prod)) return;
       const { score, reasons } = scoreTmpl(t, prod);
       all.push({ template: t, prod, prodIdx, score, reasons });
     });

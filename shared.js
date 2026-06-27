@@ -251,10 +251,12 @@ export function startListeners(callbacks = {}, opts = {}) {
   }
 
   if (!skip.has('settings')) {
-    subs.push(onSnapshot(doc(db,'settings','main'), snap => {
-      if (snap.exists()) AppState.settings = snap.data();
-      callbacks.onSettings?.(AppState.settings);
-    }));
+    import('./core/static-store.js').then(({ getSettings }) => {
+      getSettings((data) => {
+        if (data) AppState.settings = data;
+        callbacks.onSettings?.(AppState.settings);
+      });
+    });
   }
 
   AppState._unsubs = subs;
