@@ -802,9 +802,8 @@ function pwRenderSpecs(o){
     const isOff=(p.printType||'').includes('offset');
     const isDig=(p.printType||'').includes('digital');
     const extrasList=productionServices.filter(s=>s.isCostItem&&s.isActive!==false&&(!s.printTypes?.length||s.printTypes.some(pt=>(isOff&&pt==='offset')||(isDig&&pt==='digital')))).map(s=>s.label).filter(Boolean);
-    const extrasHTML=extrasList.length
-      ?`<div style="margin-top:10px"><div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">➕ إضافات</div><div style="display:flex;flex-wrap:wrap;gap:6px">${extrasList.map(ex=>{const sel=(p.extras||[]).includes(ex);return`<button type="button" onclick="toggleExtra('${o._id}',${idx},'${ex.replace(/'/g,"\\'")}')" style="padding:4px 10px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;border:1px solid ${sel?'var(--g)':'var(--line)'};background:${sel?'rgba(0,217,126,.12)':'var(--bg3)'};color:${sel?'var(--g)':'var(--dim2)'}">${sel?'✓ ':''} ${escH(ex)}</button>`;}).join('')}</div></div>`
-      :`<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:var(--bg2);border:1px dashed var(--line);font-size:var(--fs-xs);color:var(--dim2)">✦ أضف البنود من <a href="settings.html" style="color:var(--b);text-decoration:none">الإعدادات ← خدمات الإنتاج</a></div>`;
+    const addExtraBtnHTML=`<button type="button" onclick="showAddExtraInput(this)" style="padding:4px 10px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;border:1px dashed var(--b);background:rgba(59,158,255,.08);color:var(--b)">+ بند جديد</button>`;
+    const extrasHTML=`<div style="margin-top:10px"><div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">➕ إضافات</div><div style="display:flex;flex-wrap:wrap;gap:6px">${extrasList.map(ex=>{const sel=(p.extras||[]).includes(ex);return`<button type="button" onclick="toggleExtra('${o._id}',${idx},'${ex.replace(/'/g,"\\'")}')" style="padding:4px 10px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;border:1px solid ${sel?'var(--g)':'var(--line)'};background:${sel?'rgba(0,217,126,.12)':'var(--bg3)'};color:${sel?'var(--g)':'var(--dim2)'}">${sel?'✓ ':''} ${escH(ex)}</button>`;}).join('')}${addExtraBtnHTML}</div></div>`;
 
     const offsetHtml=!isOffset?'':(`
       <div class="pw-grid2" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
@@ -1088,6 +1087,34 @@ window.toggleExtra=async function(orderId,idx,ex){
   const cur=p.extras||[];
   const newExtras=cur.includes(ex)?cur.filter(e=>e!==ex):[...cur,ex];
   await commitBriefSave(orderId,idx,{extras:newExtras});
+};
+
+window.showAddExtraInput=function(btn){
+  if(btn.nextElementSibling?.classList.contains('pw-add-extra-form'))return;
+  const wrap=document.createElement('div');
+  wrap.className='pw-add-extra-form';
+  wrap.style.cssText='display:flex;gap:5px;align-items:center;width:100%;margin-top:6px';
+  wrap.innerHTML=`<input type="text" class="pw-inp" placeholder="اسم البند الجديد…" style="flex:1;padding:6px 10px;font-size:var(--fs-xs)">
+    <button type="button" class="pw-btn pw-btn-wa" style="padding:5px 12px;font-size:var(--fs-xs);flex-shrink:0" onclick="saveNewExtra(this)">حفظ</button>
+    <button type="button" style="padding:5px 8px;font-size:var(--fs-xs);border:1px solid var(--line);border-radius:8px;background:var(--bg3);color:var(--dim2);cursor:pointer;font-family:inherit;flex-shrink:0" onclick="this.parentElement.remove()">✕</button>`;
+  btn.parentElement.appendChild(wrap);
+  wrap.querySelector('input').focus();
+  wrap.querySelector('input').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveNewExtra(wrap.querySelector('.pw-btn'));}});
+};
+
+window.saveNewExtra=async function(btn){
+  const wrap=btn.closest('.pw-add-extra-form');
+  const inp=wrap.querySelector('input');
+  const label=inp.value.trim();
+  if(!label)return inp.focus();
+  btn.disabled=true;btn.textContent='جارٍ…';
+  const r=await masterListsActions.addProductionService({db,label}).catch(e=>({ok:false,errors:[e.message]}));
+  if(!r.ok){btn.disabled=false;btn.textContent='حفظ';return toast('❌ '+((r.errors||[])[0]||'فشل الإضافة'),'err');}
+  toast('✅ تم إضافة «'+label+'» للقائمة الأساسية','ok');
+  productionServices.push({id:'svc_'+Date.now(),label,group:'أخرى',isCostItem:true,isSupplierService:true,isActive:true});
+  masterCategories=productionServices.filter(c=>c.isCostItem);
+  wrap.remove();
+  if(activeOrder)pwRenderSpecs(activeOrder);
 };
 
 window.setPrintProductStatus=async function(idx,status){
