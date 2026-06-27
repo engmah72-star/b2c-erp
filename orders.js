@@ -549,6 +549,48 @@ export function matchCostItemProduct(ci, products) {
 }
 
 /**
+ * ensureProductIds — يضمن أن كل منتج في المصفوفة يملك productId.
+ * المنتجات القادمة من الكتالوج عندها productId (= doc ID).
+ * المنتجات اليدوية أو القديمة قد لا تملكه — يُولَّد لها تلقائياً.
+ * Pure function: تُرجع نسخة جديدة لو حصل تغيير، نفس المرجع لو مكنش فيه تغيير.
+ */
+export function ensureProductIds(products) {
+  if (!Array.isArray(products) || !products.length) return products || [];
+  let changed = false;
+  const out = products.map(p => {
+    if (p.productId) return p;
+    changed = true;
+    return { ...p, productId: _genProductId() };
+  });
+  return changed ? out : products;
+}
+
+function _genProductId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'pid-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+}
+
+/**
+ * buildCostSummaries — projection: ملخص تكاليف كل منتج من costItems.
+ * يُخزَّن على الأوردر بعد كل تغيير في بنود التكلفة.
+ * @returns {{ [prodIdx: string]: { totalCost: number, itemCount: number, productId: string } }}
+ */
+export function buildCostSummaries(costItems, products) {
+  const out = {};
+  if (!Array.isArray(costItems) || !Array.isArray(products)) return out;
+  for (const ci of costItems) {
+    if (!ci || ci.status === 'voided') continue;
+    const m = matchCostItemProduct(ci, products);
+    if (m.index < 0) continue;
+    const key = String(m.index);
+    if (!out[key]) out[key] = { totalCost: 0, itemCount: 0, productId: m.product?.productId || '' };
+    out[key].totalCost += parseFloat(ci.total) || 0;
+    out[key].itemCount += 1;
+  }
+  return out;
+}
+
+/**
  * resolveCostItemCategory — T3: auto-derive category/subcategory from master categories.
  * T5: also returns defaultUnit, expectedPriceRange, keywords from enriched master cats.
  * @param {string} type — cost item type (e.g. 'طباعة ديجيتال')
@@ -1098,8 +1140,8 @@ export function createOrderData(data, userId, userName) {
     deadline:     data.deadline     || '',
     notes:        data.notes        || '',
 
-    // المنتجات
-    products: data.products || [],
+    // المنتجات — ensureProductIds يضمن productId لكل منتج
+    products: ensureProductIds(data.products || []),
 
     // المالية
     salePrice:     parseFloat(data.salePrice) || 0,

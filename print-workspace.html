@@ -397,7 +397,7 @@ window.closeNav=()=>{document.querySelector('.sidenav')?.classList.remove('mob-o
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 
 // State
-let orders=[],wallets=[],appSettings={},suppliers=[],shippers=[],productionServices=[],printBriefTemplates=[];
+let orders=[],wallets=[],appSettings={},suppliers=[],shippers=[],productionServices=[],printBriefTemplates=[],masterCategories=[];
 let activeId=null,activeOrder=null,userName='',currentRole='admin';
 let pwSearchQ='',pwStatusFilter='all';
 let editProdsData=[];
@@ -451,7 +451,11 @@ function startListeners(){
   dataCache.subscribe(cachedQuery('wallets').limit(100).build(),docs=>{wallets=docs;});
   dataCache.subscribe(cachedQuery('shippers_v2').limit(200).build(),(docs)=>{shippers=docs;});
   getSettings(data=>{if(data)appSettings=data;if(activeOrder)renderWorkspace(activeOrder);});
-  getMasterList('supplier_categories',data=>{productionServices=data?(data.items||[]).filter(s=>s.isActive!==false):[];});
+  getMasterList('supplier_categories',data=>{
+    const items=data?(data.items||[]).filter(s=>s.isActive!==false):[];
+    productionServices=items;
+    masterCategories=items.filter(c=>c.isCostItem);
+  });
   dataCache.subscribe(cachedQuery('employees').where('role','==','production_agent').limit(100).build(),(docs)=>{
     window.__prodAgents=dedupEmployees(docs).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('pick-prod-sel');if(!s)return;
@@ -598,6 +602,17 @@ window.selectOrder=function(id){
   window.activeOrder=activeOrder;window.activeId=activeId;
   window.getRem=getRem;window.getNet=getNet;window.getPaid=getPaid;
   window.currentRole=currentRole;window.canSeePhone=canSeePhone;
+  window.__costItemsCtx={
+    getOrder:id=>orders.find(x=>x._id===id)||null,
+    getSuppliers:()=>suppliers,
+    getWallets:()=>wallets,
+    getMasterCategories:()=>masterCategories,
+    getProductsCatalog:()=>productsCatalog,
+    getCurrentRole:()=>currentRole,
+    getActiveOrderId:()=>activeId,
+    getCurrentUser:()=>auth?.currentUser||null,
+    getUserName:()=>userName,
+  };
   // update URL without reload
   const url=new URL(window.location);url.searchParams.set('id',id);history.replaceState({},'',url);
   // highlight in list
@@ -864,11 +879,19 @@ function pwRenderProduction(o){
   const allPrinted=prods.length&&prods.every(p=>p.productStatus==='printed'||p.productStatus==='done');
   const printedCount=prods.filter(p=>p.productStatus==='printed'||p.productStatus==='done').length;
 
+  const costSums=window.FinanceCore?.getAllProductCostSummaries?.(o)||[];
   const prodsStatusHTML=prods.map((p,idx)=>{
     const s=p.productStatus||'pending';
     const r=computeProductReadiness(o,p);
     const rc=r.ready?'var(--g)':r.pct>=60?'var(--y)':'var(--r)';
     const isPrinted=s==='printed'||s==='done';
+    const cs=costSums[idx]||{totalCost:0,itemCount:0};
+    const pPrice=parseFloat(p.unitPrice||p.price)||0;
+    const margin=pPrice>0?pPrice*(parseInt(p.qty)||1)-cs.totalCost:0;
+    const costBadge=cs.itemCount>0
+      ?`<span style="font-size:9px;padding:1px 6px;border-radius:6px;background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);color:var(--y)">💰 ${fmtNum(cs.totalCost)} ج · ${cs.itemCount} بند</span>`
+      :`<span style="font-size:9px;padding:1px 6px;border-radius:6px;background:rgba(255,67,54,.06);border:1px solid rgba(255,67,54,.15);color:var(--r)">بدون تكلفة</span>`;
+    const marginHtml=pPrice>0&&cs.itemCount>0?`<span style="font-size:9px;padding:1px 6px;border-radius:6px;background:${margin>=0?'rgba(0,217,126,.08)':'rgba(255,67,54,.08)'};border:1px solid ${margin>=0?'rgba(0,217,126,.2)':'rgba(255,67,54,.2)'};color:${margin>=0?'var(--g)':'var(--r)'}">هامش ${fmtNum(margin)} ج</span>`:'';
     return`<div style="padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;margin-bottom:5px;border-right:3px solid ${isPrinted?'var(--p)':rc}">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="flex:1;min-width:0">
@@ -879,8 +902,12 @@ function pwRenderProduction(o){
             ${r.ready?'':`<span style="font-size:9px;color:${rc}">${r.pct}%</span>`}
             ${p.briefSentAt?`<span style="font-size:9px;color:var(--g)">📨 أُرسل</span>`:''}
           </div>
+          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:4px">
+            ${costBadge}${marginHtml}
+          </div>
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0">
+          <button type="button" onclick="openCostDrawer('${o._id}',${idx})" class="pw-btn" style="font-size:10px;padding:4px 8px;color:var(--y)">💰</button>
           ${s!=='printed'&&s!=='done'?`<button type="button" onclick="setPrintProductStatus(${idx},'printed')" class="pw-btn pw-btn-p" style="font-size:10px;padding:4px 8px">مطبوع</button>`:''}
           ${s==='printed'?`<button type="button" onclick="setPrintProductStatus(${idx},'ready')" class="pw-btn" style="font-size:10px;padding:4px 8px;opacity:.6">↩</button>`:''}
           ${!['ready','printed','done','on_hold'].includes(s)?`<button type="button" onclick="setPrintProductStatus(${idx},'on_hold')" class="pw-btn" style="font-size:10px;padding:4px 8px;opacity:.6">⏸</button>`:''}
@@ -926,6 +953,31 @@ function pwRenderProduction(o){
       <div class="pw-section-title">ملاحظات المنتجات (تظهر في بنود التكلفة)</div>
       ${prods.filter(pp=>pp.briefNotes).map(pp=>`<div style="padding:6px 10px;border-radius:7px;background:rgba(255,193,7,.07);border:1px solid rgba(255,193,7,.2);margin-bottom:4px;font-size:var(--fs-xs);line-height:1.5"><span style="font-weight:var(--fw-bold);color:var(--snow)">${escH(pp.name||'—')}</span> <span style="color:var(--y)">· ${escH(pp.briefNotes)}</span></div>`).join('')}
     </div>`:''}
+
+    <!-- Cost summary -->
+    ${(()=>{
+      const _sale=getNet(o),_paid=getPaid(o);
+      const totalCost=costSums.reduce((s,c)=>s+c.totalCost,0);
+      const totalItems=costSums.reduce((s,c)=>s+c.itemCount,0);
+      const orderMargin=_sale-totalCost;
+      return totalItems>0?`<div class="pw-section">
+        <div class="pw-section-title">ملخص التكاليف</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center">
+          <div style="padding:8px;background:var(--bg2);border-radius:8px;border:1px solid var(--line)">
+            <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">إجمالي التكلفة</div>
+            <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:var(--y)">${fmtNum(totalCost)} ج</div>
+          </div>
+          <div style="padding:8px;background:var(--bg2);border-radius:8px;border:1px solid var(--line)">
+            <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">سعر البيع</div>
+            <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:var(--snow)">${fmtNum(_sale)} ج</div>
+          </div>
+          <div style="padding:8px;background:var(--bg2);border-radius:8px;border:1px solid ${orderMargin>=0?'rgba(0,217,126,.25)':'rgba(255,67,54,.25)'}">
+            <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">الهامش</div>
+            <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:${orderMargin>=0?'var(--g)':'var(--r)'}">${fmtNum(orderMargin)} ج</div>
+          </div>
+        </div>
+      </div>`:'';
+    })()}
 
     <!-- Move to production -->
     <div style="padding-top:10px;border-top:1px solid var(--line)">
@@ -1464,5 +1516,7 @@ window.pwOpenActionSheet=function(){
 };
 window.cM=function(id){document.getElementById('ov-'+id)?.classList.remove('open');};
 </script>
+<script src="features/cost-items/drawer.js"></script>
+<link rel="stylesheet" href="features/cost-items/drawer.css">
 </body>
 </html>
