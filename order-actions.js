@@ -2217,15 +2217,18 @@ export const orderActions = {
     userId, userName,
   }) {
     if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [], orderId };
-    const order = await _loadOrder(db, orderId);
-    if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
-    const prods = [...(order.products || [])];
-    if (prodIdx < 0 || prodIdx >= prods.length) {
+    if (typeof prodIdx !== 'number' || Number.isNaN(prodIdx)) {
       return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
     }
-    const before = prods[prodIdx].supplierName || '—';
-    prods[prodIdx] = { ...prods[prodIdx], supplierId, supplierName, supplierPhone };
     try {
+      const order = await _loadOrder(db, orderId);
+      if (!order) return { ok: false, errors: ['الأوردر غير موجود'], warnings: [], orderId };
+      const prods = [...(order.products || [])];
+      if (prodIdx < 0 || prodIdx >= prods.length) {
+        return { ok: false, errors: ['⚠️ فهرس المنتج غير صالح'], warnings: [], orderId };
+      }
+      const before = prods[prodIdx].supplierName || '—';
+      prods[prodIdx] = { ...prods[prodIdx], supplierId, supplierName, supplierPhone };
       const entry = auditEntry({
         action: `🏭 مورد ${prods[prodIdx].name || 'منتج'}: ${before} → ${supplierName || 'بدون'}`,
         userId, userName, kind: 'op',
