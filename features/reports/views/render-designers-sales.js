@@ -49,20 +49,39 @@ export function buildStagePerformanceTabHTML({ stats }) {
   if (!people.length) {
     return '<div class="empty-pretty"><div class="ico">⏱️</div><div class="ttl">لا توجد بيانات أداء</div><div class="sub">محتاج أوردرات مكتملة المراحل مع مسؤولين معيّنين وتواريخ مراحل (stageEnteredAt)</div></div>';
   }
-  return people.map(p => {
-    const slaCol = p.slaPct >= 80 ? 'var(--g)' : (p.slaPct >= 50 ? 'var(--y)' : 'var(--r)');
+  const slaColor = pct => pct >= 80 ? 'var(--g)' : (pct >= 50 ? 'var(--y)' : 'var(--r)');
+
+  const groups = new Map();
+  for (const p of people) {
+    const key = (p.name || '').trim().toLowerCase();
+    if (!groups.has(key)) groups.set(key, { name: p.name, stages: [], totalCount: 0, totalOnTime: 0, totalLate: 0 });
+    const g = groups.get(key);
+    g.stages.push(p);
+    g.totalCount += p.count; g.totalOnTime += p.onTime; g.totalLate += p.late;
+  }
+  const sorted = [...groups.values()].sort((a, b) => b.totalCount - a.totalCount);
+
+  return sorted.map(g => {
+    const overallPct = g.totalCount ? Math.round(g.totalOnTime / g.totalCount * 100) : 0;
     return `<div class="rep-card">
       <div class="rep-card-head">
-        <div><div class="rep-name">👤 ${esc(p.name)}</div><div class="rep-sub">${esc(p.stageLabel)}${p.slaHours ? ' · SLA ' + p.slaHours + 'س' : ''}</div></div>
-        <div class="text-left"><div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--b)">${p.count}</div><div class="txt-meta-xs">أوردر</div></div>
+        <div><div class="rep-name">👤 ${esc(g.name)}</div></div>
+        <div class="text-left"><div style="font-size:20px;font-weight:var(--fw-heavy);color:var(--b)">${g.totalCount}</div><div class="txt-meta-xs">أوردر</div></div>
       </div>
-      <div class="rep-stats">
-        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--snow)">${esc(p.avgText)}</div><div class="rep-stat-lbl">متوسط الإنجاز</div></div>
-        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--g)">${p.onTime}</div><div class="rep-stat-lbl">ضمن المدة</div></div>
-        <div class="rep-stat"><div class="rep-stat-val" style="color:var(--r)">${p.late}</div><div class="rep-stat-lbl">متأخر</div></div>
-      </div>
-      <div class="progress-bar"><div class="progress-fill" style="width:${p.slaPct}%;background:${slaCol}"></div></div>
-      <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px;text-align:left">${p.slaPct}% التزام بالمدة</div>
+      ${g.stages.map(p => `<div style="padding:8px 0;border-top:1px solid rgba(255,255,255,.06)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="rep-sub">${esc(p.stageLabel)}${p.slaHours ? ' · SLA ' + p.slaHours + 'س' : ''}</div>
+          <div style="font-size:var(--fs-sm);color:var(--dim2)">${p.count} أوردر</div>
+        </div>
+        <div class="rep-stats">
+          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--snow)">${esc(p.avgText)}</div><div class="rep-stat-lbl">متوسط</div></div>
+          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--g)">${p.onTime}</div><div class="rep-stat-lbl">ضمن المدة</div></div>
+          <div class="rep-stat"><div class="rep-stat-val" style="color:var(--r)">${p.late}</div><div class="rep-stat-lbl">متأخر</div></div>
+          <div class="rep-stat"><div class="rep-stat-val" style="color:${slaColor(p.slaPct)}">${p.slaPct}%</div><div class="rep-stat-lbl">التزام</div></div>
+        </div>
+      </div>`).join('')}
+      <div class="progress-bar" style="margin-top:8px"><div class="progress-fill" style="width:${overallPct}%;background:${slaColor(overallPct)}"></div></div>
+      <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:4px;text-align:left">${overallPct}% التزام بالمدة</div>
     </div>`;
   }).join('');
 }
