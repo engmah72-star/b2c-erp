@@ -153,16 +153,27 @@ export function calcTopProductsByRevenue(orders = [], limit = 5) {
 }
 
 /**
- * Top designers by archived orders. Falls back to designerName when id missing.
+ * Top designers by archived orders.
+ * When employees + resolveDesigner provided: canonical employees = single source of truth.
  * @returns {Array<{designerId, name, count}>}
  */
-export function calcTopDesignersByCount(orders = [], limit = 5) {
+export function calcTopDesignersByCount(orders = [], limit = 5, employees = [], resolveDesigner) {
   const acc = {};
+  const hasResolver = typeof resolveDesigner === 'function' && employees.length;
   for (const o of orders) {
     if (o.stage !== 'archived' || !o.designerId) continue;
-    const id = o.designerId;
-    if (!acc[id]) acc[id] = { designerId: id, name: o.designerName || '—', count: 0 };
-    acc[id].count++;
+    let key, name;
+    if (hasResolver) {
+      const can = resolveDesigner(employees, o.designerId, o.designerName);
+      if (!can) continue;
+      key = can.authUid || can._id;
+      name = can.name || o.designerName || '—';
+    } else {
+      key = o.designerId;
+      name = o.designerName || '—';
+    }
+    if (!acc[key]) acc[key] = { designerId: key, name, count: 0 };
+    acc[key].count++;
   }
   return Object.values(acc).sort((a, b) => b.count - a.count).slice(0, limit);
 }
