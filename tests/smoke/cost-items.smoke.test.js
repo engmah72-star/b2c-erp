@@ -634,28 +634,41 @@ section('T9 — getExpectedCostTypes (category-aware filtering)');
 function getExpectedCostTypes(product, masterCats) {
   if (!product || !masterCats?.length) return [];
   const pt = (product.printType || '').toLowerCase();
-  if (!pt) return [];
-  const catId = product.productCategory || resolveProductCategory(product.name);
-  const cat = catId ? PRODUCT_CATEGORIES.find(c => c.id === catId) : null;
-  const costTypeHints = {
-    paper_prints:['طباعة','ورق','زنكات','تجليد','سلوفان','يو في','تقطيع','دبوس','لصق','تكسير','تصميم','فرز','تغليف'],
-    large_format:['طباعة','خامة','تركيب','تصميم'],
-    packaging:['طباعة','تقطيع','تجليد','لصق','خامة','تصميم','ورق'],
-    stamps:['ختم','حبر','تصميم'],
-    promotional:['طباعة','خامة','تصميم'],
-    design_only:['تصميم'],
-  };
-  const base = masterCats.filter(c =>
-    c.isCostItem !== false &&
-    (c.printTypes || []).some(x => x === pt || pt.includes(x) || x.includes(pt))
-  );
-  if (!cat) return base.map(c => c.label);
-  const hints = (costTypeHints[cat.id] || []).map(h => _normPC(h));
-  const filtered = base.filter(c => {
-    const nl = _normPC(c.label);
-    return hints.some(h => nl.includes(h) || h.includes(nl));
-  });
-  return filtered.length ? filtered.map(c => c.label) : base.map(c => c.label);
+  const extras = Array.isArray(product.extras) ? product.extras : [];
+  const seen = new Set();
+  const result = [];
+  const _add = label => { if (label && !seen.has(label)) { seen.add(label); result.push(label); } };
+  extras.forEach(ex => _add(ex));
+  if (product.lamination && product.lamination !== 'بلا') {
+    const lamCat = masterCats.find(c => c.isCostItem !== false && _normPC(c.label).includes('سلفن'));
+    if (lamCat) _add(lamCat.label);
+  }
+  if (pt) {
+    const catId = product.productCategory || resolveProductCategory(product.name);
+    const cat = catId ? PRODUCT_CATEGORIES.find(c => c.id === catId) : null;
+    const costTypeHints = {
+      paper_prints:['طباعة','ورق','زنكات','تجليد','سلوفان','يو في','تقطيع','دبوس','لصق','تكسير','تصميم','فرز','تغليف'],
+      large_format:['طباعة','خامة','تركيب','تصميم'],
+      packaging:['طباعة','تقطيع','تجليد','لصق','خامة','تصميم','ورق'],
+      stamps:['ختم','حبر','تصميم'],
+      promotional:['طباعة','خامة','تصميم'],
+      design_only:['تصميم'],
+    };
+    const base = masterCats.filter(c =>
+      c.isCostItem !== false &&
+      (c.printTypes || []).some(x => x === pt || pt.includes(x) || x.includes(pt))
+    );
+    if (!cat) { base.forEach(c => _add(c.label)); }
+    else {
+      const hints = (costTypeHints[cat.id] || []).map(h => _normPC(h));
+      const filtered = base.filter(c => {
+        const nl = _normPC(c.label);
+        return hints.some(h => nl.includes(h) || h.includes(nl));
+      });
+      (filtered.length ? filtered : base).forEach(c => _add(c.label));
+    }
+  }
+  return result;
 }
 
 const sampleMasterCats = [
@@ -701,9 +714,34 @@ test('explicit productCategory overrides auto-detection', () => {
   assert.ok(!r.includes('تجليد'), 'should exclude تجليد');
 });
 
-test('no printType → empty', () => {
+test('no printType, no extras → empty', () => {
   const r = getExpectedCostTypes({ name:'بروشور' }, sampleMasterCats);
   assert.strictEqual(r.length, 0);
+});
+
+test('extras from printing appear first in expected types', () => {
+  const r = getExpectedCostTypes({ name:'بروشور', printType:'digital', extras:['تجليد','قص وتجميع'] }, sampleMasterCats);
+  assert.strictEqual(r[0], 'تجليد', 'first extra should be first');
+  assert.strictEqual(r[1], 'قص وتجميع', 'second extra should be second');
+  assert.ok(r.includes('طباعة ديجيتال'), 'should still include printType-based types');
+});
+
+test('extras without printType still returns extras', () => {
+  const r = getExpectedCostTypes({ name:'منتج', extras:['سلفنة / لامينيشن','تكسير'] }, sampleMasterCats);
+  assert.ok(r.includes('سلفنة / لامينيشن'));
+  assert.ok(r.includes('تكسير'));
+});
+
+test('lamination adds سلفنة cost type', () => {
+  const cats = [...sampleMasterCats, { label:'سلفنة', isCostItem:true, printTypes:['digital','offset'] }];
+  const r = getExpectedCostTypes({ name:'بروشور', printType:'digital', lamination:'لامع' }, cats);
+  assert.ok(r.includes('سلفنة'), 'should include سلفنة when lamination is set');
+});
+
+test('no duplicate when extra matches masterCat label', () => {
+  const r = getExpectedCostTypes({ name:'بروشور', printType:'digital', extras:['ورق'] }, sampleMasterCats);
+  const count = r.filter(x => x === 'ورق').length;
+  assert.strictEqual(count, 1, 'ورق should appear only once');
 });
 
 // ── Hard filters: printType + qty range ──────────────
