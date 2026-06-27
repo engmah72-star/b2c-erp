@@ -465,6 +465,15 @@
 .prd-design-single{width:100%;max-height:160px}
 .prd-design-multi{width:calc(50% - 3px);max-height:100px}
 .prd-cancel-msg{color:var(--r);font-size:var(--fs-xs);margin:4px 0}
+.prd-specs{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 8px}
+.prd-spec-tag{font-size:10px;padding:2px 8px;border-radius:10px;white-space:nowrap;font-weight:var(--fw-bold);border:1px solid}
+.prd-press-row{font-size:var(--fs-xs);color:var(--b);margin-bottom:6px;display:flex;align-items:center;gap:4px}
+.prd-brief-note{font-size:var(--fs-xs);color:var(--y);margin-bottom:6px;padding:5px 8px;border-radius:6px;background:rgba(255,193,7,.07);border:1px solid rgba(255,193,7,.2);line-height:1.5}
+.prd-note{font-size:var(--fs-xs);color:var(--dim2);margin-bottom:6px;line-height:1.5}
+.prd-offset-specs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;font-size:10px;color:var(--dim2)}
+.prd-offset-specs span{padding:2px 7px;border-radius:8px;background:var(--bg3);border:1px solid var(--line)}
+.prd-print-notes{font-size:var(--fs-xs);color:var(--snow);margin-bottom:8px;padding:8px 10px;border-radius:8px;background:var(--bg2);border:1px solid var(--line);line-height:1.6}
+.prd-print-notes-lbl{font-size:10px;color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:4px}
 .act-cancel-product{background:var(--tint-r-soft);border-color:var(--tint-r-line);color:var(--r);margin-top:8px}
 .act-waybill{flex-shrink:0;padding:13px 16px;background:var(--tint-b-soft);border-color:var(--tint-b-line);color:var(--b)}
 .empty-state{padding:48px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}
@@ -1350,6 +1359,12 @@ function renderDetail(){
       const pCosts=indexedCosts.filter(c=>c.prodIdx===pi);
       const pTotal=pCosts.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
       const comp=getCompleteness(costs,pi,p);
+      const costSpecParts=[];
+      if(p.printType)costSpecParts.push(p.printType==='digital'?'ديجيتال':p.printType==='offset'?'أوفست':'مختلط');
+      if(p.paper)costSpecParts.push(p.paper+(p.weight?' '+p.weight+'جم':''));
+      if(p.lamination&&p.lamination!=='بلا')costSpecParts.push(p.lamination+(p.laminationSides===2?' وجهين':' وجه'));
+      (p.extras||[]).forEach(e=>costSpecParts.push(e));
+      if(p.pressName)costSpecParts.push('🏭 '+p.pressName);
       itemsHTML+=`<div class="cost-item-block">
         <div class="cost-item-hdr">
           <span style="display:flex;align-items:center;gap:5px">📦 ${esc(p.name||('منتج '+(pi+1)))} ${p.qty?`<span class="trend-flat" style="font-weight:var(--fw-extra)">×${esc(p.qty)}</span>`:''}</span>
@@ -1358,6 +1373,8 @@ function renderDetail(){
             <button type="button" class="edit-btn" style="color:var(--b);border-color:var(--tint-b-line)" data-act="addcostfor" data-pidx="${pi}" aria-label="إضافة بند تكلفة">➕</button>
           </span>
         </div>
+        ${costSpecParts.length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 6px">${costSpecParts.map(s=>`<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:var(--bg3);border:1px solid var(--line);color:var(--dim2)">${esc(s)}</span>`).join('')}</div>`:''}
+        ${p.briefNotes?`<div style="font-size:10px;color:var(--y);margin-bottom:4px;line-height:1.4">📝 ${esc(p.briefNotes)}</div>`:''}
         ${comp.expected.length?`<div class="compl-row"><span>${comp.pct}% مكتمل</span><div class="compl-track"><div class="compl-fill" style="width:${comp.pct}%"></div></div><span>${[...comp.expected].filter(t=>!comp.recorded.has(t)).slice(0,3).map(t=>'⬜ '+esc(t)).join(' · ')||'✅'}</span></div>`:''}
         ${pCosts.map(_costCard).join('')}
       </div>`;
@@ -1452,7 +1469,8 @@ function renderDetail(){
     </div>`:'';
     const supInsightsHTML=`<div id="ws-sup-insights" style="margin-top:8px"></div>`;
     const costCenterLink=`<a href="exec-cost-entry.html?id=${esc(o._id)}" class="act act-ghost act-full" style="margin-top:6px;text-decoration:none;justify-content:center">🧮 فتح مركز التكاليف المتقدم</a>`;
-    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd wd-animate">${metricsHTML}${supChipsHTML}${simHTML}${itemsSec}${formHTML}${supInsightsHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}${costCenterLink}</div>`;
+    const costPrintNotes=o.printNotes?`<div class="prd-print-notes"><div class="prd-print-notes-lbl">🖨️ تعليمات الطباعة</div>${esc(o.printNotes)}</div>`:'';
+    panel.innerHTML=hdrHTML+tabsHTML+`<div class="wd wd-animate">${metricsHTML}${supChipsHTML}${costPrintNotes}${simHTML}${itemsSec}${formHTML}${supInsightsHTML}${tmplHTML||libHTML?`<div style="margin-top:12px">${tmplHTML}${libHTML}</div>`:''}${saveTemplateHTML}${costCenterLink}</div>`;
     _loadSupplierInsights(o);
     return;
   }
@@ -1508,9 +1526,25 @@ function renderDetail(){
     const supSt=p.supplierId?getSupStats(p.supplierId):null;
     const photos=(o.productionPhotos||[]).filter(ph=>ph.prodIdx===i||ph.prodIdx==null);
     const pDesignImgs=(()=>{const a=Array.isArray(p.designImages)?p.designImages.filter(Boolean):[];if(a.length)return[...a].reverse();return p.designImageUrl?[p.designImageUrl]:[];})();
+    const isOffset=(p.printType||'').includes('offset');
+    const isDigital=(p.printType||'').includes('digital');
+    const hasSpecs=p.paper||p.printType||p.lamination||(p.extras||[]).length||p.size;
+    const specsHTML=hasSpecs?`<div class="prd-specs">
+        ${p.printType?`<span class="prd-spec-tag" style="background:${isDigital?'rgba(59,158,255,.1)':'rgba(255,193,7,.1)'};border-color:${isDigital?'rgba(59,158,255,.25)':'rgba(255,193,7,.25)'};color:${isDigital?'var(--b)':'var(--y)'}">${isOffset&&isDigital?'مختلط':isOffset?'أوفست':'ديجيتال'}</span>`:''}
+        ${p.paper?`<span class="prd-spec-tag" style="background:rgba(255,193,7,.1);border-color:rgba(255,193,7,.25);color:var(--y)">📄 ${esc(p.paper)}${p.weight?' · '+esc(p.weight)+'جم':''}</span>`:''}
+        ${p.size?`<span class="prd-spec-tag" style="background:rgba(59,158,255,.08);border-color:rgba(59,158,255,.2);color:var(--b)">📐 ${esc(p.size)}</span>`:''}
+        ${p.lamination&&p.lamination!=='بلا'?`<span class="prd-spec-tag" style="background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.25);color:#a78bfa">✨ ${esc(p.lamination)}${p.laminationSides===2?' وجهين':' وجه'}</span>`:''}
+        ${(p.extras||[]).map(e=>`<span class="prd-spec-tag" style="background:var(--tint-g-soft);border-color:var(--tint-g-line);color:var(--g)">${esc(e)}</span>`).join('')}
+      </div>`:'';
+    const pressHTML=p.pressName?`<div class="prd-press-row">🏭 <span style="font-weight:var(--fw-bold)">${esc(p.pressName)}</span>${p.pressDeadline?` <span style="color:var(--dim2);font-size:10px">· ${new Date(p.pressDeadline).toLocaleDateString('ar-EG',{day:'numeric',month:'short'})}</span>`:''}</div>`:'';
+    const offsetHTML=isOffset&&(p.paperSheets||p.cutSize||p.paperCuts||p.innerType)?`<div class="prd-offset-specs">${p.paperSheets?`<span>📦 ${esc(p.paperSheets)} فرخ</span>`:''}${p.cutSize?`<span>📏 ${esc(p.cutSize)}</span>`:''}${p.paperCuts?`<span>✂️ ${esc(p.paperCuts)} قص</span>`:''}${p.innerType?`<span>📁 ${esc(p.innerType)}</span>`:''}</div>`:'';
+    const briefHTML=p.briefNotes?`<div class="prd-brief-note">📝 ${esc(p.briefNotes)}</div>`:'';
+    const notesHTML=p.notes&&p.notes!==p.briefNotes?`<div class="prd-note">📝 ${esc(p.notes)}</div>`:'';
     return `<div class="prd-item${cur==='cancelled'?' prd-cancelled':''}">
       <div class="prd-name">${esc(p.name||('منتج '+(i+1)))} ${p.qty?`<span class="prd-qty-tag">×${esc(p.qty)}</span>`:''}</div>
+      ${specsHTML}
       ${pDesignImgs.length?`<div class="prd-design-grid">${pDesignImgs.map(u=>`<img src="${esc(u)}" loading="lazy" class="prd-design-img ${pDesignImgs.length===1?'prd-design-single':'prd-design-multi'}" data-href="${esc(u)}" alt="">`).join('')}</div>`:''}
+      ${pressHTML}${offsetHTML}${briefHTML}${notesHTML}
       ${cur==='cancelled'?`<div class="prd-cancel-msg">❌ هذا المنتج ملغي${p.execDoneBy?' — بواسطة '+esc(p.execDoneBy):''}</div>`:`<div class="prd-status-row">${EXEC.filter(e=>e.k!=='cancelled').map(e=>`<button type="button" class="psb${cur===e.k?' on-'+e.k:''}" data-act="setexec" data-pidx="${i}" data-status="${e.k}">${e.ico} ${e.lbl}</button>`).join('')}</div>`}
       <div class="prd-sup-row">
         <span class="prd-sup-lbl">🏭</span>
@@ -1529,6 +1563,8 @@ function renderDetail(){
       ${cur!=='cancelled'&&products.length>1?`<button type="button" class="prd-ship-btn act-cancel-product" data-act="cancelproduct" data-pidx="${i}">❌ إلغاء هذا المنتج</button>`:''}
     </div>`;
   }).join(''):'<div class="wd-no-data">لا توجد منتجات</div>';
+
+  const printNotesHTML=o.printNotes?`<div class="prd-print-notes"><div class="prd-print-notes-lbl">🖨️ تعليمات الطباعة</div>${esc(o.printNotes)}</div>`:'';
 
   // ── Agent ──
   const agentHTML=`<div class="wd-sec${!o.productionAgent?' ':''}" id="sec-agent">
@@ -1553,6 +1589,7 @@ function renderDetail(){
     ${imgSrc?`<img src="${esc(imgSrc)}" alt="" loading="lazy" class="wd-order-img" onerror="this.remove()">`:''}
     ${!o.productionAgent?agentHTML:''}
     ${prodsHTML}
+    ${printNotesHTML}
     ${o.productionAgent?agentHTML:''}
     ${noteHTML}
     <div class="cost-form-row" style="margin-bottom:6px">
