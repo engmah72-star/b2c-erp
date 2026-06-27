@@ -179,7 +179,22 @@ export function buildStagePerformanceStats(orders = [], getStageDurations, forma
       if (s.rating === 'late') b.late++; else b.onTime++;
     }
   }
-  const people = [...buckets.values()].map(b => {
+  // Consolidate: merge buckets with same normalized name + stageKey
+  const normN = n => (n || '').toString().trim().toLowerCase();
+  const consolidated = new Map();
+  for (const b of buckets.values()) {
+    const cKey = normN(b.name) + '@' + b.stageKey;
+    if (consolidated.has(cKey)) {
+      const ex = consolidated.get(cKey);
+      ex.count += b.count; ex.totalMs += b.totalMs;
+      ex.onTime += b.onTime; ex.late += b.late;
+      if (!ex.name && b.name) ex.name = b.name;
+    } else {
+      consolidated.set(cKey, { ...b });
+    }
+  }
+
+  const people = [...consolidated.values()].map(b => {
     const avgMs = b.count ? Math.round(b.totalMs / b.count) : 0;
     const slaPct = b.count ? Math.round(b.onTime / b.count * 100) : 0;
     return {
