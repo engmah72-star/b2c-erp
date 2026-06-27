@@ -38,6 +38,7 @@ import {
   resolveCostItemCategory,
   isActiveCostItem,
   COST_ITEM_STATUSES,
+  ensureProductIds,
 } from './orders.js';
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -268,7 +269,7 @@ export const orderActions = {
         stage,
         designStage: stage === 'design' ? ORDER_DESIGN_STAGES.PENDING : '',
         clientId, clientName, clientPhone,
-        products,
+        products: ensureProductIds(products),
         product: productName,
         qty: totalQty,
         salePrice: sale,
