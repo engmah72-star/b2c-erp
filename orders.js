@@ -2538,8 +2538,11 @@ export function dedupEmployees(raw) {
 
 /**
  * resolveDesigner — يأخذ canonical employees list ومعرّف على الأوردر
- * ويرجّع الموظف المطابق (يطابق أي id من `_mergedIds`).
- * يستخدم في تجميع إحصائيات لتوحيد سجلات قديمة على الأوردرات.
+ * ويرجّع الموظف المطابق. استراتيجيات المطابقة (بالترتيب):
+ *   1. _id أو authUid مطابق
+ *   2. أي id في _mergedIds
+ *   3. تطابق تام بالاسم
+ *   4. تطابق بالاسم الأول (fallback — يمسك "محمود" → "محمود حسين")
  */
 export function resolveDesigner(canonicalList, designerId, designerName) {
   if (!Array.isArray(canonicalList)) return null;
@@ -2553,6 +2556,16 @@ export function resolveDesigner(canonicalList, designerId, designerName) {
     const target = (designerName || '').trim().toLowerCase();
     for (const d of canonicalList) {
       if ((d.name || '').trim().toLowerCase() === target) return d;
+    }
+    // Partial: first-name match (single match only to avoid ambiguity)
+    const targetFirst = target.split(/\s+/)[0];
+    if (targetFirst) {
+      let match = null, count = 0;
+      for (const d of canonicalList) {
+        const dFirst = (d.name || '').trim().toLowerCase().split(/\s+/)[0];
+        if (dFirst === targetFirst) { match = d; count++; }
+      }
+      if (count === 1) return match;
     }
   }
   return null;

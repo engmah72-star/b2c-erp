@@ -155,22 +155,23 @@ export function buildClientActivityStats(filteredOrders = [], clients = [], rang
  */
 export function buildStagePerformanceStats(orders = [], getStageDurations, formatDurationAr, employees = [], resolveEmployee) {
   if (typeof getStageDurations !== 'function') return { people: [] };
+  const hasResolver = typeof resolveEmployee === 'function' && employees.length;
   const buckets = new Map();
   for (const o of orders) {
     const res = getStageDurations(o) || {};
     for (const s of (res.stages || [])) {
-      if (s.status !== 'done' || !s.owner) continue; // فقط المكتمل بمسؤول معروف
-      // حل مشكلة التكرار: أوردرات بدون ownerId (قديمة) + أوردرات بـ ownerId (جديدة)
-      // لنفس الشخص تنتهي في buckets منفصلة. resolveEmployee يوحّد عبر _mergedIds + name.
-      let key, displayName = s.owner;
-      if (typeof resolveEmployee === 'function' && employees.length) {
+      if (s.status !== 'done' || !s.owner) continue;
+      let canonicalKey, displayName;
+      if (hasResolver) {
         const can = resolveEmployee(employees, s.ownerId, s.owner);
         if (can) {
-          key = (can.authUid || can._id) + '@' + s.key;
+          canonicalKey = (can.authUid || can._id);
           displayName = can.name || s.owner;
         }
       }
-      if (!key) key = (s.ownerId || s.owner) + '@' + s.key;
+      // Employees page = single source of truth: unresolved → skip
+      if (!canonicalKey) continue;
+      const key = canonicalKey + '@' + s.key;
       if (!buckets.has(key)) {
         buckets.set(key, { name: displayName, stageKey: s.key, stageLabel: s.label, slaHours: s.slaHours, count: 0, totalMs: 0, onTime: 0, late: 0 });
       }
@@ -179,22 +180,8 @@ export function buildStagePerformanceStats(orders = [], getStageDurations, forma
       if (s.rating === 'late') b.late++; else b.onTime++;
     }
   }
-  // Consolidate: merge buckets with same normalized name + stageKey
-  const normN = n => (n || '').toString().trim().toLowerCase();
-  const consolidated = new Map();
-  for (const b of buckets.values()) {
-    const cKey = normN(b.name) + '@' + b.stageKey;
-    if (consolidated.has(cKey)) {
-      const ex = consolidated.get(cKey);
-      ex.count += b.count; ex.totalMs += b.totalMs;
-      ex.onTime += b.onTime; ex.late += b.late;
-      if (!ex.name && b.name) ex.name = b.name;
-    } else {
-      consolidated.set(cKey, { ...b });
-    }
-  }
 
-  const people = [...consolidated.values()].map(b => {
+  const people = [...buckets.values()].map(b => {
     const avgMs = b.count ? Math.round(b.totalMs / b.count) : 0;
     const slaPct = b.count ? Math.round(b.onTime / b.count * 100) : 0;
     return {
