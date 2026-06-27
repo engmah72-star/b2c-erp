@@ -75,6 +75,40 @@ export async function updateCategoryUsage({ db = defaultDb, categoryLabel }) {
   }
 }
 
+/**
+ * إضافة بند إنتاج جديد (inline من أي صفحة) → يُحفظ في المصدر الأساسي.
+ */
+export async function addProductionService({ db = defaultDb, label, group = 'أخرى', printTypes = [] }) {
+  if (!label || !String(label).trim()) {
+    return { ok: false, errors: ['⚠️ اسم البند مطلوب'], warnings: [] };
+  }
+  const trimmed = String(label).trim();
+  try {
+    const ref = doc(db, 'master_lists', 'supplier_categories');
+    const snap = await getDoc(ref);
+    const data = snap.exists() ? snap.data() : {};
+    const items = Array.isArray(data.items) ? [...data.items] : [];
+    if (items.some(c => _norm(c.label) === _norm(trimmed))) {
+      return { ok: false, errors: ['⚠️ البند موجود بالفعل'], warnings: [] };
+    }
+    const maxOrder = items.reduce((m, c) => Math.max(m, c.order || 0), 0);
+    items.push({
+      id: 'svc_' + Date.now(),
+      label: trimmed,
+      group,
+      isCostItem: true,
+      isSupplierService: true,
+      isActive: true,
+      order: maxOrder + 1,
+      ...(printTypes.length ? { printTypes } : {}),
+    });
+    await setDoc(ref, { items, updatedAt: serverTimestamp() }, { merge: true });
+    return { ok: true, errors: [], warnings: [], label: trimmed, count: items.length };
+  } catch (e) {
+    return { ok: false, errors: [e.message || 'فشل الإضافة'], warnings: [] };
+  }
+}
+
 // ══════════════════════════════════════════
 // INCIDENT REASONS (master_lists/incident_reasons)
 // ══════════════════════════════════════════
@@ -349,6 +383,7 @@ export async function markSupplierOrderReceived({
 
 export const masterListsActions = {
   saveSupplierCategories,
+  addProductionService,
   saveIncidentReasons,
   savePrintBriefTemplates,
   saveAppSettings,
