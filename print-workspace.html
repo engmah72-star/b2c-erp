@@ -16,7 +16,6 @@
 <script src="sidebar.js"></script>
 <script src="finance-core.js"></script>
 <script src="financial-guard.js" defer></script>
-<script type="module" src="core/offset-cost-engine.js"></script>
 <script src="smart-sidebar.js?v=1" defer></script>
 <script src="viewas.js?v=1" defer></script>
 <script src="theme.js?v=4"></script>
@@ -376,11 +375,11 @@ import { initPageShortcuts, updatePageShortcuts } from './core/page-shortcuts.js
 import { ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 import { dataCache, cachedQuery } from './core/data-cache.js';
 import { getSettings, getMasterList } from './core/static-store.js';
+import { fmtNum } from './core/dom-utils.js';
 
 function buildSidebar(ud){ B2CSidebar.build(ud,'print-workspace.html'); }
 
 const FC=window.FinanceCore||window.FC||null;
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v};
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 const toast=(m,t='')=>{const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+(t==='ok'?'ok':t==='err'?'err':'');el.textContent=m;c.appendChild(el);setTimeout(()=>el.remove(),3200);};
@@ -398,7 +397,7 @@ window.closeNav=()=>{document.querySelector('.sidenav')?.classList.remove('mob-o
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
 
 // State
-let orders=[],wallets=[],appSettings={},suppliers=[],shippers=[],productionServices=[],printBriefTemplates=[];
+let orders=[],wallets=[],appSettings={},suppliers=[],shippers=[],productionServices=[],printBriefTemplates=[],masterCategories=[];
 let activeId=null,activeOrder=null,userName='',currentRole='admin';
 let pwSearchQ='',pwStatusFilter='all';
 let editProdsData=[];
@@ -452,7 +451,11 @@ function startListeners(){
   dataCache.subscribe(cachedQuery('wallets').limit(100).build(),docs=>{wallets=docs;});
   dataCache.subscribe(cachedQuery('shippers_v2').limit(200).build(),(docs)=>{shippers=docs;});
   getSettings(data=>{if(data)appSettings=data;if(activeOrder)renderWorkspace(activeOrder);});
-  getMasterList('supplier_categories',data=>{productionServices=data?(data.items||[]).filter(s=>s.isActive!==false):[];});
+  getMasterList('supplier_categories',data=>{
+    const items=data?(data.items||[]).filter(s=>s.isActive!==false):[];
+    productionServices=items;
+    masterCategories=items.filter(c=>c.isCostItem);
+  });
   dataCache.subscribe(cachedQuery('employees').where('role','==','production_agent').limit(100).build(),(docs)=>{
     window.__prodAgents=dedupEmployees(docs).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ar'));
     const s=document.getElementById('pick-prod-sel');if(!s)return;
@@ -574,7 +577,7 @@ function renderList(){
     const prods=(o.products||[]).slice(0,2).map(p=>escH(p.name+(p.qty?'×'+p.qty:''))).join(' · ');
     const isActive=o._id===activeId;
     const sale=getNet(o),rem=getRem(o);
-    const finLabel=sale>0?(rem>0?escH(fn(rem))+' ج':'مكتمل'):'';
+    const finLabel=sale>0?(rem>0?escH(fmtNum(rem))+' ج':'مكتمل'):'';
     const finCol=sale>0?(rem>0?'var(--y)':'var(--g)'):'var(--dim2)';
     return`<div class="pw-ocard${isActive?' active':''} pw-st-${cat}" onclick="selectOrder('${o._id}')">
       <div class="pw-ocard-row">
@@ -599,6 +602,17 @@ window.selectOrder=function(id){
   window.activeOrder=activeOrder;window.activeId=activeId;
   window.getRem=getRem;window.getNet=getNet;window.getPaid=getPaid;
   window.currentRole=currentRole;window.canSeePhone=canSeePhone;
+  window.__costItemsCtx={
+    getOrder:id=>orders.find(x=>x._id===id)||null,
+    getSuppliers:()=>suppliers,
+    getWallets:()=>wallets,
+    getMasterCategories:()=>masterCategories,
+    getProductsCatalog:()=>productsCatalog,
+    getCurrentRole:()=>currentRole,
+    getActiveOrderId:()=>activeId,
+    getCurrentUser:()=>auth?.currentUser||null,
+    getUserName:()=>userName,
+  };
   // update URL without reload
   const url=new URL(window.location);url.searchParams.set('id',id);history.replaceState({},'',url);
   // highlight in list
@@ -677,7 +691,7 @@ function renderHeader(o){
   if(badges){
     let html=`<span class="pw-badge" style="background:${rcol}18;color:${rcol};border-color:${rcol}44">${rs.score}% جاهزية</span>`;
     html+=`<span class="pw-badge${hasFinal?'':' pw-badge-bad'}">${hasFinal?'ملف ✓':'بدون ملف'}</span>`;
-    if(sale>0)html+=`<span class="pw-badge" style="${rem>0?'color:var(--y);border-color:rgba(255,170,0,.3);background:rgba(255,170,0,.06)':'color:var(--g);border-color:rgba(0,217,126,.3);background:rgba(0,217,126,.06)'}">${rem>0?'باقي '+fn(rem)+' ج':'مكتمل'}</span>`;
+    if(sale>0)html+=`<span class="pw-badge" style="${rem>0?'color:var(--y);border-color:rgba(255,170,0,.3);background:rgba(255,170,0,.06)':'color:var(--g);border-color:rgba(0,217,126,.3);background:rgba(0,217,126,.06)'}">${rem>0?'باقي '+fmtNum(rem)+' ج':'مكتمل'}</span>`;
     if(d>0)html+=`<span class="pw-badge pw-badge-bad">متأخر ${d} يوم</span>`;
     if(prods.length)html+=`<span class="pw-badge">${prods.length} منتج</span>`;
     badges.innerHTML=html;
@@ -702,9 +716,9 @@ function pwRenderImages(o){
   const finHTML=sale>0?`
     <div class="pw-section">
       <div class="pw-fin">
-        <div class="pw-fin-cell"><div class="pw-fin-lbl">الإجمالي</div><div class="pw-fin-val">${fn(sale)} ج</div></div>
-        <div class="pw-fin-cell"><div class="pw-fin-lbl">محصّل</div><div class="pw-fin-val" style="color:var(--g)">${fn(paid)} ج</div></div>
-        <div class="pw-fin-cell"><div class="pw-fin-lbl">${rem>0?'الباقي':'مكتمل'}</div><div class="pw-fin-val" style="color:${rem>0?'var(--r)':'var(--g)'}">${rem>0?fn(rem)+' ج':'✅'}</div></div>
+        <div class="pw-fin-cell"><div class="pw-fin-lbl">الإجمالي</div><div class="pw-fin-val">${fmtNum(sale)} ج</div></div>
+        <div class="pw-fin-cell"><div class="pw-fin-lbl">محصّل</div><div class="pw-fin-val" style="color:var(--g)">${fmtNum(paid)} ج</div></div>
+        <div class="pw-fin-cell"><div class="pw-fin-lbl">${rem>0?'الباقي':'مكتمل'}</div><div class="pw-fin-val" style="color:${rem>0?'var(--r)':'var(--g)'}">${rem>0?fmtNum(rem)+' ج':'✅'}</div></div>
       </div>
       <div style="height:5px;background:var(--bg3);border-radius:3px;overflow:hidden">
         <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--g)':pct>50?'var(--b)':'var(--y)'};border-radius:3px;transition:width .3s"></div>
@@ -743,7 +757,7 @@ function pwRenderImages(o){
           <span style="font-size:var(--fs-sm);font-weight:var(--fw-heavy)">${escH(p.name||'منتج')}</span>
           <span style="font-size:var(--fs-xs);color:var(--y);font-weight:var(--fw-bold)">×${escH(String(p.qty||'?'))}</span>
           ${ptLabel?`<span style="font-size:9px;padding:1px 5px;border-radius:6px;background:${ptCol}18;color:${ptCol};border:1px solid ${ptCol}33">${ptLabel}</span>`:''}
-          ${pPrice?`<span style="font-size:var(--fs-xs);color:var(--g);font-weight:var(--fw-bold)">${fn(pPrice)} ج</span>`:''}
+          ${pPrice?`<span style="font-size:var(--fs-xs);color:var(--g);font-weight:var(--fw-bold)">${fmtNum(pPrice)} ج</span>`:''}
         </div>
         <button type="button" onclick="openProductImgModal(${idx})" class="pw-btn" style="font-size:10px;padding:3px 8px">صور</button>
       </div>
@@ -792,183 +806,6 @@ function pwRenderSpecs(o){
       ?`<div style="margin-top:10px"><div style="font-size:var(--fs-xs);color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:5px">➕ إضافات</div><div style="display:flex;flex-wrap:wrap;gap:6px">${extrasList.map(ex=>{const sel=(p.extras||[]).includes(ex);return`<button type="button" onclick="toggleExtra('${o._id}',${idx},'${ex.replace(/'/g,"\\'")}')" style="padding:4px 10px;border-radius:12px;font-size:var(--fs-xs);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit;border:1px solid ${sel?'var(--g)':'var(--line)'};background:${sel?'rgba(0,217,126,.12)':'var(--bg3)'};color:${sel?'var(--g)':'var(--dim2)'}">${sel?'✓ ':''} ${escH(ex)}</button>`;}).join('')}</div></div>`
       :`<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:var(--bg2);border:1px dashed var(--line);font-size:var(--fs-xs);color:var(--dim2)">✦ أضف البنود من <a href="settings.html" style="color:var(--b);text-decoration:none">الإعدادات ← خدمات الإنتاج</a></div>`;
 
-    // ── حساب الإنتاج (فروخ + زنكات) ─────────────────────────
-    const eng=window.offsetCostEngine;
-    const paperMeta=getPaperTypeData(p.paper||'');
-    const allPapersData=Array.isArray(appSettings.paperTypesData)?appSettings.paperTypesData.filter(Boolean):[];
-    let prodCalcHtml='';
-    if(isOffset&&eng){
-      const printSize=p.printSize||p.size||'';
-      const qty=parseInt(p.qty)||0;
-      // Rank all available papers by pieces/sheet
-      // rankAllSizes: يجمع المقاسات القياسية + المُعرَّفة في الإعدادات
-      const rankings=eng.rankAllSizes(printSize,qty,allPapersData);
-      const zinkCnt=eng.calcZincCount(p.frontColors,p.backColors);
-
-      // Two smart recommendations:
-      // effPaper  = most pieces/sheet → fewest sheets (best for large quantities)
-      // econPaper = smallest paper area that still fits → smallest machine (best for small quantities)
-      const effPaper=rankings[0]||null;
-      const byArea=[...rankings].sort((a,b)=>{
-        const aS=eng.parseSizePair(a.originalSize||'');const bS=eng.parseSizePair(b.originalSize||'');
-        return (aS?aS.w*aS.h:9e9)-(bS?bS.w*bS.h:9e9);
-      });
-      const econPaper=byArea[0]||null;
-      const samePaper=effPaper&&econPaper&&effPaper.name===econPaper.name;
-
-      // Auto-select economical (smallest machine) if no paper chosen or doesn't fit
-      if(econPaper&&!rankings.find(pm=>pm.name===p.paper)){
-        p.paper=econPaper.name;
-        queueBriefSave(o._id,idx,{paper:econPaper.name});
-      }
-
-      // ── Card renderer ──
-      const mkCard=(pm,label,icon,accent)=>{
-        if(!pm||!pm.sheetsTotal)return'';
-        const isSel=pm.name===p.paper;
-        const pName=escAttr(pm.name);
-        const oc=`queueBriefSave('${o._id}',${idx},{paper:'${pName}',paperSheets:${pm.sheetsTotal}});if(activeOrder){const _p=(activeOrder.products||[])[${idx}];if(_p){_p.paper='${pName}';_p.paperSheets=${pm.sheetsTotal};}}commitBriefSave('${o._id}',${idx});pwRenderSpecs(activeOrder)`;
-        const layout=eng.fitLayout(printSize,pm.originalSize||'');
-        const layoutStr=layout?`${layout.cols}×${layout.rows}${layout.rotated?' ↻':''}`:' ';
-        const eff=layout?layout.efficiency:0;
-        const effColor=eff>=80?'var(--g)':eff>=60?'var(--y)':'var(--r)';
-        return`<div style="border-radius:10px;overflow:hidden;border:2px solid ${isSel?accent:'var(--line)'};margin-bottom:6px">
-          <div style="padding:5px 10px;background:${isSel?accent+'22':'var(--bg3)'};display:flex;align-items:center;gap:6px">
-            <span style="font-size:10px;font-weight:var(--fw-bold);color:${isSel?accent:'var(--dim2)'}">${label}</span>
-            ${isSel?`<span style="margin-right:auto;font-size:9px;color:${accent}">✓ مختار</span>`:'<span style="margin-right:auto"></span>'}
-          </div>
-          <div style="padding:7px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--snow)">${escH(pm.name)}</span>
-            ${pm.originalSize?`<span style="font-size:9px;color:var(--dim2)">· ${escH(pm.originalSize)} سم</span>`:''}
-            ${pm.machine?`<span style="font-size:9px;color:var(--dim2);background:var(--bg3);padding:1px 5px;border-radius:4px">${escH(pm.machine)}</span>`:''}
-            <span style="margin-right:auto;font-size:9px;font-weight:var(--fw-bold);color:${effColor}">${eff}%</span>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);text-align:center">
-            <div style="padding:9px 2px;border-left:1px solid var(--line)">
-              <div style="font-size:19px;font-weight:var(--fw-heavy);color:var(--b)">${pm.pcs}</div>
-              <div style="font-size:9px;color:var(--dim2)">ق/فرخة</div>
-              <div style="font-size:9px;color:var(--dim2);margin-top:2px">${layoutStr}</div>
-            </div>
-            <div style="padding:9px 2px;border-left:1px solid var(--line)"><div style="font-size:19px;font-weight:var(--fw-heavy);color:var(--snow)">${pm.sheetsNet}</div><div style="font-size:9px;color:var(--dim2)">صافي</div></div>
-            <div style="padding:9px 2px;border-left:1px solid var(--line)"><div style="font-size:19px;font-weight:var(--fw-heavy);color:var(--r)">${pm.wasteSheets}</div><div style="font-size:9px;color:var(--dim2)">هالك 5%</div></div>
-            <div style="padding:9px 2px;background:rgba(0,217,126,.07)"><div style="font-size:19px;font-weight:var(--fw-heavy);color:var(--g)">${pm.sheetsTotal}</div><div style="font-size:9px;color:var(--g)">الإجمالي</div></div>
-          </div>
-          <div style="padding:7px 10px;border-top:1px solid var(--line)">
-            <button type="button" onclick="${oc}" class="pw-btn" style="width:100%;font-size:var(--fs-xs)">${isSel?`💾 حفظ (${pm.sheetsTotal} فرخة)`:`اختار هذا · ${pm.sheetsTotal} فرخة`}</button>
-          </div>
-        </div>`;
-      };
-
-      const prodAnswerHTML=rankings.length
-        ?(samePaper
-          ?mkCard(effPaper,'الأنسب','✅','var(--g)')
-          :mkCard(econPaper,'🟢 الاقتصادية — أصغر ماكينة','','var(--g)')+mkCard(effPaper,'⚡ الأكفأ — أقل فروخ','','var(--b)')
-        )
-        :(printSize&&qty>0?`<div style="font-size:var(--fs-xs);color:var(--dim2);padding:6px 0">لا يوجد ورق يناسب هذا المقاس</div>`:'');
-
-      // ── Override: collapsible ranking list ──
-      const rankOverrideHTML=rankings.length?`
-        <details style="margin-bottom:8px">
-          <summary style="font-size:10px;color:var(--b);cursor:pointer;padding:5px 0;list-style:none;display:flex;align-items:center;gap:5px;user-select:none">
-            🔄 تغيير مقاس الورق <span style="color:var(--dim2)">(${rankings.length} خيار)</span> ▾
-          </summary>
-          <div style="margin-top:6px">
-            ${rankings.map((pm,ri)=>{
-              const isBest=ri===0;const isSel=pm.name===p.paper;
-              const pNameE=escAttr(pm.name);
-              const machB=pm.machine?`<span style="font-size:9px;color:var(--dim2);background:var(--bg3);padding:1px 4px;border-radius:3px;margin-right:3px">${escH(pm.machine)}</span>`:'';
-              return`<div onclick="queueBriefSave('${o._id}',${idx},{paper:'${pNameE}'});if(activeOrder){const _p=(activeOrder.products||[])[${idx}];if(_p)_p.paper='${pNameE}';}commitBriefSave('${o._id}',${idx});pwRenderSpecs(activeOrder)"
-                style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;margin-bottom:3px;cursor:pointer;
-                background:${isSel?'rgba(0,122,255,.1)':isBest?'rgba(0,217,126,.04)':'var(--bg2)'};
-                border:1px solid ${isSel?'rgba(0,122,255,.3)':isBest?'rgba(0,217,126,.18)':'var(--line)'}">
-                <div style="flex:1;min-width:0">
-                  <div><span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:${isSel?'var(--b)':isBest?'var(--g)':'var(--snow)'}">${escH(pm.name)}</span>${machB}</div>
-                  <div style="font-size:9px;color:var(--dim2)">${escH(pm.originalSize||'')} سم</div>
-                </div>
-                <div style="text-align:left;flex-shrink:0">
-                  <div style="font-size:14px;font-weight:var(--fw-bold);color:${isBest?'var(--g)':'var(--snow)'}">${pm.pcs}<span style="font-size:9px;color:var(--dim2);font-weight:400"> ق/ف</span></div>
-                  ${qty>0?`<div style="font-size:9px;color:var(--dim2)">${pm.sheetsTotal} فرخة</div>`:''}
-                </div>
-                ${isSel?`<span style="font-size:10px;color:${isBest?'var(--g)':'var(--b)'};flex-shrink:0">✓</span>`:''}
-              </div>`;
-            }).join('')}
-          </div>
-        </details>`:''
-
-      // ── Zinc + Machine Passes ──
-      const selSheets=rankings.find(pm=>pm.name===p.paper)?.sheetsTotal||parseInt(p.paperSheets)||0;
-      const frontC=parseInt(p.frontColors)||0;
-      const backC=parseInt(p.backColors)||0;
-      const frontPasses=selSheets*frontC;
-      const backPasses=selSheets*backC;
-      const totalPasses=frontPasses+backPasses;
-      const zinkPresets=[{l:'4+0',f:4,b:0},{l:'4+4',f:4,b:4},{l:'1+0',f:1,b:0},{l:'1+1',f:1,b:1}];
-      const zinkHTML=`
-        <div style="margin-bottom:8px">
-          <div style="font-size:10px;color:var(--dim2);font-weight:var(--fw-bold);margin-bottom:6px">🟨 الزنكات</div>
-          <div style="display:flex;gap:5px;margin-bottom:8px">
-            ${zinkPresets.map(pr=>{const active=(p.frontColors||0)===pr.f&&(p.backColors||0)===pr.b;return`<button onclick="queueBriefSave('${o._id}',${idx},{frontColors:${pr.f},backColors:${pr.b}});if(activeOrder){const pp=(activeOrder.products||[])[${idx}];if(pp){pp.frontColors=${pr.f};pp.backColors=${pr.b};}}pwRenderSpecs(activeOrder)" style="flex:1;padding:4px 0;font-size:11px;font-weight:var(--fw-bold);border-radius:6px;border:1.5px solid ${active?'var(--y)':'var(--line)'};background:${active?'rgba(255,200,0,.13)':'var(--bg2)'};color:${active?'var(--y)':'var(--dim2)'};cursor:pointer">${pr.l}</button>`;}).join('')}
-          </div>
-          <div class="pw-grid2">
-            <div class="pw-field"><label>ألوان الوجه</label>
-              <select class="pw-inp" style="margin-top:3px" onchange="updateProductBriefField('${o._id}',${idx},'frontColors',parseInt(this.value));pwRenderSpecs(activeOrder)">
-                ${[0,1,2,3,4,5,6].map(n=>`<option value="${n}"${frontC===n?' selected':''}>${n} — ${n===0?'بلا':n===1?'لون واحد':n===4?'CMYK (4)':n+' ألوان'}</option>`).join('')}
-              </select></div>
-            <div class="pw-field"><label>ألوان الظهر</label>
-              <select class="pw-inp" style="margin-top:3px" onchange="updateProductBriefField('${o._id}',${idx},'backColors',parseInt(this.value));pwRenderSpecs(activeOrder)">
-                ${[0,1,2,3,4,5,6].map(n=>`<option value="${n}"${backC===n?' selected':''}>${n} — ${n===0?'بلا (وجه واحد)':n===1?'لون واحد':n===4?'CMYK (4)':n+' ألوان'}</option>`).join('')}
-              </select></div>
-          </div>
-        </div>`;
-
-      // ── Unified Production Summary (paper + zinc + machine passes) ──
-      const summaryHTML=(selSheets>0&&zinkCnt>0)?`
-        <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:4px">
-          <div style="padding:6px 12px;border-bottom:1px solid var(--line);font-size:10px;font-weight:var(--fw-bold);color:var(--dim2)">📋 ملخص الإنتاج</div>
-          <div style="padding:10px 12px;display:grid;gap:6px">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span style="font-size:10px;color:var(--dim2)">📄 الورق</span>
-              <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--snow)">${escH(p.paper||'—')} · <span style="color:var(--g)">${selSheets} فرخة</span></span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span style="font-size:10px;color:var(--dim2)">🟨 الزنكات</span>
-              <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--snow)">${zinkCnt} لوح <span style="font-size:9px;color:var(--dim2)">(${frontC} وجه + ${backC} ظهر)</span></span>
-            </div>
-            <div style="height:1px;background:var(--line);margin:2px 0"></div>
-            ${frontC>0?`<div style="display:flex;justify-content:space-between;align-items:center">
-              <span style="font-size:10px;color:var(--dim2)">⚙️ ضربات الوجه</span>
-              <span style="font-size:var(--fs-xs);color:var(--snow)">${selSheets} × ${frontC} = <strong style="color:var(--b)">${frontPasses} ضربة</strong></span>
-            </div>`:''}
-            ${backC>0?`<div style="display:flex;justify-content:space-between;align-items:center">
-              <span style="font-size:10px;color:var(--dim2)">⚙️ ضربات الظهر</span>
-              <span style="font-size:var(--fs-xs);color:var(--snow)">${selSheets} × ${backC} = <strong style="color:var(--b)">${backPasses} ضربة</strong></span>
-            </div>`:''}
-            <div style="padding:8px 10px;background:rgba(0,122,255,.07);border-radius:8px;border:1px solid rgba(0,122,255,.2)">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <span style="font-size:10px;font-weight:var(--fw-bold);color:var(--b)">⚡ إجمالي ضربات الماكينة</span>
-                <span style="font-size:18px;font-weight:var(--fw-heavy);color:var(--b)">${totalPasses} <span style="font-size:10px;font-weight:400">ضربة</span></span>
-              </div>
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;padding-top:6px;border-top:1px solid rgba(0,122,255,.2)">
-                <span style="font-size:10px;color:var(--b)">📦 التراجات للتسعير <span style="font-size:9px;color:var(--dim2)">(تقريب لأعلى ألف)</span></span>
-                <span style="font-size:18px;font-weight:var(--fw-heavy);color:var(--y)">${Math.ceil(totalPasses/1000)} <span style="font-size:10px;font-weight:400;color:var(--dim2)">تراج = ${Math.ceil(totalPasses/1000)*1000} سحبة</span></span>
-              </div>
-            </div>
-            <button type="button" onclick="applyOffsetCostItems('${o._id}',${idx})" class="pw-btn pw-btn-g" style="width:100%;font-size:10px;margin-top:2px">💾 تسجيل بنود التكلفة في الأوردر</button>
-          </div>
-        </div>`
-      :(selSheets>0&&zinkCnt===0?`<div style="font-size:10px;color:var(--dim2);padding:4px 0">⬆️ حدد الزنكات لتكتمل ملخص الإنتاج</div>`:
-        selSheets===0&&zinkCnt>0?`<div style="font-size:10px;color:var(--dim2);padding:4px 0">⬆️ اختار مقاس الورق لتكتمل ملخص الإنتاج</div>`:'');
-
-      prodCalcHtml=!printSize?`<div style="margin-top:12px;padding:8px 12px;border-radius:8px;background:var(--bg2);border:1px dashed var(--line);font-size:var(--fs-xs);color:var(--dim2)">ℹ️ أدخل مقاس الطباعة لحساب عدد الفروخ</div>`:`
-      <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)">
-        <div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:10px">📐 حساب الإنتاج</div>
-        ${prodAnswerHTML}
-        ${rankOverrideHTML}
-        ${zinkHTML}
-        ${summaryHTML}
-      </div>`;
-    }
-
     const offsetHtml=!isOffset?'':(`
       <div class="pw-grid2" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
         <div class="pw-field"><label>📦 عدد الفروخ</label><input class="pw-inp" type="number" min="0" value="${p.paperSheets||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperSheets',parseFloat(this.value)||0)" placeholder="0"></div>
@@ -976,15 +813,14 @@ function pwRenderSpecs(o){
         <div class="pw-field"><label>✂️ التقطيع</label><input class="pw-inp" type="number" min="0" value="${p.paperCuts||''}" oninput="updateProductBriefField('${o._id}',${idx},'paperCuts',parseFloat(this.value)||0)" placeholder="0"></div>
       </div>
       <div class="pw-field" style="margin-top:8px"><label>📁 الداخلي</label><input class="pw-inp" type="text" value="${escAttr(p.innerType||'')}" oninput="updateProductBriefField('${o._id}',${idx},'innerType',this.value)" placeholder="العادي"></div>
-      ${prodCalcHtml}`);
+      `);
 
     // Press + deadline + notes — common for all print types
     const pressNotesHtml=`
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
         <div class="pw-field"><label>🏭 المطبعة</label><select class="pw-inp" onchange="updateProductBriefField('${o._id}',${idx},'press',this)">${pressOpts}</select></div>
         <div class="pw-field"><label>📅 ميعاد المطبعة</label><input class="pw-inp" type="datetime-local" value="${toLocalDT(p.pressDeadline)}" onchange="updateProductBriefField('${o._id}',${idx},'pressDeadline',this.value?new Date(this.value).toISOString():'')"></div>
-        <div class="pw-field" style="margin-top:6px"><label>📝 ملاحظات المنتج</label><textarea class="pw-inp" rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="ملاحظات خاصة بهذا المنتج... تظهر في التنفيذ وبنود التكلفة" style="resize:vertical;direction:rtl;font-family:inherit;min-height:40px">${escAttr(p.briefNotes||'')}</textarea></div>
-        ${p.briefNotes?`<div style="font-size:9px;color:var(--b);margin-top:2px">📋 ستظهر في التنفيذ وبنود التكلفة</div>`:''}
+        <div class="pw-field" style="margin-top:6px"><label>📝 ملاحظات المنتج</label><textarea class="pw-inp" rows="2" oninput="updateProductBriefField('${o._id}',${idx},'briefNotes',this.value)" placeholder="ملاحظات خاصة بهذا المنتج..." style="resize:vertical;direction:rtl;font-family:inherit;min-height:40px">${escAttr(p.briefNotes||'')}</textarea></div>
       </div>
       <div style="margin-top:10px">
         <button type="button" onclick="sendProductBrief('${o._id}',${idx})" ${r.ready?'':'disabled'} class="pw-btn ${r.ready?'pw-btn-wa':''}" style="width:100%;${!r.ready?'cursor:not-allowed;opacity:.6':''}">
@@ -1043,11 +879,19 @@ function pwRenderProduction(o){
   const allPrinted=prods.length&&prods.every(p=>p.productStatus==='printed'||p.productStatus==='done');
   const printedCount=prods.filter(p=>p.productStatus==='printed'||p.productStatus==='done').length;
 
+  const costSums=window.FinanceCore?.getAllProductCostSummaries?.(o)||[];
   const prodsStatusHTML=prods.map((p,idx)=>{
     const s=p.productStatus||'pending';
     const r=computeProductReadiness(o,p);
     const rc=r.ready?'var(--g)':r.pct>=60?'var(--y)':'var(--r)';
     const isPrinted=s==='printed'||s==='done';
+    const cs=costSums[idx]||{totalCost:0,itemCount:0};
+    const pPrice=parseFloat(p.unitPrice||p.price)||0;
+    const margin=pPrice>0?pPrice*(parseInt(p.qty)||1)-cs.totalCost:0;
+    const costBadge=cs.itemCount>0
+      ?`<span style="font-size:9px;padding:1px 6px;border-radius:6px;background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);color:var(--y)">💰 ${fmtNum(cs.totalCost)} ج · ${cs.itemCount} بند</span>`
+      :`<span style="font-size:9px;padding:1px 6px;border-radius:6px;background:rgba(255,67,54,.06);border:1px solid rgba(255,67,54,.15);color:var(--r)">بدون تكلفة</span>`;
+    const marginHtml=pPrice>0&&cs.itemCount>0?`<span style="font-size:9px;padding:1px 6px;border-radius:6px;background:${margin>=0?'rgba(0,217,126,.08)':'rgba(255,67,54,.08)'};border:1px solid ${margin>=0?'rgba(0,217,126,.2)':'rgba(255,67,54,.2)'};color:${margin>=0?'var(--g)':'var(--r)'}">هامش ${fmtNum(margin)} ج</span>`:'';
     return`<div style="padding:8px 10px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;margin-bottom:5px;border-right:3px solid ${isPrinted?'var(--p)':rc}">
       <div style="display:flex;align-items:center;gap:8px">
         <div style="flex:1;min-width:0">
@@ -1058,8 +902,12 @@ function pwRenderProduction(o){
             ${r.ready?'':`<span style="font-size:9px;color:${rc}">${r.pct}%</span>`}
             ${p.briefSentAt?`<span style="font-size:9px;color:var(--g)">📨 أُرسل</span>`:''}
           </div>
+          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:4px">
+            ${costBadge}${marginHtml}
+          </div>
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0">
+          <button type="button" onclick="openCostDrawer('${o._id}',${idx})" class="pw-btn" style="font-size:10px;padding:4px 8px;color:var(--y)">💰</button>
           ${s!=='printed'&&s!=='done'?`<button type="button" onclick="setPrintProductStatus(${idx},'printed')" class="pw-btn pw-btn-p" style="font-size:10px;padding:4px 8px">مطبوع</button>`:''}
           ${s==='printed'?`<button type="button" onclick="setPrintProductStatus(${idx},'ready')" class="pw-btn" style="font-size:10px;padding:4px 8px;opacity:.6">↩</button>`:''}
           ${!['ready','printed','done','on_hold'].includes(s)?`<button type="button" onclick="setPrintProductStatus(${idx},'on_hold')" class="pw-btn" style="font-size:10px;padding:4px 8px;opacity:.6">⏸</button>`:''}
@@ -1105,6 +953,31 @@ function pwRenderProduction(o){
       <div class="pw-section-title">ملاحظات المنتجات (تظهر في بنود التكلفة)</div>
       ${prods.filter(pp=>pp.briefNotes).map(pp=>`<div style="padding:6px 10px;border-radius:7px;background:rgba(255,193,7,.07);border:1px solid rgba(255,193,7,.2);margin-bottom:4px;font-size:var(--fs-xs);line-height:1.5"><span style="font-weight:var(--fw-bold);color:var(--snow)">${escH(pp.name||'—')}</span> <span style="color:var(--y)">· ${escH(pp.briefNotes)}</span></div>`).join('')}
     </div>`:''}
+
+    <!-- Cost summary -->
+    ${(()=>{
+      const _sale=getNet(o),_paid=getPaid(o);
+      const totalCost=costSums.reduce((s,c)=>s+c.totalCost,0);
+      const totalItems=costSums.reduce((s,c)=>s+c.itemCount,0);
+      const orderMargin=_sale-totalCost;
+      return totalItems>0?`<div class="pw-section">
+        <div class="pw-section-title">ملخص التكاليف</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center">
+          <div style="padding:8px;background:var(--bg2);border-radius:8px;border:1px solid var(--line)">
+            <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">إجمالي التكلفة</div>
+            <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:var(--y)">${fmtNum(totalCost)} ج</div>
+          </div>
+          <div style="padding:8px;background:var(--bg2);border-radius:8px;border:1px solid var(--line)">
+            <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">سعر البيع</div>
+            <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:var(--snow)">${fmtNum(_sale)} ج</div>
+          </div>
+          <div style="padding:8px;background:var(--bg2);border-radius:8px;border:1px solid ${orderMargin>=0?'rgba(0,217,126,.25)':'rgba(255,67,54,.25)'}">
+            <div style="font-size:9px;color:var(--dim2);margin-bottom:2px">الهامش</div>
+            <div style="font-size:var(--fs-sm);font-weight:var(--fw-heavy);color:${orderMargin>=0?'var(--g)':'var(--r)'}">${fmtNum(orderMargin)} ج</div>
+          </div>
+        </div>
+      </div>`:'';
+    })()}
 
     <!-- Move to production -->
     <div style="padding-top:10px;border-top:1px solid var(--line)">
@@ -1221,64 +1094,6 @@ window.setPrintProductStatus=async function(idx,status){
   const r=await orderActions.setProductCatalogStatus({db,orderId:activeId,prodIdx:idx,status,userId:auth?.currentUser?.uid||'',userName});
   if(!r.ok){if(((r.errors||[])[0]||'')==='⚠️ نفس الحالة')return;return toast('❌ '+(r.errors||[]).join(' · '),'err');}
   toast(`✅ ${(o.products||[])[idx]?.name||''}: ${status}`,'ok');
-};
-
-// ── تطبيق تكلفة الأوفست كبنود في الأوردر ────────────────────
-window.applyOffsetCostItems=async function(orderId,idx){
-  const o=orders.find(x=>x._id===orderId)||activeOrder;if(!o)return;
-  const p=(o.products||[])[idx];if(!p)return;
-  const eng=window.offsetCostEngine;if(!eng)return toast('⚠️ محرك الحساب لم يُحمَّل بعد','warn');
-  const paperMeta=getPaperTypeData(p.paper||'');
-  const qty=parseInt(p.qty)||0;
-  const printSize=p.printSize||p.size||'';
-  const pcs=eng.fitPiecesPerSheet(printSize,paperMeta?.originalSize||'');
-  const sc=eng.sheetsCalc(pcs,qty);
-  const paperCost=paperMeta?eng.calcPaperCost(sc.sheetsTotal,paperMeta.costPerSheet):0;
-
-  // Machine cost via تراجات
-  const rates=appSettings?.offsetMachineRates||{};
-  const allPapersData=Array.isArray(appSettings?.paperTypesData)?appSettings.paperTypesData.filter(Boolean):[];
-  const selRank=eng.rankAllSizes(printSize,qty,allPapersData).find(pm=>pm.name===(p.paper||''));
-  const machine=selRank?.machine||paperMeta?.machine||'';
-  const machineRate=parseFloat(rates[machine])||0;
-  const frontC=parseInt(p.frontColors)||0,backC=parseInt(p.backColors)||0;
-  const totalPasses=sc.sheetsTotal*(frontC+backC);
-  const trajs=totalPasses>0?Math.ceil(totalPasses/1000):0;
-  const machineCost=trajs*machineRate;
-
-  const uid=auth?.currentUser?.uid||'';
-  const prodNote=p.briefNotes?` | ${p.briefNotes}`:'';
-  const lines=[];
-  if(paperMeta&&sc.sheetsTotal>0&&paperCost>0){
-    lines.push({type:'ورق',total:paperCost,supplierId:paperMeta.supplierId||'',supplierName:paperMeta.supplierName||'',note:`${paperMeta.name} ${paperMeta.originalSize||''} — ${sc.sheetsTotal} فرخة${prodNote}`.trim()});
-  }
-  if(machine&&machineCost>0){
-    lines.push({type:'طباعة',total:machineCost,supplierId:'',supplierName:'',note:`${machine} — ${trajs} تراج × ${machineRate} ج${prodNote}`});
-  }
-  if(!lines.length)return toast('⚠️ لا توجد بنود محسوبة — تأكد من إدخال بيانات الورق والطباعة','warn');
-  let ok=true,msgs=[];
-  for(const line of lines){
-    const r=await orderActions.recordCostItem({db,orderId,prodIdx:idx,payload:line,role:currentRole,userId:uid,userName,wallets:[]});
-    if(!r.ok){ok=false;msgs.push(...(r.errors||[]));}
-  }
-  if(ok)toast(`✅ تم تسجيل ${lines.length} بند تكلفة`,'ok');
-  else toast('⚠️ '+msgs.join(' · '),'err');
-};
-
-window.setZinkFromSelect=function(orderId,idx,val){
-  const [f,b]=val.split(',').map(Number);
-  if(f===-1)return pwRenderSpecs(activeOrder); // مخصص — يظهر الحقول اليدوية فقط
-  if(activeOrder){const p=(activeOrder.products||[])[idx];if(p){p.frontColors=f;p.backColors=b;}}
-  queueBriefSave(orderId,idx,{frontColors:f,backColors:b});
-  if(activeOrder&&activeOrder._id===orderId)pwRenderSpecs(activeOrder);
-};
-
-// حفظ عدد الفروخ المحسوب في حقل paperSheets للمنتج
-window.saveCalcSheets=async function(orderId,idx,sheetsTotal){
-  if(!sheetsTotal)return;
-  if(activeOrder){const p=(activeOrder.products||[])[idx];if(p)p.paperSheets=sheetsTotal;}
-  await commitBriefSave(orderId,idx,{paperSheets:sheetsTotal});
-  toast(`✅ عدد الفروخ (${sheetsTotal}) حُفظ`,'ok');
 };
 
 window.openProductionSheet=function(id){const oid=id||activeId;if(!oid)return;window.open('order-summary-sheet.html?orderId='+encodeURIComponent(oid)+'&type=production','_blank','noopener');};
@@ -1499,7 +1314,7 @@ window.openSaveTemplate=function(orderId,idx){
 // ── Financial modals ──
 function renderWalletsInEl(elId,prefix){
   const el=document.getElementById(elId);if(!el)return;
-  el.innerHTML=wallets.map(w=>`<button type="button" onclick="selectWallet_${prefix}('${w._id}','${(w.name||'محفظة').replace(/'/g,"\\'")}')" id="${prefix}w-${w._id}" style="padding:6px 14px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${w.name||'محفظة'} · ${fn(w.balance)} ج</button>`).join('');
+  el.innerHTML=wallets.map(w=>`<button type="button" onclick="selectWallet_${prefix}('${w._id}','${(w.name||'محفظة').replace(/'/g,"\\'")}')" id="${prefix}w-${w._id}" style="padding:6px 14px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${w.name||'محفظة'} · ${fmtNum(w.balance)} ج</button>`).join('');
 }
 window[`selectWallet_col`]=function(id,name){
   document.getElementById('col-wid').value=id;document.getElementById('col-wname').value=name;
@@ -1515,9 +1330,9 @@ window[`selectWallet_pa`]=function(id,name){
 window.openCollect=function(){
   if(!activeOrder)return;const o=activeOrder;const paid=getPaid(o),sale=getNet(o),rem=getRem(o);
   const sum=document.getElementById('col-summary');
-  if(sum)sum.innerHTML=`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>الإجمالي</span><span>${fn(sale)} ج</span></div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>محصّل</span><span style="color:var(--g)">${fn(paid)} ج</span></div><div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:var(--r)">الباقي</span><span style="color:var(--r);font-weight:var(--fw-heavy)">${fn(rem)} ج</span></div>`;
-  const inp=document.getElementById('col-amount');if(inp){inp.max=rem;inp.value='';inp.placeholder=fn(rem)+' ج';}
-  const hint=document.getElementById('col-hint');if(hint)hint.textContent=`الحد الأقصى: ${fn(rem)} ج`;
+  if(sum)sum.innerHTML=`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>الإجمالي</span><span>${fmtNum(sale)} ج</span></div><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>محصّل</span><span style="color:var(--g)">${fmtNum(paid)} ج</span></div><div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:var(--r)">الباقي</span><span style="color:var(--r);font-weight:var(--fw-heavy)">${fmtNum(rem)} ج</span></div>`;
+  const inp=document.getElementById('col-amount');if(inp){inp.max=rem;inp.value='';inp.placeholder=fmtNum(rem)+' ج';}
+  const hint=document.getElementById('col-hint');if(hint)hint.textContent=`الحد الأقصى: ${fmtNum(rem)} ج`;
   renderWalletsInEl('col-wallets','col');
   window.__colReceiptFile=null;
   const prev=document.getElementById('col-receipt-preview');if(prev)prev.innerHTML='';
@@ -1526,15 +1341,15 @@ window.openCollect=function(){
 window.updateColPreview=function(){
   const amt=parseFloat(document.getElementById('col-amount')?.value)||0;if(!activeOrder)return;
   const rem=getRem(activeOrder);const hint=document.getElementById('col-hint');if(!hint)return;
-  if(amt>rem){hint.style.color='var(--r)';hint.textContent=`⚠️ يتجاوز الباقي (${fn(rem)} ج)`;}
+  if(amt>rem){hint.style.color='var(--r)';hint.textContent=`⚠️ يتجاوز الباقي (${fmtNum(rem)} ج)`;}
   else if(amt===rem){hint.style.color='var(--g)';hint.textContent='✅ سيُغلق كمدفوع كاملاً';}
-  else{hint.style.color='var(--dim2)';hint.textContent=`سيتبقى ${fn(rem-amt)} ج`;}
+  else{hint.style.color='var(--dim2)';hint.textContent=`سيتبقى ${fmtNum(rem-amt)} ج`;}
 };
 
 window.openPrintAdvance=function(){
   if(!activeOrder)return;const o=activeOrder;const paid=getPaid(o),sale=getNet(o),rem=getRem(o);
   const sum=document.getElementById('pa-summary');
-  if(sum)sum.innerHTML=`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>الإجمالي</span><span>${fn(sale)} ج</span></div><div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:var(--r)">الباقي</span><span style="color:var(--r);font-weight:var(--fw-heavy)">${fn(rem)} ج</span></div>`;
+  if(sum)sum.innerHTML=`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>الإجمالي</span><span>${fmtNum(sale)} ج</span></div><div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:var(--r)">الباقي</span><span style="color:var(--r);font-weight:var(--fw-heavy)">${fmtNum(rem)} ج</span></div>`;
   const inp=document.getElementById('pa-amount');if(inp){inp.max=rem;inp.value='';}
   renderWalletsInEl('pa-wallets','pa');
   window.__paReceiptFile=null;
@@ -1544,8 +1359,8 @@ window.openPrintAdvance=function(){
 window.updatePaPreview=function(){
   const amt=parseFloat(document.getElementById('pa-amount')?.value)||0;if(!activeOrder)return;
   const rem=getRem(activeOrder);const hint=document.getElementById('pa-hint');if(!hint)return;
-  if(amt>rem){hint.style.color='var(--r)';hint.textContent=`⚠️ يتجاوز الباقي (${fn(rem)} ج)`;}
-  else{hint.style.color='var(--dim2)';hint.textContent=`سيتبقى ${fn(rem-amt)} ج`;}
+  if(amt>rem){hint.style.color='var(--r)';hint.textContent=`⚠️ يتجاوز الباقي (${fmtNum(rem)} ج)`;}
+  else{hint.style.color='var(--dim2)';hint.textContent=`سيتبقى ${fmtNum(rem-amt)} ج`;}
 };
 
 // Receipt upload helper
@@ -1577,7 +1392,7 @@ window.saveCollect=async function(){
   if(btn){btn.disabled=false;btn.textContent='✓ تأكيد';}
   const r=await orderActions.recordPayment({db,orderId:activeId,amount:amt,walletId:wid,walletName:wname,role:currentRole,userId:auth?.currentUser?.uid||'',userName,source:'customer',note:`تحصيل — ${activeOrder.clientName||'—'}`,receiptUrl});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-  cM('collect');toast(`✅ تم تحصيل ${fn(amt)} ج`,'ok');window.__colReceiptFile=null;
+  cM('collect');toast(`✅ تم تحصيل ${fmtNum(amt)} ج`,'ok');window.__colReceiptFile=null;
 };
 
 window.savePrintAdvance=async function(){
@@ -1595,7 +1410,7 @@ window.savePrintAdvance=async function(){
   if(btn){btn.disabled=false;btn.textContent='✓ تسجيل المقدم';}
   const r=await orderActions.recordPrintAdvance({db,orderId:activeId,amount:amt,walletId:wid,walletName:wname,note,role:currentRole,userId:auth?.currentUser?.uid||'',userName,receiptUrl});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
-  cM('print-advance');toast(`✅ مقدم ${fn(amt)} ج`,'ok');window.__paReceiptFile=null;
+  cM('print-advance');toast(`✅ مقدم ${fmtNum(amt)} ج`,'ok');window.__paReceiptFile=null;
 };
 
 // ── Pickup (assign self as printer) ──
@@ -1624,7 +1439,7 @@ window.openEditAmounts=function(){
 };
 function renderEaWallets(){
   const el=document.getElementById('ea-wallets');if(!el)return;
-  el.innerHTML=wallets.map(w=>`<button type="button" onclick="selectEaWallet('${w._id}','${(w.name||'محفظة').replace(/'/g,"\\'")}')" id="ew-${w._id}" style="padding:6px 14px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${w.name||'محفظة'} · ${fn(w.balance)} ج</button>`).join('');
+  el.innerHTML=wallets.map(w=>`<button type="button" onclick="selectEaWallet('${w._id}','${(w.name||'محفظة').replace(/'/g,"\\'")}')" id="ew-${w._id}" style="padding:6px 14px;border-radius:20px;border:1px solid var(--line);background:var(--bg3);color:var(--dim2);font-size:var(--fs-sm);font-weight:var(--fw-bold);cursor:pointer;font-family:inherit">${w.name||'محفظة'} · ${fmtNum(w.balance)} ج</button>`).join('');
 }
 window.selectEaWallet=function(id,name){
   document.getElementById('ea-wid').value=id;document.getElementById('ea-wname').value=name;
@@ -1643,16 +1458,16 @@ window.updateEaPreview=function(){
   const hint=document.getElementById('ea-paid-hint');
   if(hint){
     if(!paidChanged){hint.style.color='var(--dim2)';hint.textContent='';}
-    else if(paidDiff>0){hint.style.color='var(--g)';hint.textContent=`▲ دفعة جديدة ${fn(paidDiff)} ج تُضاف للمحفظة`;}
-    else{hint.style.color='var(--r)';hint.textContent=`▼ استرداد ${fn(Math.abs(paidDiff))} ج يُخصم من المحفظة`;}
+    else if(paidDiff>0){hint.style.color='var(--g)';hint.textContent=`▲ دفعة جديدة ${fmtNum(paidDiff)} ج تُضاف للمحفظة`;}
+    else{hint.style.color='var(--r)';hint.textContent=`▼ استرداد ${fmtNum(Math.abs(paidDiff))} ج يُخصم من المحفظة`;}
   }
   const sum=document.getElementById('ea-summary');
   if(sum)sum.innerHTML=`
-    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">الإجمالي الجديد</span><span style="font-weight:var(--fw-extra)">${fn(newSale)} ج</span></div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">المحصّل الجديد</span><span style="font-weight:var(--fw-extra);color:var(--g)">${fn(newPaid)} ج</span></div>
-    ${disc>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">خصم</span><span style="font-weight:var(--fw-extra)">${fn(disc)} ج</span></div>`:''}
-    ${cFee>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">شحن على العميل</span><span style="font-weight:var(--fw-extra)">${fn(cFee)} ج</span></div>`:''}
-    <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:${newRem>0?'var(--r)':'var(--g)'};font-weight:var(--fw-extra)">${newRem>0?'الباقي':'مكتمل ✅'}</span><span style="font-weight:var(--fw-heavy);color:${newRem>0?'var(--r)':'var(--g)'};font-size:15px">${fn(newRem)} ج</span></div>`;
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">الإجمالي الجديد</span><span style="font-weight:var(--fw-extra)">${fmtNum(newSale)} ج</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">المحصّل الجديد</span><span style="font-weight:var(--fw-extra);color:var(--g)">${fmtNum(newPaid)} ج</span></div>
+    ${disc>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">خصم</span><span style="font-weight:var(--fw-extra)">${fmtNum(disc)} ج</span></div>`:''}
+    ${cFee>0?`<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">شحن على العميل</span><span style="font-weight:var(--fw-extra)">${fmtNum(cFee)} ج</span></div>`:''}
+    <div style="display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px;margin-top:4px"><span style="color:${newRem>0?'var(--r)':'var(--g)'};font-weight:var(--fw-extra)">${newRem>0?'الباقي':'مكتمل ✅'}</span><span style="font-weight:var(--fw-heavy);color:${newRem>0?'var(--r)':'var(--g)'};font-size:15px">${fmtNum(newRem)} ج</span></div>`;
 };
 window.saveEditAmounts=async function(){
   if(!activeId||!activeOrder)return;const o=activeOrder;
@@ -1671,7 +1486,7 @@ window.saveEditAmounts=async function(){
   }
   const reason=(document.getElementById('ea-reason')?.value||'').trim();
   const btn=document.querySelector('#ov-edit-amounts .btn-g');if(btn){btn.disabled=true;btn.textContent='جاري الحفظ...';}
-  const r=await orderActions.editOrderPayment({db,orderId:activeId,changes,walletId,walletName,changesLabel:`💰 تعديل المبالغ — كلي ${fn(newSale)} ج · مقدم ${fn(newPaid)} ج`,editReason:reason,userId:auth?.currentUser?.uid||'',userName});
+  const r=await orderActions.editOrderPayment({db,orderId:activeId,changes,walletId,walletName,changesLabel:`💰 تعديل المبالغ — كلي ${fmtNum(newSale)} ج · مقدم ${fmtNum(newPaid)} ج`,editReason:reason,userId:auth?.currentUser?.uid||'',userName});
   if(btn){btn.disabled=false;btn.textContent='✓ حفظ المبالغ';}
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   cM('edit-amounts');toast('✅ تم تحديث المبالغ','ok');
@@ -1701,5 +1516,7 @@ window.pwOpenActionSheet=function(){
 };
 window.cM=function(id){document.getElementById('ov-'+id)?.classList.remove('open');};
 </script>
+<script src="features/cost-items/drawer.js"></script>
+<link rel="stylesheet" href="features/cost-items/drawer.css">
 </body>
 </html>

@@ -438,7 +438,7 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { setText, gv } from "./core/dom-utils.js";
+import { setText, gv, fmtNum } from "./core/dom-utils.js";
 import { supplierActions } from "./supplier-actions.js";
 
 // ══ Sidebar ══
@@ -451,6 +451,7 @@ import { masterListsActions } from "./master-lists-actions.js";
 import { isDelivered } from "./orders.js";
 import { initPageShortcuts } from './core/page-shortcuts.js';
 import { dataCache, cachedQuery } from './core/data-cache.js';
+import { toast } from './shared.js';
 console.log('[SUPPLIER] 🟢 SUPPLIER UI LOADED v2 — financial-sync-engine active');
 let suppliers=[],shippers=[],payments=[],orders=[],wallets=[];
 let masterCategories=[];
@@ -468,7 +469,6 @@ if(_restored){
 }
 if(_ps.hasSnapshots)_ps.restoreSnapshots();
 let prevMonthPayments=null;
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v??'';};
 const oM=id=>document.getElementById('ov-'+id)?.classList.add('open');
 const cM=id=>document.getElementById('ov-'+id)?.classList.remove('open');
@@ -476,7 +476,7 @@ window.cM=cM;window.oM=oM;
 const nowStr=()=>new Date().toLocaleDateString('ar-EG')+' '+new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
 const PAYTERMS={cash:'كاش فوري','7days':'آجل 7 أيام','15days':'آجل 15 يوم','30days':'آجل 30 يوم','60days':'آجل 60 يوم',custom:'مخصص'};
 
-function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
+
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav').classList.remove('mob-open');document.getElementById('nav-ov').classList.remove('show');};
 window.doLogout=async()=>{await signOut(auth);window.location.href='login.html';};
@@ -644,13 +644,13 @@ function updateKPIs(){
   const linkedOrders=new Set(orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId)).map(o=>o._id));
   // old KPI bindings
   setText('k-total',allSups.length);
-  setText('k-due',fn(totalDue)+' ج');
-  setText('k-paid',fn(totalPaid)+' ج');
+  setText('k-due',fmtNum(totalDue)+' ج');
+  setText('k-paid',fmtNum(totalPaid)+' ج');
   setText('k-orders',linkedOrders.size);
   // dashboard strip
   setText('ds-total',allSups.length);
-  setText('ds-due',fn(totalDue)+' ج');
-  setText('ds-paid',fn(totalPaid)+' ج');
+  setText('ds-due',fmtNum(totalDue)+' ج');
+  setText('ds-paid',fmtNum(totalPaid)+' ج');
   setText('ds-orders',linkedOrders.size);
   // comparative deltas (vs previous 30 days)
   document.querySelectorAll('.dash-cell-delta').forEach(e=>e.remove());
@@ -798,7 +798,7 @@ function renderPrinters(el){
     const lateCount=getLateOrders(s._id);
     const activity=getLastActivity(s._id);
     const trendArrow=due>0?(trend==='up'?'<span class="trend-arrow trend-up">↑</span>':trend==='down'?'<span class="trend-arrow trend-down">↓</span>':'<span class="trend-arrow trend-flat">←</span>'):'';
-    const waText=due>0?encodeURIComponent(`مرحباً ${s.name}، هذا تذكير بالمستحقات المعلقة: ${fn(due)} ج. شكراً لتعاونكم — Business2Card`):encodeURIComponent(`مرحباً ${s.name}، نود التواصل معكم بخصوص طلب جديد — Business2Card`);
+    const waText=due>0?encodeURIComponent(`مرحباً ${s.name}، هذا تذكير بالمستحقات المعلقة: ${fmtNum(due)} ج. شكراً لتعاونكم — Business2Card`):encodeURIComponent(`مرحباً ${s.name}، نود التواصل معكم بخصوص طلب جديد — Business2Card`);
     const isCompared=compareSet.has(s._id);
     return`<div class="entity-card" onclick="openSup('${s._id}','printer')">
       <div class="entity-card-stripe ${stripeCls}"></div>
@@ -820,7 +820,7 @@ function renderPrinters(el){
             ${svcs.length?`<div class="entity-services">${svcs.slice(0,4).map(sv=>`<span class="svc-tag">${sv}</span>`).join('')}${svcs.length>4?`<span class="svc-tag-more">+${svcs.length-4}</span>`:''}</div>`:''}
             <div class="entity-meta-row">
               ${agingDays>0?`<span class="meta-badge ${agingDays>60?'meta-aging-danger':'meta-aging'}">⏳ ${agingDays} يوم</span>`:''}
-              ${avgCost>0?`<span class="meta-badge meta-avg">📊 متوسط ${fn(avgCost)} ج</span>`:''}
+              ${avgCost>0?`<span class="meta-badge meta-avg">📊 متوسط ${fmtNum(avgCost)} ج</span>`:''}
               ${lateCount>0?`<span class="meta-badge meta-late">⚠️ ${lateCount} متأخر</span>`:''}
               ${activity.days>30?`<span class="meta-badge meta-idle">💤 خامل ${activity.label}</span>`:''}
               ${activity.days<=30&&activity.days>0?`<span class="meta-badge meta-activity">🕐 ${activity.label}</span>`:''}
@@ -833,9 +833,9 @@ function renderPrinters(el){
           </div>
         </div>
         <div class="entity-finance">
-          <div class="fin-cell"><div class="fin-cell-val text-b">${fn(purchases)}</div><div class="fin-cell-lbl">مشتريات</div></div>
-          <div class="fin-cell"><div class="fin-cell-val text-g">${fn(paid)}</div><div class="fin-cell-lbl">مدفوع</div></div>
-          <div class="fin-cell${due>0?' fin-due-active':''}"><div class="fin-cell-val" style="color:${due>0?'var(--r)':'var(--g)'}">${fn(due)} ج</div><div class="fin-cell-lbl">مستحق</div></div>
+          <div class="fin-cell"><div class="fin-cell-val text-b">${fmtNum(purchases)}</div><div class="fin-cell-lbl">مشتريات</div></div>
+          <div class="fin-cell"><div class="fin-cell-val text-g">${fmtNum(paid)}</div><div class="fin-cell-lbl">مدفوع</div></div>
+          <div class="fin-cell${due>0?' fin-due-active':''}"><div class="fin-cell-val" style="color:${due>0?'var(--r)':'var(--g)'}">${fmtNum(due)} ج</div><div class="fin-cell-lbl">مستحق</div></div>
         </div>
       </div>
     </div>`;
@@ -886,7 +886,7 @@ function renderShippers(el){
         <div class="entity-finance">
           <div class="fin-cell"><div class="fin-cell-val text-b">${total}</div><div class="fin-cell-lbl">أوردرات</div></div>
           <div class="fin-cell"><div class="fin-cell-val" style="color:${rate>=80?'var(--g)':'var(--y)'}">${rate}%</div><div class="fin-cell-lbl">نسبة تسليم</div></div>
-          <div class="fin-cell${pendingSettlement>0?' fin-due-active':''}"><div class="fin-cell-val" style="color:${pendingSettlement>0?'var(--r)':'var(--g)'}">${fn(pendingSettlement)} ج</div><div class="fin-cell-lbl">معلق</div></div>
+          <div class="fin-cell${pendingSettlement>0?' fin-due-active':''}"><div class="fin-cell-val" style="color:${pendingSettlement>0?'var(--r)':'var(--g)'}">${fmtNum(pendingSettlement)} ج</div><div class="fin-cell-lbl">معلق</div></div>
         </div>
       </div>
     </div>`;
@@ -911,9 +911,9 @@ function populateProfileHeader(sup,type){
     if(type==='printer'){
       const {purchases,paid,due}=getSupBalance(sup._id);
       qsEl.innerHTML=`
-        <div class="pqs-cell"><div class="pqs-val" style="color:var(--b)">${fn(purchases)}</div><div class="pqs-lbl">مشتريات</div></div>
-        <div class="pqs-cell"><div class="pqs-val" style="color:var(--g)">${fn(paid)}</div><div class="pqs-lbl">مدفوع</div></div>
-        <div class="pqs-cell"><div class="pqs-val" style="color:var(--r)">${fn(due)}</div><div class="pqs-lbl">مستحق</div></div>`;
+        <div class="pqs-cell"><div class="pqs-val" style="color:var(--b)">${fmtNum(purchases)}</div><div class="pqs-lbl">مشتريات</div></div>
+        <div class="pqs-cell"><div class="pqs-val" style="color:var(--g)">${fmtNum(paid)}</div><div class="pqs-lbl">مدفوع</div></div>
+        <div class="pqs-cell"><div class="pqs-val" style="color:var(--r)">${fmtNum(due)}</div><div class="pqs-lbl">مستحق</div></div>`;
     }else{
       const {total,delivered,rate}=getShipperStats(sup._id);
       qsEl.innerHTML=`
@@ -1009,14 +1009,14 @@ function renderPanelContent(sup){
 
   const serviceRows=[
     svcs?`<div class="tx-row" style="align-items:flex-start"><span class="pn-info-label">🛠️ الخدمات</span><div class="pn-chips">${svcs}</div></div>`:'',
-    sup.minQty?R('📦 أقل طلب',fn(sup.minQty)+' قطعة'):'',
+    sup.minQty?R('📦 أقل طلب',fmtNum(sup.minQty)+' قطعة'):'',
     sup.leadTimeDays?R('⏱️ وقت التسليم',sup.leadTimeDays+' يوم'):'',
     wdays?R('📅 أيام العمل',wdays):'',
   ].filter(Boolean);
 
   const financeRows=[
     sup.payTerms?R('💳 شروط الدفع',PAYTERMS_LABEL[sup.payTerms]||sup.payTerms):'',
-    sup.creditLimit?R('🏦 حد الائتمان',fn(sup.creditLimit)+' ج'):'',
+    sup.creditLimit?R('🏦 حد الائتمان',fmtNum(sup.creditLimit)+' ج'):'',
     sup.bankName?R('🏦 البنك',sup.bankName+(sup.bankAccount?' · ****'+sup.bankAccount.slice(-4):'')):'',
     sup.taxNumber?R('🧾 رقم ضريبي',sup.taxNumber):'',
   ].filter(Boolean);
@@ -1064,9 +1064,9 @@ function renderPanelContent(sup){
 
     balEl.innerHTML=`
       <div class="bal-grid">
-        <div class="bal-box bal-buy"><div class="bal-box-val">${fn(purchases)} ج</div><div class="bal-box-lbl">مشتريات</div></div>
-        <div class="bal-box bal-paid"><div class="bal-box-val">${fn(paid)} ج</div><div class="bal-box-lbl">مدفوع</div></div>
-        <div class="bal-box bal-due"><div class="bal-box-val">${fn(due)} ج</div><div class="bal-box-lbl">مستحق</div></div>
+        <div class="bal-box bal-buy"><div class="bal-box-val">${fmtNum(purchases)} ج</div><div class="bal-box-lbl">مشتريات</div></div>
+        <div class="bal-box bal-paid"><div class="bal-box-val">${fmtNum(paid)} ج</div><div class="bal-box-lbl">مدفوع</div></div>
+        <div class="bal-box bal-due"><div class="bal-box-val">${fmtNum(due)} ج</div><div class="bal-box-lbl">مستحق</div></div>
       </div>
       <div class="pn-subtitle">📋 سجل الحركات</div>
       ${allTx.length?allTx.map(tx=>`
@@ -1080,10 +1080,10 @@ function renderPanelContent(sup){
               <div class="txt-bold-md">${tx.label}</div>
               ${tx.sub?`<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:1px">${tx.sub}</div>`:''}
               ${tx.orderId?`<div style="font-size:var(--fs-xs);color:var(--b);margin-top:1px">${tx.orderId}</div>`:''}
-              ${tx.items?.length?`<div class="tx-items">${tx.items.map(it=>`<div class="tx-item-line"><span class="text-muted">${it.type||'—'}</span><span style="font-weight:var(--fw-bold)">${fn(it.total)} ج</span></div>`).join('')}</div>`:''}
+              ${tx.items?.length?`<div class="tx-items">${tx.items.map(it=>`<div class="tx-item-line"><span class="text-muted">${it.type||'—'}</span><span style="font-weight:var(--fw-bold)">${fmtNum(it.total)} ج</span></div>`).join('')}</div>`:''}
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:var(--space-xs)">
-              <span class="tx-amount ${tx.type==='purchase'?'neg':'pos'}">${tx.type==='purchase'?'-':'+'}${fn(tx.amount)} ج</span>
+              <span class="tx-amount ${tx.type==='purchase'?'neg':'pos'}">${tx.type==='purchase'?'-':'+'}${fmtNum(tx.amount)} ج</span>
               ${tx.type==='payment'?`<button type="button" class="tx-del-btn" onclick="delPay('${tx.payId}',${tx.amount},'${tx.walletId}')">✕</button>`:''}
             </div>
           </div>
@@ -1095,7 +1095,7 @@ function renderPanelContent(sup){
       <div class="balance-row" style="background:rgba(59,158,255,.08)"><span class="txt-meta-base">إجمالي الأوردرات</span><span style="font-weight:var(--fw-extra);color:var(--b)">${total}</span></div>
       <div class="balance-row" style="background:rgba(0,217,126,.08)"><span class="txt-meta-base">تم التسليم</span><span style="font-weight:var(--fw-extra);color:var(--g)">${delivered} (${rate}%)</span></div>
       <div class="balance-row" style="background:rgba(255,170,0,.08)"><span class="txt-meta-base">مرتجع</span><span style="font-weight:var(--fw-extra);color:var(--y)">${returned}</span></div>
-      <div class="balance-row" style="background:rgba(255,61,110,.08)"><span class="txt-meta-base">تسويات معلقة</span><span style="font-weight:var(--fw-heavy);color:var(--r)">${fn(pendingSettlement)} ج</span></div>`;
+      <div class="balance-row" style="background:rgba(255,61,110,.08)"><span class="txt-meta-base">تسويات معلقة</span><span style="font-weight:var(--fw-heavy);color:var(--r)">${fmtNum(pendingSettlement)} ج</span></div>`;
   }
 
   const ordEl=document.getElementById('pn-orders');
@@ -1107,7 +1107,7 @@ function renderPanelContent(sup){
     <div class="tx-row">
       <div><div class="txt-strong-base">${p.date||'—'}</div><div class="txt-meta-xs">${p.note||'دفعة'}</div></div>
       <div style="display:flex;align-items:center;gap:var(--space-sm)">
-        <span style="font-weight:var(--fw-extra);color:var(--g)">${fn(p.amount)} ج</span>
+        <span style="font-weight:var(--fw-extra);color:var(--g)">${fmtNum(p.amount)} ج</span>
         <button type="button" onclick="delPay('${p._id}',${p.amount},'${p.walletId||''}')" style="width:24px;height:24px;border-radius:6px;border:1px solid rgba(255,61,110,.3);background:rgba(255,61,110,.08);color:var(--r);cursor:pointer;font-size:var(--fs-base)">✕</button>
       </div>
     </div>`).join('')||'<div class="txt-meta-base">لا توجد مدفوعات</div>';
@@ -1168,7 +1168,7 @@ function renderSupPerformance(supId){
         const total=ords.reduce((s,o)=>s+(o.costItems||[]).filter(c=>c.supplierId===supId).reduce((ss,c)=>ss+(parseFloat(c.total)||0),0),0);
         return{label:p.label,total,count:ords.length};
       }).filter(r=>r.count>0);
-      return rows.length?`<div class="pn-subtitle" style="margin-top:14px">📈 اتجاه التكلفة</div>${rows.map(r=>`<div class="price-trend-row"><span class="price-trend-period">${r.label} (${r.count} طلب)</span><span class="price-trend-val">${fn(r.total)} ج</span></div>`).join('')}`:'';
+      return rows.length?`<div class="pn-subtitle" style="margin-top:14px">📈 اتجاه التكلفة</div>${rows.map(r=>`<div class="price-trend-row"><span class="price-trend-period">${r.label} (${r.count} طلب)</span><span class="price-trend-val">${fmtNum(r.total)} ج</span></div>`).join('')}`:'';
     })()}`;
 }
 
@@ -1190,7 +1190,7 @@ async function loadSupplierOrders(supId){
             <div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:2px">أوردر ${so.orderRef||so.orderId?.slice(-6)||'—'} · ${so.clientName||'—'}</div>
             ${so.note?`<div style="font-size:var(--fs-sm);color:var(--dim2);margin-top:3px">${so.note}</div>`:''}
           </div>
-          <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--snow);margin-right:8px">${fn(so.total)} ج</div>
+          <div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--snow);margin-right:8px">${fmtNum(so.total)} ج</div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
           <span class="class-tag" style="background:${so.deliveryStatus==='received'?'rgba(0,217,126,.1)':so.deliveryStatus==='partial'?'rgba(255,193,7,.1)':'var(--bg3)'};color:${so.deliveryStatus==='received'?'var(--g)':so.deliveryStatus==='partial'?'var(--y)':'var(--dim2)'}">
@@ -1458,9 +1458,9 @@ window.openPay=function(){
   if(!activeSup||activeSup.supType!=='printer')return;
   const {purchases,paid,due}=getSupBalance(activeId);
   document.getElementById('pay-balance-info').innerHTML=`
-    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">مشتريات</span><span style="font-weight:var(--fw-extra);color:var(--b)">${fn(purchases)} ج</span></div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">مدفوع</span><span style="font-weight:var(--fw-extra);color:var(--g)">${fn(paid)} ج</span></div>
-    <div class="row-between"><span class="text-muted">مستحق</span><span style="font-weight:var(--fw-heavy);color:var(--r)">${fn(due)} ج</span></div>`;
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">مشتريات</span><span style="font-weight:var(--fw-extra);color:var(--b)">${fmtNum(purchases)} ج</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">مدفوع</span><span style="font-weight:var(--fw-extra);color:var(--g)">${fmtNum(paid)} ج</span></div>
+    <div class="row-between"><span class="text-muted">مستحق</span><span style="font-weight:var(--fw-heavy);color:var(--r)">${fmtNum(due)} ج</span></div>`;
   // Purchase context — recent cost items for this supplier
   const recentCosts=[];
   orders.filter(o=>(o.costItems||[]).some(c=>c.supplierId===activeId)).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,5).forEach(o=>{
@@ -1470,7 +1470,7 @@ window.openPay=function(){
   });
   const ctxEl=document.getElementById('pay-context');
   if(ctxEl){
-    ctxEl.innerHTML=recentCosts.length?`<div class="pay-context-title">📦 آخر المشتريات</div>${recentCosts.slice(0,5).map(c=>`<div class="pay-context-item"><span>${c.type} · ${c.client} (${c.order})</span><span style="font-weight:var(--fw-bold)">${fn(c.total)} ج</span></div>`).join('')}`:'';
+    ctxEl.innerHTML=recentCosts.length?`<div class="pay-context-title">📦 آخر المشتريات</div>${recentCosts.slice(0,5).map(c=>`<div class="pay-context-item"><span>${c.type} · ${c.client} (${c.order})</span><span style="font-weight:var(--fw-bold)">${fmtNum(c.total)} ج</span></div>`).join('')}`:'';
     ctxEl.style.display=recentCosts.length?'block':'none';
   }
   document.getElementById('pay-title').textContent='💳 دفعة لـ '+activeSup.name;
@@ -1485,7 +1485,7 @@ window.savePay=async function(){
   const note=gv('pay-note');
   const {purchases,due}=getSupBalance(activeId);
   if(purchases===0)return toast('⚠️ لا توجد بنود تكلفة مرتبطة بهذا المورد — أضف بنوداً أولاً من صفحة التنفيذ','err');
-  if(amount>due&&!confirm(`⚠️ المبلغ (${fn(amount)} ج) أكبر من المستحق (${fn(due)} ج).\nهل تريد المتابعة؟`))return;
+  if(amount>due&&!confirm(`⚠️ المبلغ (${fmtNum(amount)} ج) أكبر من المستحق (${fmtNum(due)} ج).\nهل تريد المتابعة؟`))return;
   const costItemRefs=[];
   orders.forEach(o=>{
     (o.costItems||[]).forEach(c=>{
@@ -1536,11 +1536,11 @@ window.openCompareModal=function(){
   const rows=[
     {label:'النوع',get:s=>s.supType==='printer'?'🏭 مورد':'🚚 شحن'},
     {label:'الحالة',get:s=>s.status==='suspended'?'🚫 موقوف':s.status==='inactive'?'⏸ غير نشط':'✅ نشط'},
-    {label:'مشتريات',get:s=>fn(getSupBalance(s._id).purchases)+' ج'},
-    {label:'مدفوع',get:s=>fn(getSupBalance(s._id).paid)+' ج'},
-    {label:'مستحق',get:s=>fn(getSupBalance(s._id).due)+' ج'},
+    {label:'مشتريات',get:s=>fmtNum(getSupBalance(s._id).purchases)+' ج'},
+    {label:'مدفوع',get:s=>fmtNum(getSupBalance(s._id).paid)+' ج'},
+    {label:'مستحق',get:s=>fmtNum(getSupBalance(s._id).due)+' ج'},
     {label:'عمر الدين',get:s=>getAgingDays(s._id)+' يوم'},
-    {label:'متوسط التكلفة',get:s=>fn(getAvgCost(s._id))+' ج'},
+    {label:'متوسط التكلفة',get:s=>fmtNum(getAvgCost(s._id))+' ج'},
     {label:'متأخرات',get:s=>getLateOrders(s._id)+''},
     {label:'آخر نشاط',get:s=>getLastActivity(s._id).label},
     {label:'التقييم',get:s=>s.rating?'⭐'.repeat(s.rating):'—'},

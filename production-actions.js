@@ -24,6 +24,7 @@ import { db as defaultDb } from './core/firebase-init.js';
 import { addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { withIdempotency } from './core/idempotency.js';
 import { nowStr, auditEntry } from './core/audit.js';
+import { buildCostSummaries } from './orders.js';
 
 const ALLOWED_REQUESTERS = ['admin', 'operation_manager', 'production_agent'];
 
@@ -169,11 +170,12 @@ export async function adminDeletePaidCostItem({
     try {
       const batch = writeBatch(db);
 
-      // 1) Remove from costItems
+      // 1) Remove from costItems + update cost summaries projection
       const ci = [...(order.costItems || [])];
       ci.splice(costItemIdx, 1);
       batch.update(doc(db, 'orders', orderId), {
         costItems: ci,
+        costSummaries: buildCostSummaries(ci, order.products || []),
         timeline: [
           ...(order.timeline || []),
           auditEntry({

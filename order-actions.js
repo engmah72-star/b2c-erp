@@ -38,6 +38,8 @@ import {
   resolveCostItemCategory,
   isActiveCostItem,
   COST_ITEM_STATUSES,
+  ensureProductIds,
+  buildCostSummaries,
 } from './orders.js';
 import { dispatchFinancialEvent, addLedgerToBatch, FE } from './financial-sync-engine.js';
 import { db as defaultDb } from './core/firebase-init.js';
@@ -268,7 +270,7 @@ export const orderActions = {
         stage,
         designStage: stage === 'design' ? ORDER_DESIGN_STAGES.PENDING : '',
         clientId, clientName, clientPhone,
-        products,
+        products: ensureProductIds(products),
         product: productName,
         qty: totalQty,
         salePrice: sale,
@@ -1689,9 +1691,10 @@ export const orderActions = {
       ? `✏️ تعديل بند ${type}: ${total.toLocaleString('ar-EG')} ج`
       : `💰 ${type}: ${total.toLocaleString('ar-EG')} ج${note ? ' — ' + note : ''}`;
 
-    // 1) order update
+    // 1) order update + cost summaries projection
     batch.update(orderRef, {
       costItems: newCi,
+      costSummaries: buildCostSummaries(newCi, order.products || []),
       ...(!order.productionAgent && userId ? { productionAgent: userId, productionAgentName: userName } : {}),
       timeline: [
         ...(order.timeline || []),
@@ -1895,6 +1898,7 @@ export const orderActions = {
       const batch = writeBatch(db);
       batch.update(order._ref, {
         costItems: items,
+        costSummaries: buildCostSummaries(items, order.products || []),
         timeline: [...(order.timeline || []), auditEntry({
           action: `🗑️ إلغاء بند تكلفة: ${item.type || ''} — ${parseFloat(item.total) || 0} ج${item.supplierName ? ' — ' + item.supplierName : ''}`,
           userId, userName, kind: 'edit',

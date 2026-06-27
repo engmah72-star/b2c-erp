@@ -191,7 +191,7 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { delayDays } from "./core/dom-utils.js";
+import { delayDays, fmtNum, esc } from "./core/dom-utils.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { dataCache, cachedQuery } from "./core/data-cache.js";
@@ -204,8 +204,8 @@ import { calcRem } from "./core/order-math.js";
 import { warmupForRole } from "./core/offline-warmup.js";
 import { warmImages, extractOrderImageUrls, extractClientImageUrls } from "./core/image-cache.js";
 import { subscribeKPIs } from "./core/live-kpis.js";
+import { toast } from './shared.js';
 // ── Utils ──
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
 const nowDate=new Date();
 const todayStr=nowDate.toISOString().slice(0,10);
@@ -219,7 +219,6 @@ const STAGE_AR={design:'تصميم',printing:'طباعة',production:'تنفيذ
 const STAGE_COL={design:'var(--p)',printing:'var(--y)',production:'var(--o)',shipping:'var(--c)',delivered:'var(--g)',archived:'var(--dim)'};
 const STAGE_PAGE={design:'design',printing:'print',production:'production',shipping:'shipping',archived:'archive'};
 
-function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+t;el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 
 // ── Sidebar — موحَّد عبر sidebar.js ──
 async function buildSidebar(uid2){
@@ -328,9 +327,9 @@ function renderStripFromAgg(kpi){
     </a>`;
   el.innerHTML=
     btn('📋',p.active||0,'أوردر نشط','var(--b)','clients.html')+
-    btn('💰',fn(f.totalRemaining||0)+' ج','باقي تحصيل','var(--r)','#')+
+    btn('💰',fmtNum(f.totalRemaining||0)+' ج','باقي تحصيل','var(--r)','#')+
     btn('👤',m.newClients||0,'عميل جديد','var(--g)','clients.html')+
-    btn('📈',fn(m.revenue||0)+' ج','مبيعات الشهر','var(--p)','accounts.html');
+    btn('📈',fmtNum(m.revenue||0)+' ج','مبيعات الشهر','var(--p)','accounts.html');
 }
 
 // ── Today strip ──
@@ -348,9 +347,9 @@ function renderTodayStrip(active,withRem,late,newClients,monthly){
 
   el.innerHTML=
     btn('📋',active.length,'أوردر نشط','var(--b)','clients.html',late.length>0?late.length+' متأخر':'','var(--r)')+
-    btn('💰',withRem.length,'باقي تحصيل','var(--r)','#',withRem.length>0?fn(withRem.reduce((s,o)=>s+calcRem(o),0))+' ج':'','var(--r)')+
+    btn('💰',withRem.length,'باقي تحصيل','var(--r)','#',withRem.length>0?fmtNum(withRem.reduce((s,o)=>s+calcRem(o),0))+' ج':'','var(--r)')+
     btn('👤',newClients.length,'عميل جديد','var(--g)','clients.html','')+
-    btn('📈',fn(sales)+' ج','مبيعات الشهر','var(--p)','accounts.html','');
+    btn('📈',fmtNum(sales)+' ج','مبيعات الشهر','var(--p)','accounts.html','');
 }
 
 // ── Follow-up list (المتابعة الذكية) ──
@@ -364,7 +363,7 @@ function renderFollowUp(active,withRem,late){
   // Priority 1: متأخرة + عليها مستحقات
   myOrders.filter(o=>!seen.has(o._id)&&calcRem(o)>0&&o.deadline&&delayDays(o.deadline)>0)
     .sort((a,b)=>delayDays(b.deadline)-delayDays(a.deadline))
-    .forEach(o=>{seen.add(o._id);items.push({o,pri:1,reason:`متأخر ${delayDays(o.deadline)} يوم + باقي ${fn(calcRem(o))} ج`});});
+    .forEach(o=>{seen.add(o._id);items.push({o,pri:1,reason:`متأخر ${delayDays(o.deadline)} يوم + باقي ${fmtNum(calcRem(o))} ج`});});
 
   // Priority 2: متأخرة بدون مستحقات
   active.filter(o=>!seen.has(o._id)&&o.deadline&&delayDays(o.deadline)>0)
@@ -374,7 +373,7 @@ function renderFollowUp(active,withRem,late){
   withRem.filter(o=>!seen.has(o._id))
     .sort((a,b)=>calcRem(b)-calcRem(a))
     .slice(0,8)
-    .forEach(o=>{seen.add(o._id);items.push({o,pri:2,reason:`باقي ${fn(calcRem(o))} ج`});});
+    .forEach(o=>{seen.add(o._id);items.push({o,pri:2,reason:`باقي ${fmtNum(calcRem(o))} ج`});});
 
   // Priority 3: منتظرة موافقة تصميم
   active.filter(o=>!seen.has(o._id)&&o.stage==='design'&&o.designStatus==='pending')
@@ -398,7 +397,7 @@ function renderFollowUp(active,withRem,late){
     const days=o.deadline?delayDays(o.deadline):0;
 
     // WhatsApp message
-    const waMsg=encodeURIComponent(`أهلاً ${o.clientName||''}،\nبالنسبة لأوردر ${o.orderId||o._id.slice(-6)} (${prods})${rem>0?`\nالمبلغ المتبقي: ${fn(rem)} ج`:''}${days>0?`\nالأوردر متأخر ${days} يوم`:''}.\nشكراً 🙏`);
+    const waMsg=encodeURIComponent(`أهلاً ${o.clientName||''}،\nبالنسبة لأوردر ${o.orderId||o._id.slice(-6)} (${prods})${rem>0?`\nالمبلغ المتبقي: ${fmtNum(rem)} ج`:''}${days>0?`\nالأوردر متأخر ${days} يوم`:''}.\nشكراً 🙏`);
     const waHref=phone?`https://wa.me/${wa_phone}?text=${waMsg}`:'#';
 
     return`<div class="fu-card priority-${pri}">
@@ -408,7 +407,7 @@ function renderFollowUp(active,withRem,late){
           <div class="fu-order-id">${o.orderId||o._id.slice(-6)}</div>
         </div>
         <div style="text-align:left;flex-shrink:0">
-          ${rem>0?`<div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--r)">${fn(rem)} ج</div>`:
+          ${rem>0?`<div style="font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--r)">${fmtNum(rem)} ج</div>`:
             days>0?`<div style="font-size:var(--fs-md);font-weight:var(--fw-extra);color:var(--r)">⏰ ${days} يوم</div>`:''}
         </div>
       </div>
@@ -448,7 +447,7 @@ const ordersVL=new VirtualList({
       </div>
       <div style="font-size:var(--fs-sm);color:var(--dim2);display:flex;justify-content:space-between;align-items:center">
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${prods}</span>
-        ${rem>0?`<span style="color:var(--r);font-weight:var(--fw-extra);flex-shrink:0;margin-right:8px">${fn(rem)} ج</span>`:'<span style="color:var(--g);font-size:var(--fs-xs);font-weight:var(--fw-extra);flex-shrink:0;margin-right:8px">✓ محصّل</span>'}
+        ${rem>0?`<span style="color:var(--r);font-weight:var(--fw-extra);flex-shrink:0;margin-right:8px">${fmtNum(rem)} ج</span>`:'<span style="color:var(--g);font-size:var(--fs-xs);font-weight:var(--fw-extra);flex-shrink:0;margin-right:8px">✓ محصّل</span>'}
       </div>
     </div>`;
   }
@@ -503,7 +502,7 @@ function renderReadyForDelivery(){
     const wa_phone=phone.startsWith('0')?'2'+phone:phone.startsWith('20')?phone:'20'+phone;
     const prods=(o.products||[]).map(p=>p.name+(p.qty>1?` ×${p.qty}`:'')).join(' + ')||o.product||'—';
     const waMsg=encodeURIComponent(isCollect
-      ?`أهلاً ${o.clientName||''}،\nأوردر ${o.orderId||o._id.slice(-6)} وصل وتم تسليمه ✅\nالمبلغ المتبقي: ${fn(rem)} ج\nبرجاء استكمال السداد. شكراً 🙏`
+      ?`أهلاً ${o.clientName||''}،\nأوردر ${o.orderId||o._id.slice(-6)} وصل وتم تسليمه ✅\nالمبلغ المتبقي: ${fmtNum(rem)} ج\nبرجاء استكمال السداد. شكراً 🙏`
       :`أهلاً ${o.clientName||''}،\nأوردر ${o.orderId||o._id.slice(-6)} (${prods}) جاهز للشحن 📦\nبرجاء تأكيد العنوان والوقت المناسب للتسليم.\nشكراً 🙏`);
     const waHref=phone?`https://wa.me/${wa_phone}?text=${waMsg}`:'#';
 
@@ -515,7 +514,7 @@ function renderReadyForDelivery(){
         </div>
         <div style="text-align:left;flex-shrink:0">
           <span class="rd-badge" style="background:${badgeCol}18;color:${badgeCol}">${badgeTxt}</span>
-          ${isCollect?`<div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--r);margin-top:6px">${fn(rem)} ج</div>`:''}
+          ${isCollect?`<div style="font-size:var(--fs-lg);font-weight:var(--fw-heavy);color:var(--r);margin-top:6px">${fmtNum(rem)} ج</div>`:''}
         </div>
       </div>
       <div class="rd-prods">${prods}</div>
@@ -587,7 +586,6 @@ function renderRequests(){
   if(!portalReqs.length){sec.style.display='none';list.style.display='none';return;}
   sec.style.display='flex';list.style.display='block';
   if(cnt)cnt.textContent=portalReqs.length+' بانتظار التحويل';
-  const esc=s=>(s||'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   list.innerHTML=portalReqs.map(r=>{
     const meta=[r.product&&esc(r.product),r.qty&&('كمية '+esc(r.qty))].filter(Boolean).join(' · ');
     const phone=esc(maskPh(r.clientPhone||''));
@@ -682,7 +680,7 @@ function doSearch(qRaw){
         <div class="cs-search-circle" style="background:${stageCol}">${(o.clientName||'?')[0].toUpperCase()}</div>
         <div class="cs-search-body">
           <div class="cs-search-name">${o.clientName||'—'} <span style="color:var(--dim2);font-size:var(--fs-xs);font-weight:var(--fw-semi)">#${o.orderId||o._id.slice(-6)}</span></div>
-          <div class="cs-search-meta">${prods}${rem>0?' · باقي '+fn(rem)+' ج':''}</div>
+          <div class="cs-search-meta">${prods}${rem>0?' · باقي '+fmtNum(rem)+' ج':''}</div>
         </div>
         <span class="cs-search-tag" style="background:${stageCol}18;color:${stageCol}">${stageLbl}</span>
       </a>`;
@@ -749,7 +747,7 @@ window.switchTab=function(tab,btn){
 function buildWalletSelect(){
   const sel=document.getElementById('pay-wallet');if(!sel)return;
   sel.innerHTML='<option value="">— اختر المحفظة —</option>'+
-    wallets.map(w=>`<option value="${w._id}">${w.name} · ${fn(w.balance)} ج</option>`).join('');
+    wallets.map(w=>`<option value="${w._id}">${w.name} · ${fmtNum(w.balance)} ج</option>`).join('');
 }
 
 window.openPaySheet=function(orderId,clientName,orderRef){
@@ -787,7 +785,7 @@ window.savePayment=async function(){
   try{
     const r=await orderActions.recordPayment({db,orderId:payOrderId,amount,walletId,walletName:wallet?.name||'',role:'customer_service',userId:uid,userName,source:'customer',note:note||`تحصيل — ${payOrderRef?.clientName||''}`});
     if(!r.ok){toast('❌ '+(r.errors||[]).join(' · '),'err');return;}
-    toast(`✅ تم تسجيل ${fn(amount)} ج`,'ok');
+    toast(`✅ تم تسجيل ${fmtNum(amount)} ج`,'ok');
     document.getElementById('pay-ov').classList.remove('open');
     payOrderId=null;
   }catch(e){

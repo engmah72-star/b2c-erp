@@ -59,7 +59,7 @@ window.FinanceCore = {
       acc.paid       += this.getPaid(o);
       acc.remaining  += this.getRemaining(o);
       acc.dueByCo    += this.getDueByCo(o);
-      acc.costs      += (o.costItems || []).reduce((s, c) => s + (parseFloat(c.total) || 0), 0);
+      acc.costs      += (o.costItems || []).reduce((s, c) => s + (c.status !== 'voided' ? (parseFloat(c.total) || 0) : 0), 0);
       return acc;
     }, { salePrice: 0, paid: 0, remaining: 0, dueByCo: 0, costs: 0 });
   },
@@ -95,6 +95,41 @@ window.FinanceCore = {
   // ══ تنسيق الأرقام ══
   format(n) {
     return (parseFloat(n) || 0).toLocaleString('ar-EG');
+  },
+
+  // ══ بنود تكلفة منتج واحد (reverse lookup) ══
+  getProductCosts(order, productIdx) {
+    const items = order?.costItems || [];
+    const prods = order?.products || [];
+    if (!items.length) return [];
+    const prod = prods[productIdx];
+    const pid = prod?.productId || null;
+    return items.filter(ci => {
+      if (!ci || ci.status === 'voided') return false;
+      if (pid && ci.productId === pid) return true;
+      if (ci.productId && pid && ci.productId !== pid) return false;
+      return ci.prodIdx === productIdx || ci.prodIdx == null;
+    });
+  },
+
+  // ══ ملخص تكلفة منتج واحد ══
+  getProductCostSummary(order, productIdx) {
+    const stored = order?.costSummaries?.[String(productIdx)];
+    if (stored) return { totalCost: stored.totalCost || 0, itemCount: stored.itemCount || 0, costs: this.getProductCosts(order, productIdx) };
+    const costs = this.getProductCosts(order, productIdx);
+    const totalCost = costs.reduce((s, c) => s + (parseFloat(c.total) || 0), 0);
+    return { totalCost, itemCount: costs.length, costs };
+  },
+
+  // ══ ملخص تكاليف كل المنتجات ══
+  getAllProductCostSummaries(order) {
+    const prods = order?.products || [];
+    return prods.map((p, i) => ({
+      productId: p.productId || null,
+      name: p.name || '',
+      index: i,
+      ...this.getProductCostSummary(order, i),
+    }));
   },
 
   // ══ التحقق من صحة الدفعة ══
