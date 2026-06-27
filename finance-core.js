@@ -114,6 +114,8 @@ window.FinanceCore = {
 
   // ══ ملخص تكلفة منتج واحد ══
   getProductCostSummary(order, productIdx) {
+    const stored = order?.costSummaries?.[String(productIdx)];
+    if (stored) return { totalCost: stored.totalCost || 0, itemCount: stored.itemCount || 0, costs: this.getProductCosts(order, productIdx) };
     const costs = this.getProductCosts(order, productIdx);
     const totalCost = costs.reduce((s, c) => s + (parseFloat(c.total) || 0), 0);
     return { totalCost, itemCount: costs.length, costs };

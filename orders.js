@@ -571,6 +571,26 @@ function _genProductId() {
 }
 
 /**
+ * buildCostSummaries — projection: ملخص تكاليف كل منتج من costItems.
+ * يُخزَّن على الأوردر بعد كل تغيير في بنود التكلفة.
+ * @returns {{ [prodIdx: string]: { totalCost: number, itemCount: number, productId: string } }}
+ */
+export function buildCostSummaries(costItems, products) {
+  const out = {};
+  if (!Array.isArray(costItems) || !Array.isArray(products)) return out;
+  for (const ci of costItems) {
+    if (!ci || ci.status === 'voided') continue;
+    const m = matchCostItemProduct(ci, products);
+    if (m.index < 0) continue;
+    const key = String(m.index);
+    if (!out[key]) out[key] = { totalCost: 0, itemCount: 0, productId: m.product?.productId || '' };
+    out[key].totalCost += parseFloat(ci.total) || 0;
+    out[key].itemCount += 1;
+  }
+  return out;
+}
+
+/**
  * resolveCostItemCategory — T3: auto-derive category/subcategory from master categories.
  * T5: also returns defaultUnit, expectedPriceRange, keywords from enriched master cats.
  * @param {string} type — cost item type (e.g. 'طباعة ديجيتال')
