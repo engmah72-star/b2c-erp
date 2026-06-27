@@ -530,7 +530,7 @@
 
 <script type="module">
 import { app, auth, db } from "./core/firebase-init.js";
-import { setText, gv } from "./core/dom-utils.js";
+import { setText, gv, fmtNum } from "./core/dom-utils.js";
 
 const SBPAGES=[
   {file:'clients.html',label:'العملاء',ico:'👤',perm:'clients'},
@@ -564,6 +564,7 @@ import { getTmplMatches } from "./core/cost-template-matching.js";
 import { getFixedPrices, lookupFixedPrice, saveFixedPrice, deleteFixedPrice } from "./core/fixed-prices-actions.js";
 import { getExpectedCostTypes } from './core/product-taxonomy.js';
 import { dataCache, cachedQuery } from './core/data-cache.js';
+import { toast } from './shared.js';
 
 let orders=[],suppliers=[],wallets=[],masterCategories=[],currentUser=null,userName='',currentRole='';
 let activeId=null,currentStageFilters=new Set(),currentSort='priority',editCostIdx=-1;
@@ -577,11 +578,9 @@ let _selRefQty=null; // lock: first selected order's qty (others must match)
 let _libCache={},_libLoading=false;
 const LAST_COST_KEY=()=>`b2c_last_cost_${currentUser?.uid||'anon'}`;
 let lastCostMem=null;
-const fn=n=>(parseFloat(n)||0).toLocaleString('ar-EG');
 const sv=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
 const _isActiveCostItem=c=>!c.status||c.status==='active'||c.status==='adjusted';
 
-function toast(msg,t=''){const c=document.getElementById('toasts');if(!c)return;const el=document.createElement('div');el.className='toast '+(t==='ok'?'toast-ok':t==='err'?'toast-err':'');el.textContent=msg;c.appendChild(el);setTimeout(()=>el.remove(),3200);}
 
 window.toggleNav=()=>{document.querySelector('.sidenav').classList.toggle('mob-open');document.getElementById('nav-ov').classList.toggle('show');};
 window.closeNav=()=>{document.querySelector('.sidenav')?.classList.remove('mob-open');document.getElementById('nav-ov')?.classList.remove('show');};
@@ -794,7 +793,7 @@ function renderList(){
     const totalCost=prodCostItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     const itemCount=prodCostItems.length;
     const costBadge=itemCount>0
-      ?`<span class="q-cost-badge">💰 ${fn(totalCost)} ج · ${itemCount} بند</span>`
+      ?`<span class="q-cost-badge">💰 ${fmtNum(totalCost)} ج · ${itemCount} بند</span>`
       :`<span class="q-cost-badge q-cost-empty">⚠️ لا توجد بنود</span>`;
     const compBar=comp.expected.length?`<div class="q-comp-bar"><div class="q-comp-fill" style="width:${comp.pct}%" title="${comp.pct}% مكتمل"></div></div><div class="q-comp-lbl">${comp.pct}% (${comp.done.length}/${comp.expected.length})</div>`:'';
     const marginPill=m.marginPct!==null?`<span class="profit-margin ${m.cls}" style="font-size:var(--fs-xs);padding:2px 7px">${m.estimated?'~':''}${m.marginPct}%</span>`:'';
@@ -933,9 +932,9 @@ window.openOrderBulkApply=function(){
       html+=`<div class="obm-tmpl-card">
         <div class="obm-tmpl-info">
           <span class="obm-tmpl-name">${t.name}${t.qty?` ×${t.qty}`:''}</span>
-          <span class="obm-tmpl-total">${fn(total)} ج</span>
+          <span class="obm-tmpl-total">${fmtNum(total)} ج</span>
         </div>
-        <div class="obm-tmpl-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+        <div class="obm-tmpl-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fmtNum(c.amount)} ج</strong></span>`).join('')}</div>
         <button type="button" class="btn btn-r obm-tmpl-apply-btn" onclick="applyOrderBulkTemplate('${t.id}')">⚡ تطبيق على ${n} أوردر</button>
       </div>`;
     });
@@ -1141,7 +1140,7 @@ function _populateWorkspace(o){
   const pill=document.getElementById('restore-pill');
   const meta2=document.getElementById('restore-pill-meta');
   if(pill){
-    if(last&&last.supplierId){pill.hidden=false;meta2.textContent=`${last.supplierName||'—'} · ${fn(last.total||0)} ج`;}
+    if(last&&last.supplierId){pill.hidden=false;meta2.textContent=`${last.supplierName||'—'} · ${fmtNum(last.total||0)} ج`;}
     else pill.hidden=true;
   }
 
@@ -1191,7 +1190,7 @@ function _renderCompleteness(o){
     <div class="ws-comp-wrap">
       ${archiveBanner}
       <div class="ws-comp-header">
-        <span class="ws-comp-title">${hasItems?`💰 ${fn(totalCost)} ج · ${allItems.length} بند`:'لم تُسجَّل بنود بعد'}</span>
+        <span class="ws-comp-title">${hasItems?`💰 ${fmtNum(totalCost)} ج · ${allItems.length} بند`:'لم تُسجَّل بنود بعد'}</span>
         ${prodStat}
       </div>
       ${recordedTypes.length?`<div class="ws-comp-chips">${recordedTypes.map(t=>`<span class="ws-chip ws-chip-done">✓ ${t}</span>`).join('')}</div>`:''}
@@ -1280,12 +1279,12 @@ function _renderLibRow(type,items){
         const trend=_trendBadge(item._trend);
         const cheapTag=item._id===cheapestId?'<span class="lib-cheapest">✦ الأرخص</span>':'';
         const minMax=item.minUnitCost!=null&&item.maxUnitCost!=null&&item.minUnitCost!==item.maxUnitCost
-          ?`<div class="lib-card-range">${fn(item.minUnitCost)} — ${fn(item.maxUnitCost)} ج</div>`:'';
+          ?`<div class="lib-card-range">${fmtNum(item.minUnitCost)} — ${fmtNum(item.maxUnitCost)} ج</div>`:'';
         return`<div class="lib-card${item._id===cheapestId?' lib-card-best':''}" onclick="applyLibItem('${item._id||''}','${(item.supplierId||'').replace(/'/g,'&#39;')}','${(item.supplierName||'').replace(/'/g,'&#39;')}',${item.lastTotal||item.avgUnitCost||0})">
           <div class="lib-card-sup">🏭 ${item.supplierName||'—'} ${cheapTag}</div>
-          <div class="lib-card-price">${fn(item.lastTotal||item.avgUnitCost||0)} ج ${trend}</div>
+          <div class="lib-card-price">${fmtNum(item.lastTotal||item.avgUnitCost||0)} ج ${trend}</div>
           ${minMax}
-          <div class="lib-card-meta">× ${(item.usageCount||0)} · متوسط ${fn(item.avgUnitCost||0)} ج</div>
+          <div class="lib-card-meta">× ${(item.usageCount||0)} · متوسط ${fmtNum(item.avgUnitCost||0)} ج</div>
         </div>`;
       }).join('')}
     </div>`;
@@ -1299,7 +1298,7 @@ window.applyLibItem=function(libId,supplierId,supplierName,avgCost){
   if(avgCost){sv('ac-total',Math.round(avgCost));}
   onCostInputChange();
   document.getElementById('ac-total')?.focus();
-  toast(`✅ تم تطبيق سعر ${supplierName||'المورد'}: ${fn(avgCost)} ج`,'ok');
+  toast(`✅ تم تطبيق سعر ${supplierName||'المورد'}: ${fmtNum(avgCost)} ج`,'ok');
 };
 
 /* ═══════════════════════════════════════════════════
@@ -1329,14 +1328,14 @@ function renderSmartKpis(){
   const startWeek=Date.now()-7*864e5;
   const todayItems=items.filter(c=>userBy(c)&&c._ts>=startDay.getTime());
   const weekItems=items.filter(c=>userBy(c)&&c._ts>=startWeek);
-  setText('sk-today',`${fn(todayItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0))} ج`);
+  setText('sk-today',`${fmtNum(todayItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0))} ج`);
   setText('sk-today-lbl',`تكاليفي اليوم · ${todayItems.length} بند`);
-  setText('sk-week',`${fn(weekItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0))} ج`);
+  setText('sk-week',`${fmtNum(weekItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0))} ج`);
   setText('sk-week-lbl',`آخر 7 أيام · ${weekItems.length} بند`);
   const supSums={};
   items.filter(c=>c._ts>=startWeek&&c.supplierId).forEach(c=>{const k=c.supplierId;supSums[k]=supSums[k]||{name:c.supplierName,sum:0};supSums[k].sum+=parseFloat(c.total)||0;});
   const top=Object.values(supSums).sort((a,b)=>b.sum-a.sum)[0];
-  setText('sk-top-sup',top?`${top.name||'—'} · ${fn(top.sum)}ج`:'—');
+  setText('sk-top-sup',top?`${top.name||'—'} · ${fmtNum(top.sum)}ج`:'—');
   renderProdStrip(todayItems,weekItems);
 }
 
@@ -1673,7 +1672,7 @@ function renderDrawerProfit(o){
   const m=calcMargin(o);
   if(!m.sale){el.innerHTML='';return;}
   const pill=m.marginPct===null?`<span class="profit-margin margin-na">—</span>`:`<span class="profit-margin ${m.cls}">${m.estimated?'~':''}${m.marginPct}%</span>`;
-  el.innerHTML=`<div>السعر <strong>${fn(m.sale)} ج</strong></div><div>التكلفة ${m.estimated?'المتوقعة':'الفعلية'} <strong>${fn(Math.round(m.cost))} ج</strong></div><div>الهامش</div>${pill}`;
+  el.innerHTML=`<div>السعر <strong>${fmtNum(m.sale)} ج</strong></div><div>التكلفة ${m.estimated?'المتوقعة':'الفعلية'} <strong>${fmtNum(Math.round(m.cost))} ج</strong></div><div>الهامش</div>${pill}`;
 }
 
 function renderItemsBox(o){
@@ -1683,12 +1682,12 @@ function renderItemsBox(o){
   const items=allCi.map((c,gi)=>({...c,_gi:gi})).filter(_isActiveCostItem);
   if(!items.length){box.innerHTML=`<div class="items-box-empty">📋 لا توجد بنود مسجلة — أضف أول بند أدناه</div>`;return;}
   const total=items.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-  box.innerHTML=`<div class="items-box-title">📋 بنود مسجلة (${items.length}) · إجمالي: <strong style="color:var(--snow)">${fn(total)} ج</strong></div>`
+  box.innerHTML=`<div class="items-box-title">📋 بنود مسجلة (${items.length}) · إجمالي: <strong style="color:var(--snow)">${fmtNum(total)} ج</strong></div>`
     +items.map(c=>{
       const supLbl=c.supplierName?`🏭 ${c.supplierName}`:'⚠️ بدون مورد';
       const paid=c.walletId?'<span class="item-paid">💼 مدفوع</span>':'';
       return`<div class="item-card${c._gi===editCostIdx?' editing':''}">
-        <div class="item-info"><div>${paid}<strong>${c.type||'—'} · ${fn(c.total||0)} ج</strong></div><div>${supLbl}${c.note?' · 📝 '+c.note:''}</div></div>
+        <div class="item-info"><div>${paid}<strong>${c.type||'—'} · ${fmtNum(c.total||0)} ج</strong></div><div>${supLbl}${c.note?' · 📝 '+c.note:''}</div></div>
         <div class="item-actions">
           <button type="button" class="item-act-btn edit" onclick="editCost(${c._gi})">✏️</button>
           <button type="button" class="item-act-btn danger" onclick="deleteCost(${c._gi})">🗑️</button>
@@ -1733,7 +1732,7 @@ function _renderProductsCostView(o){
           ${p.supplierName?`<span class="prod-tag prod-tag-sup">🏭 ${p.supplierName}</span>`:'<span class="prod-no-sup">⚠️ بدون مورد</span>'}
           ${isDone?`<span class="prod-tag prod-tag-done">مكتمل${doneInfo.byName?' — '+doneInfo.byName:''}</span>`:''}
         </div>
-        <span class="prod-cc-total">${pItems.length?fn(pTotal)+' ج':'—'}</span>
+        <span class="prod-cc-total">${pItems.length?fmtNum(pTotal)+' ج':'—'}</span>
       </div>
       ${p.notes?`<div class="prod-block-notes">📝 ${p.notes}</div>`:''}
       ${p.designImageUrl?`<img src="${p.designImageUrl}" class="design-img" loading="lazy" onclick="event.stopPropagation();window.open('${p.designImageUrl}','_blank')" alt="">`:''}
@@ -1741,7 +1740,7 @@ function _renderProductsCostView(o){
         <div class="prod-ci-row${c._gi===editCostIdx?' editing':''}">
           <span class="pci-type">${c.type||'—'}</span>
           <span class="pci-sup">${c.supplierName||'⚠️'}</span>
-          <strong class="pci-amt">${fn(c.total||0)} ج</strong>
+          <strong class="pci-amt">${fmtNum(c.total||0)} ج</strong>
           ${c.walletId?'<span class="item-paid">💼</span>':''}
           <div class="pci-acts">
             <button type="button" class="item-act-btn edit" onclick="editCost(${c._gi})"${isDone?' disabled':''}>✏️</button>
@@ -1760,12 +1759,12 @@ function _renderProductsCostView(o){
   if(genItems.length){
     const genTotal=genItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
     html+=`<div class="prod-cost-card prod-cc-general">
-      <div class="prod-cc-hdr"><span class="prod-block-name">📋 بنود عامة للأوردر</span><span class="prod-cc-total">${fn(genTotal)} ج</span></div>
+      <div class="prod-cc-hdr"><span class="prod-block-name">📋 بنود عامة للأوردر</span><span class="prod-cc-total">${fmtNum(genTotal)} ج</span></div>
       <div class="prod-cost-items">${genItems.map(c=>`
         <div class="prod-ci-row${c._gi===editCostIdx?' editing':''}">
           <span class="pci-type">${c.type||'—'}</span>
           <span class="pci-sup">${c.supplierName||'—'}</span>
-          <strong class="pci-amt">${fn(c.total||0)} ج</strong>
+          <strong class="pci-amt">${fmtNum(c.total||0)} ج</strong>
           ${c.walletId?'<span class="item-paid">💼</span>':''}
           <div class="pci-acts">
             <button type="button" class="item-act-btn edit" onclick="editCost(${c._gi})">✏️</button>
@@ -1826,7 +1825,7 @@ window.pickProductFromSummary=function(idx){addCostForProd(idx);};
 function refreshSupplierSelect(){filterSupsByType('','ac-sup');}
 function refreshWalletSelect(){
   const el=document.getElementById('ac-wallet');if(!el)return;
-  el.innerHTML='<option value="">— تسجيل فقط (بدون خصم) —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} · ${fn(w.balance)} ج</option>`).join('');
+  el.innerHTML='<option value="">— تسجيل فقط (بدون خصم) —</option>'+wallets.map(w=>`<option value="${w._id}">${w.name} · ${fmtNum(w.balance)} ج</option>`).join('');
 }
 function refreshTypeSelect(){
   const el=document.getElementById('ac-type');if(!el)return;
@@ -1889,10 +1888,10 @@ window.calcPaperCost=function(fromTotal){
   const res=document.getElementById('paper-result');
   if(fromTotal&&total>0&&sheets>0){
     const pp=total/sheets;sv('ac-pprice',pp.toFixed(2));
-    if(res)res.textContent=`${fn(total)} ج ÷ ${sheets} فرخة = ${fn(pp)} ج/فرخة`;
+    if(res)res.textContent=`${fmtNum(total)} ج ÷ ${sheets} فرخة = ${fmtNum(pp)} ج/فرخة`;
   }else if(sheets>0&&price>0){
     const t=sheets*price;sv('ac-total',t.toFixed(2));
-    if(res)res.textContent=`${sheets} فرخة × ${fn(price)} ج = ${fn(t)} ج`;
+    if(res)res.textContent=`${sheets} فرخة × ${fmtNum(price)} ج = ${fmtNum(t)} ج`;
     onCostInputChange();
   }else if(res)res.textContent='↕️ اكتب الأفرخ × السعر أو الإجمالي مباشرة';
 };
@@ -1915,7 +1914,7 @@ window.onCostInputChange=function(){
   if(qa){
     if(stats){
       const opts=[Math.round(stats.median),Math.round(stats.avg)].filter((v,i,a)=>v&&a.indexOf(v)===i);
-      qa.innerHTML=opts.map(v=>`<button type="button" class="quick-amount" onclick="document.getElementById('ac-total').value=${v};onCostInputChange()">${fn(v)} ج</button>`).join('');
+      qa.innerHTML=opts.map(v=>`<button type="button" class="quick-amount" onclick="document.getElementById('ac-total').value=${v};onCostInputChange()">${fmtNum(v)} ج</button>`).join('');
     }else qa.innerHTML='';
   }
   if(!hintEl)return;
@@ -1926,11 +1925,11 @@ window.onCostInputChange=function(){
     bodyEl.innerHTML='لا يوجد سجلّ تكلفة سابق لهذا المورد. أول بند ستضيفه.';return;
   }
   hintEl.classList.add('show');
-  let body=`متوسط هذا المورد: <strong>${fn(stats.median)} ج</strong> <span class="ai-hint-stat">(${stats.count} بند · ${fn(stats.min)}–${fn(stats.max)} ج)</span>`;
+  let body=`متوسط هذا المورد: <strong>${fmtNum(stats.median)} ج</strong> <span class="ai-hint-stat">(${stats.count} بند · ${fmtNum(stats.min)}–${fmtNum(stats.max)} ج)</span>`;
   if(total>0){
     const dev=((total-stats.median)/stats.median)*100;
-    if(Math.abs(dev)>=100){hintEl.classList.add('err');icoEl.textContent='🚨';titleEl.textContent='تكلفة غير معتادة';body=`${fn(total)} ج ${dev>0?'أعلى':'أقل'} بـ <strong>${Math.abs(Math.round(dev))}%</strong> من المعتاد.<br>${body}`;}
-    else if(Math.abs(dev)>=50){hintEl.classList.add('warn');icoEl.textContent='⚠️';titleEl.textContent='انتباه';body=`${fn(total)} ج ${dev>0?'أعلى':'أقل'} بـ <strong>${Math.abs(Math.round(dev))}%</strong> من المتوسط.<br>${body}`;}
+    if(Math.abs(dev)>=100){hintEl.classList.add('err');icoEl.textContent='🚨';titleEl.textContent='تكلفة غير معتادة';body=`${fmtNum(total)} ج ${dev>0?'أعلى':'أقل'} بـ <strong>${Math.abs(Math.round(dev))}%</strong> من المعتاد.<br>${body}`;}
+    else if(Math.abs(dev)>=50){hintEl.classList.add('warn');icoEl.textContent='⚠️';titleEl.textContent='انتباه';body=`${fmtNum(total)} ج ${dev>0?'أعلى':'أقل'} بـ <strong>${Math.abs(Math.round(dev))}%</strong> من المتوسط.<br>${body}`;}
     else{icoEl.textContent='✅';titleEl.textContent='مطابق للسعر المعتاد';}
   }else{icoEl.textContent='💡';titleEl.textContent='اقتراح ذكي';}
   bodyEl.innerHTML=body;
@@ -1946,7 +1945,7 @@ window.onCostInputChange=function(){
       const dup=(_o?.costItems||[]).find(c=>
         c.type===typeVal&&(prodIdxVal<0?(c.prodIdx==null||c.prodIdx<0):c.prodIdx===prodIdxVal)
       );
-      if(dup){dupWarn.hidden=false;dupWarn.textContent=`⚠️ "${typeVal}" مسجّل بالفعل بمبلغ ${fn(dup.total)} ج — هل تريد تعديله بدلاً من الإضافة؟`;}
+      if(dup){dupWarn.hidden=false;dupWarn.textContent=`⚠️ "${typeVal}" مسجّل بالفعل بمبلغ ${fmtNum(dup.total)} ج — هل تريد تعديله بدلاً من الإضافة؟`;}
       else dupWarn.hidden=true;
     }else dupWarn.hidden=true;
   }
@@ -2016,7 +2015,7 @@ window.deleteCost=async function(idx){
   const o=orders.find(x=>x._id===activeId);if(!o)return;
   const item=(o.costItems||[])[idx];if(!item)return;
   if(item.walletId)return toast('⚠️ هذا البند مدفوع من محفظة — تواصل مع الأدمن لحذف البنود المدفوعة','err');
-  if(!confirm(`حذف "${item.type} · ${fn(item.total||0)} ج"؟`))return;
+  if(!confirm(`حذف "${item.type} · ${fmtNum(item.total||0)} ج"؟`))return;
   const r=await orderActions.removeUnpaidCostItem({db,orderId:activeId,itemIndex:idx,userId:currentUser?.uid||'',userName});
   if(!r.ok)return toast('❌ '+(r.errors||[]).join(' · '),'err');
   toast('🗑️ تم الحذف','ok');
@@ -2059,7 +2058,7 @@ window.saveCost=async function(){
   }
   if(walletId&&!isEdit){
     const w=wallets.find(x=>x._id===walletId);
-    if(w&&(parseFloat(w.balance)||0)<total)return toast(`⚠️ رصيد ${w.name} غير كافٍ (${fn(w.balance)} ج)`,'err');
+    if(w&&(parseFloat(w.balance)||0)<total)return toast(`⚠️ رصيد ${w.name} غير كافٍ (${fmtNum(w.balance)} ج)`,'err');
   }
 
   // Duplicate guard: warn if same type already recorded for this product
@@ -2068,7 +2067,7 @@ window.saveCost=async function(){
       c.type===type&&(prodIdx<0?(c.prodIdx==null||c.prodIdx<0):c.prodIdx===prodIdx)
     );
     if(existing){
-      const confirmed=confirm(`⚠️ "${type}" موجود بالفعل لهذا المنتج (${fn(existing.total)} ج).\n\nاستمر فقط لو محتاج بندين مختلفين لنفس النوع.\nلو تريد تعديل البند الموجود اضغط إلغاء وعدّله.`);
+      const confirmed=confirm(`⚠️ "${type}" موجود بالفعل لهذا المنتج (${fmtNum(existing.total)} ج).\n\nاستمر فقط لو محتاج بندين مختلفين لنفس النوع.\nلو تريد تعديل البند الموجود اضغط إلغاء وعدّله.`);
       if(!confirmed)return;
     }
   }
@@ -2108,7 +2107,7 @@ window.saveCost=async function(){
       toast('✅ تم التعديل','ok');
     }else{
       const supTotal=(o.costItems||[]).filter(c=>c.supplierId===supplierId).reduce((s,c)=>s+(parseFloat(c.total)||0),0)+total;
-      toast(`✅ ${type} · مستحق لـ ${supplierName}: ${fn(supTotal)} ج`+(walletId?' · خُصم من المحفظة':''),'ok');
+      toast(`✅ ${type} · مستحق لـ ${supplierName}: ${fmtNum(supTotal)} ج`+(walletId?' · خُصم من المحفظة':''),'ok');
     }
 
     // Suggest applying to similar products (same baseName, same cost type missing)
@@ -2255,8 +2254,8 @@ window.renderRegister=function(){
   const mCol=netMarginPct===null?'var(--dim2)':netMarginPct>=35?'var(--g)':netMarginPct>=20?'var(--y)':'var(--r)';
   const sumEl=document.getElementById('reg-summary');
   if(sumEl)sumEl.innerHTML=`
-    <div class="reg-kpi"><div class="reg-kpi-val">${fn(total)} ج</div><div class="reg-kpi-lbl">إجمالي التكاليف</div></div>
-    <div class="reg-kpi"><div class="reg-kpi-val" style="color:var(--b)">${totalRevenue?fn(totalRevenue)+' ج':'—'}</div><div class="reg-kpi-lbl">إجمالي المبيعات</div></div>
+    <div class="reg-kpi"><div class="reg-kpi-val">${fmtNum(total)} ج</div><div class="reg-kpi-lbl">إجمالي التكاليف</div></div>
+    <div class="reg-kpi"><div class="reg-kpi-val" style="color:var(--b)">${totalRevenue?fmtNum(totalRevenue)+' ج':'—'}</div><div class="reg-kpi-lbl">إجمالي المبيعات</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val" style="color:${mCol}">${netMarginPct!==null?netMarginPct+'%':'—'}</div><div class="reg-kpi-lbl">صافي الهامش</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val">${items.length}</div><div class="reg-kpi-lbl">عدد البنود</div></div>
     <div class="reg-kpi"><div class="reg-kpi-val">${uniqueOrds}</div><div class="reg-kpi-lbl">أوردر</div></div>
@@ -2283,7 +2282,7 @@ window.renderRegister=function(){
   let html='';
   for(const grpItems of Object.values(grouped)){
     const grpTotal=grpItems.reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-    html+=`<tr class="reg-group-header"><td colspan="6">${getLabel(grpItems)} <span class="reg-grp-count">${grpItems.length} بند</span></td><td class="reg-amount">${fn(grpTotal)} ج</td><td colspan="4"></td></tr>`;
+    html+=`<tr class="reg-group-header"><td colspan="6">${getLabel(grpItems)} <span class="reg-grp-count">${grpItems.length} بند</span></td><td class="reg-amount">${fmtNum(grpTotal)} ج</td><td colspan="4"></td></tr>`;
     html+=grpItems.map(c=>_regRow(c,SM)).join('');
   }
   tbody.innerHTML=html;
@@ -2303,7 +2302,7 @@ function _regRow(c,SM){
     <td class="reg-num">${c._qty}</td>
     <td>${paid}<span class="reg-type-chip">${c.type||'—'}</span></td>
     <td>${c.supplierName?`🏭 ${c.supplierName}`:'<span class="reg-no-sup">⚠️ بدون مورد</span>'}</td>
-    <td class="reg-amount">${fn(c.total||0)} ج</td>
+    <td class="reg-amount">${fmtNum(c.total||0)} ج</td>
     <td class="reg-margin">${marginCell}</td>
     <td class="reg-stage">${SM[c._stage]||''} ${c._stage}</td>
     <td class="reg-date">${dateStr}</td>
@@ -2378,7 +2377,7 @@ function _renderLibProfileSuggest(o){
   const mkBtn=(b,isAddon=false)=>`<button type="button" class="ws-lcb${isAddon?' ws-lcb-addon':''}" onclick="applyOneItem('${b.type.replace(/'/g,"&#39;")}','${(b.supplierId||'').replace(/'/g,"&#39;")}','${(b.supplierName||'').replace(/'/g,"&#39;")}',${b.lastPrice||0},${matchProdIdx})">
     <span class="ws-lcb-type">${b.type}</span>
     ${b.supplierName?`<span class="ws-lcb-sup">🏭 ${b.supplierName}</span>`:''}
-    <span class="ws-lcb-price">${b.lastPrice?fn(b.lastPrice)+' ج':'—'}</span>
+    <span class="ws-lcb-price">${b.lastPrice?fmtNum(b.lastPrice)+' ج':'—'}</span>
   </button>`;
   const coreBtns=p.coreBundle.slice(0,5).map(b=>mkBtn(b,false)).join('');
   const addonBtns=p.addons.length?`<div class="ws-lpb-addons-row">+ ${p.addons.slice(0,3).map(b=>mkBtn(b,true)).join('')}</div>`:'';
@@ -2386,7 +2385,7 @@ function _renderLibProfileSuggest(o){
     <div class="ws-lpb-hdr">
       <span class="ws-lpb-label">📚 قالب من المكتبة</span>
       <div class="ws-lpb-name">${p.baseName||p.displayName}${p.qty?` <span class="lib-pc-qty">${p.qty}</span>`:''}</div>
-      <div class="ws-lpb-meta">${p.usageCount} أوردر سابق · ~${fn(p.totalEstimate)} ج</div>
+      <div class="ws-lpb-meta">${p.usageCount} أوردر سابق · ~${fmtNum(p.totalEstimate)} ج</div>
     </div>
     <div class="ws-lcb-row">${coreBtns}</div>
     ${addonBtns}
@@ -2507,7 +2506,7 @@ function _renderLibStats(){
     <div class="lib-stat"><div class="lib-stat-val">${_libProfiles.length}</div><div class="lib-stat-lbl">قالب مكتشف</div></div>
     <div class="lib-stat"><div class="lib-stat-val">${uProds}</div><div class="lib-stat-lbl">منتج فريد</div></div>
     <div class="lib-stat"><div class="lib-stat-val">${uSups}</div><div class="lib-stat-lbl">مورد نشط</div></div>
-    <div class="lib-stat"><div class="lib-stat-val">${fn(totalCost)} ج</div><div class="lib-stat-lbl">إجمالي التكاليف</div></div>`;
+    <div class="lib-stat"><div class="lib-stat-val">${fmtNum(totalCost)} ج</div><div class="lib-stat-lbl">إجمالي التكاليف</div></div>`;
 }
 
 function _dAgo(ts){
@@ -2536,7 +2535,7 @@ function _renderLibProfiles(){
       ${specTags?`<div class="lib-pc-specs">${specTags}</div>`:''}
       <div class="lib-pc-meta">${p.coreBundle.length} بنود أساسية · ${p.usageCount} أوردر</div>
       <div class="lib-pc-last">${_dAgo(p.lastTs)}</div>
-      <div class="lib-pc-total">~${fn(p.totalEstimate)} ج</div>
+      <div class="lib-pc-total">~${fmtNum(p.totalEstimate)} ج</div>
       <div class="lib-pc-badge">${[...new Set(p.coreBundle.map(b=>b.type))].slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
       ${addonsHtml}
     </div>`;
@@ -2564,7 +2563,7 @@ window.openProfileDetail=function(key){
         rows.map((b,idx)=>`<tr${isAddon?' class="lib-pd-addon-row"':idx>0?' class="lib-pd-sub-row"':''}>
           <td>${idx===0?`<span class="reg-type-chip">${type}</span>`:'<span class="lib-pd-sub-ico">↳</span>'}</td>
           <td>${b.supplierName?`🏭 ${b.supplierName}`:'—'}</td>
-          <td class="reg-num lib-pd-price">${b.lastPrice?fn(b.lastPrice)+' ج':'—'}<span class="lib-pd-date">${b.lastTs?' · '+_dAgo(b.lastTs):''}</span></td>
+          <td class="reg-num lib-pd-price">${b.lastPrice?fmtNum(b.lastPrice)+' ج':'—'}<span class="lib-pd-date">${b.lastTs?' · '+_dAgo(b.lastTs):''}</span></td>
           <td class="reg-num">${b.useCount}×</td>
           <td style="display:flex;gap:4px">
             <button type="button" class="lib-use-btn" onclick="applyOneItem('${b.type.replace(/'/g,'&#39;')}','${(b.supplierId||'').replace(/'/g,'&#39;')}','${(b.supplierName||'').replace(/'/g,'&#39;')}',${b.lastPrice||0})">استخدم</button>
@@ -2581,7 +2580,7 @@ window.openProfileDetail=function(key){
     tbody.innerHTML=html;
   }
   const total=p.coreBundle.reduce((s,b)=>s+(b.lastPrice||0),0);
-  setText('lib-pd-total',`${fn(total)} ج`);
+  setText('lib-pd-total',`${fmtNum(total)} ج`);
   const applyBtn=document.getElementById('lib-pd-apply-all');
   if(applyBtn){applyBtn.disabled=!activeId;if(!activeId)applyBtn.title='افتح أوردر من تاب قائمة الأوردرات أولاً';}
   el.hidden=false;el.scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -2645,7 +2644,7 @@ window.applyOneItem=function(type,supplierId,supplierName,amount,prodIdx=-1){
       if(amount)sv('ac-total',Math.round(amount));
       onCostInputChange();
       document.getElementById('ac-total')?.focus();
-      toast(`✅ تم تعبئة: ${type}${supplierName?' — '+supplierName:''}${amount?' · '+fn(amount)+' ج':''}`, 'ok');
+      toast(`✅ تم تعبئة: ${type}${supplierName?' — '+supplierName:''}${amount?' · '+fmtNum(amount)+' ج':''}`, 'ok');
     },80);
   },80);
 };
@@ -2674,7 +2673,7 @@ function _renderLibSuppliers(){
   el.innerHTML=sups.map(s=>`
     <div class="lib-sup-card" onclick="libSearchByType('${(s.name||'').replace(/'/g,'&#39;')}')">
       <div class="lib-sup-name">🏭 ${s.name||'—'}</div>
-      <div class="lib-sup-meta">${s.count} بند · ${fn(s.total)} ج</div>
+      <div class="lib-sup-meta">${s.count} بند · ${fmtNum(s.total)} ج</div>
       <div class="lib-sup-last">${_dAgo(s.lastTs)}</div>
       <div class="lib-sup-types">${[...s.types].slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
     </div>`).join('');
@@ -2696,7 +2695,7 @@ function _renderLibTypes(){
     return`<div class="lib-type-chip" onclick="libSearchByType('${t.type.replace(/'/g,'&#39;')}')">
       <span class="lib-type-name">${t.type}</span>
       <span class="lib-type-count">${t.count}×</span>
-      ${avg?`<span class="lib-type-avg">~${fn(avg)} ج`:''}
+      ${avg?`<span class="lib-type-avg">~${fmtNum(avg)} ج`:''}
     </div>`;
   }).join('');
 }
@@ -2727,7 +2726,7 @@ function _renderSearchResults(q){
     html+=`<div class="lib-sr-group">
       <div class="lib-sr-type-hdr">
         <span class="reg-type-chip">${type}</span>
-        <span class="lib-sr-stats">${grpItems.length} بند · متوسط ${fn(avg)} ج · (${fn(minP)}–${fn(maxP)} ج)</span>
+        <span class="lib-sr-stats">${grpItems.length} بند · متوسط ${fmtNum(avg)} ج · (${fmtNum(minP)}–${fmtNum(maxP)} ج)</span>
       </div>
       <div class="lib-sr-items">
         ${grpItems.slice(0,10).map(c=>{
@@ -2742,7 +2741,7 @@ function _renderSearchResults(q){
                 <span>· ${dateStr}</span>
               </div>
             </div>
-            <div class="lib-sri-price">${fn(c.total||0)} ج</div>
+            <div class="lib-sri-price">${fmtNum(c.total||0)} ج</div>
             <button type="button" class="lib-use-btn" onclick="applyOneItem('${(c.type||'').replace(/'/g,"&#39;")}','${(c.supplierId||'').replace(/'/g,"&#39;")}','${(c.supplierName||'').replace(/'/g,"&#39;")}',${parseFloat(c.total)||0})">استخدم</button>
           </div>`;
         }).join('')}
@@ -2786,7 +2785,7 @@ function _renderFixedPricesPanel(){
     ${p.size?`<span style="font-size:11px;background:var(--bg1);padding:1px 6px;border-radius:6px;color:var(--y)">📐 ${p.size}</span>`:''}
     ${p.printType?`<span style="font-size:11px;background:var(--bg1);padding:1px 6px;border-radius:6px;color:var(--dim2)">${ptLabel(p.printType)}</span>`:''}
     ${p.supplierName?`<span style="font-size:11px;color:var(--dim2)">🏭 ${p.supplierName}</span>`:''}
-    <strong style="color:var(--g);margin-right:auto">${fn(p.amount)} ج</strong>
+    <strong style="color:var(--g);margin-right:auto">${fmtNum(p.amount)} ج</strong>
     ${p.note?`<span style="font-size:10px;color:var(--dim2);width:100%;margin-top:2px">📝 ${p.note}</span>`:''}
     <button type="button" class="btn btn-sm" onclick="editFixedPrice('${p.id}')" style="padding:2px 6px;font-size:11px">✏️</button>
     <button type="button" class="btn btn-sm" onclick="removeFixedPrice('${p.id}')" style="padding:2px 6px;font-size:11px">🗑</button>
@@ -2872,10 +2871,10 @@ function _renderTmplApply(o){
       <div class="tmpl-apply-hdr">
         <span class="tmpl-apply-label">⚡ ${label} <small style="opacity:.7">${pct}%</small></span>
         <span class="tmpl-apply-name">${t.name}${t.qty?` <span class="lib-pc-qty">${t.qty}</span>`:''}</span>
-        <span class="tmpl-apply-total">${fn(total)} ج</span>
+        <span class="tmpl-apply-total">${fmtNum(total)} ج</span>
       </div>
       ${reasons.length?`<div class="tmpl-apply-reasons">${reasons.map(r=>`<span class="tmpl-reason-chip">${r}</span>`).join('')}</div>`:''}
-      <div class="tmpl-apply-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fn(c.amount)} ج</strong></span>`).join('')}</div>
+      <div class="tmpl-apply-chips">${t.costItems.map(c=>`<span class="tmpl-apply-chip"><span class="tac-type">${c.type}</span><span class="tac-sup">${c.supplierName||'—'}</span><strong class="tac-amt">${fmtNum(c.amount)} ج</strong></span>`).join('')}</div>
       <button type="button" class="btn btn-r tmpl-apply-btn" id="${uid}" onclick="applyFullTemplate('${t.id}',${prodIdx},'${uid}')">⚡ تطبيق الكل دفعة واحدة</button>
     </div>`;
   }).join('');
@@ -2962,8 +2961,8 @@ function _renderLibTemplates(){
           <button type="button" class="item-act-btn danger" onclick="deleteTmpl('${t.id}')">🗑️</button>
         </div>
       </div>
-      <div class="lib-tmpl-items">${t.costItems.map(c=>`<span class="lib-tmpl-chip"><span>${c.type}</span><span class="lib-tmpl-sup"> · ${c.supplierName||'—'}</span><strong> · ${fn(c.amount)} ج</strong></span>`).join('')}</div>
-      <div class="lib-tmpl-total">الإجمالي: <strong>${fn(total)} ج</strong></div>
+      <div class="lib-tmpl-items">${t.costItems.map(c=>`<span class="lib-tmpl-chip"><span>${c.type}</span><span class="lib-tmpl-sup"> · ${c.supplierName||'—'}</span><strong> · ${fmtNum(c.amount)} ج</strong></span>`).join('')}</div>
+      <div class="lib-tmpl-total">الإجمالي: <strong>${fmtNum(total)} ج</strong></div>
     </div>`;
   }).join('')}</div>`;
 }
@@ -3134,8 +3133,8 @@ function _detectAnomalies(o){
 
   if(sale>0&&totalCost>0){
     const pct=(sale-totalCost)/sale*100;
-    if(pct<0) a.push({lvl:'crit',msg:`⛔ خسارة — التكلفة ${fn(totalCost)}ج تتجاوز سعر البيع ${fn(sale)}ج بـ ${fn(Math.abs(sale-totalCost))}ج`});
-    else if(pct<8) a.push({lvl:'crit',msg:`🚨 هامش حرج ${Math.round(pct)}% — التكلفة ${fn(totalCost)}ج قريبة جداً من البيع ${fn(sale)}ج`});
+    if(pct<0) a.push({lvl:'crit',msg:`⛔ خسارة — التكلفة ${fmtNum(totalCost)}ج تتجاوز سعر البيع ${fmtNum(sale)}ج بـ ${fmtNum(Math.abs(sale-totalCost))}ج`});
+    else if(pct<8) a.push({lvl:'crit',msg:`🚨 هامش حرج ${Math.round(pct)}% — التكلفة ${fmtNum(totalCost)}ج قريبة جداً من البيع ${fmtNum(sale)}ج`});
     else if(pct<15) a.push({lvl:'warn',msg:`⚠️ هامش منخفض ${Math.round(pct)}% — راجع بنود التكلفة`});
   }
 
@@ -3146,7 +3145,7 @@ function _detectAnomalies(o){
   if(noSup.length) a.push({lvl:'warn',msg:`⚠️ ${noSup.length} بند بدون مورد: ${noSup.map(c=>c.type).join('، ')}`});
 
   if(sale>500&&totalCost>0&&totalCost<sale*0.03)
-    a.push({lvl:'warn',msg:`⚠️ تكلفة منخفضة جداً (${fn(totalCost)}ج = ${Math.round(totalCost/sale*100)}% من البيع) — هل البنود مكتملة؟`});
+    a.push({lvl:'warn',msg:`⚠️ تكلفة منخفضة جداً (${fmtNum(totalCost)}ج = ${Math.round(totalCost/sale*100)}% من البيع) — هل البنود مكتملة؟`});
 
   return a;
 }
@@ -3295,7 +3294,7 @@ function _renderQuickEntry(o){
     html+=`</div>`;
   });
   html+=`<div class="qe-footer">
-    <span class="qe-total-lbl" id="qe-total-lbl">💰 ${fn(totalEst)} ج · ${totalRows} بند</span>
+    <span class="qe-total-lbl" id="qe-total-lbl">💰 ${fmtNum(totalEst)} ج · ${totalRows} بند</span>
     <button type="button" class="btn btn-r qe-save-all-btn" onclick="saveQuickEntry()">💾 حفظ الكل</button>
   </div></div></div>`;
   el.innerHTML=html;
@@ -3308,7 +3307,7 @@ window._qeUpdateTotal=function(){
     if(v>0){total+=v;count++;}
   });
   const lbl=document.getElementById('qe-total-lbl');
-  if(lbl)lbl.textContent=`💰 ${fn(total)} ج · ${count} بند`;
+  if(lbl)lbl.textContent=`💰 ${fmtNum(total)} ج · ${count} بند`;
 };
 
 window._qeSaveOne=async function(btn){
@@ -3481,7 +3480,7 @@ function _renderSmartSuggest(o){
       ${prodLabel}
       <span class="smart-chip-type">${s.type}</span>
       <span class="smart-chip-sup">${s.supplierName||'—'}</span>
-      <strong class="smart-chip-amt">${fn(s.avgAmt)} ج</strong>
+      <strong class="smart-chip-amt">${fmtNum(s.avgAmt)} ج</strong>
       ${s.srcQty?`<span class="smart-chip-qty">×${s.srcQty}</span>`:`<span class="smart-chip-count">${s.count}×</span>`}
     </div>`;
   }).join('');
@@ -3508,7 +3507,7 @@ window.applySmartItem=async function(idx){
       allowedTypes:masterCategories.filter(c=>c.isCostItem!==false).map(c=>(c.label||'').trim()),
       masterCats:masterCategories,
     });
-    if(r.ok){toast(`✅ ${s.type} · ${fn(s.avgAmt)} ج`,'ok');}
+    if(r.ok){toast(`✅ ${s.type} · ${fmtNum(s.avgAmt)} ج`,'ok');}
     else toast('❌ '+(r.errors||[]).join(' · '),'err');
     setTimeout(()=>{const fresh=orders.find(x=>x._id===activeId);if(fresh){renderItemsBox(fresh);renderDrawerProfit(fresh);_renderCompleteness(fresh);_renderAnomalies(fresh);_renderQuickEntry(fresh);_renderSmartSuggest(fresh);}},300);
   }catch(e){toast('❌ '+(e.message||'فشل'),'err');}
