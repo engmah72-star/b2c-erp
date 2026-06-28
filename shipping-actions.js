@@ -50,6 +50,10 @@ import {
 import { orderActions } from './order-actions.js';
 import { withIdempotency } from './core/idempotency.js'; // PR-7-salvage G1
 import { auditEntry, persistAuditLog } from './core/audit.js';
+import {
+  makeTicketNo, calcInspectDeadline,
+  RT_STATUS, RT_RETURN_TYPE, RT_BLAMED_PARTY,
+} from './returns-core.js';
 
 // ══════════════════════════════════════════
 // INTERNAL HELPERS
@@ -630,8 +634,69 @@ export const shippingActions = {
     };
     const reasonLabel = REASON_LABELS[reason] || reason;
 
+    const REASON_TO_RT = {
+      damaged: 'damaged', wrong_design: 'wrong_design',
+      wrong_item: 'wrong_product', late: 'late_delivery',
+      refused: 'customer_changed_mind', other: 'other',
+    };
+    const PARTY_TO_BLAMED = {
+      client: RT_BLAMED_PARTY.CUSTOMER,
+      company: RT_BLAMED_PARTY.UNKNOWN,
+      shipper: RT_BLAMED_PARTY.SHIPPING,
+    };
+
     try {
       const batch = writeBatch(db);
+
+      // — return ticket (returns_tickets) —
+      const ticketRef = doc(collection(db, 'returns_tickets'));
+      const now = new Date();
+      const ticketNo = makeTicketNo(ticketRef.id, now);
+
+      batch.set(ticketRef, {
+        ticketNo,
+        tenantId: order.tenantId || 'merchant_001',
+        orderId,
+        orderRef: order.orderNumber || order.orderId || orderId.slice(-6),
+        productIds: [],
+        returnType: returnType === 'partial' ? RT_RETURN_TYPE.PARTIAL : RT_RETURN_TYPE.FULL,
+        clientId: order.clientId || '',
+        clientName: order.clientName || '',
+        clientPhone: order.clientPhone || '',
+        reason: REASON_TO_RT[reason] || reason,
+        reasonDetails: note || '',
+        evidenceUrls: [],
+        blamedParty: PARTY_TO_BLAMED[lossParty] || RT_BLAMED_PARTY.UNKNOWN,
+        status: RT_STATUS.REQUESTED,
+        requestedBy: userId || '',
+        requestedByName: userName || '',
+        requestedAt: serverTimestamp(),
+        slaInspectDeadline: calcInspectDeadline(now),
+        slaBreached: false,
+        decision: null,
+        refundAmount: 0,
+        refundDest: null,
+        refundWalletId: null,
+        lossParty: lossParty || '',
+        lossAmount: lossAmt,
+        shipCompanyId: order.shipCompanyId || '',
+        shipCompanyName: order.shipCompanyName || '',
+        source: 'shipping_return',
+        createdAt: serverTimestamp(),
+        createdBy: userId || '',
+        updatedAt: serverTimestamp(),
+        isDeleted: false,
+        editHistory: [],
+        timeline: [{
+          action: '↩️ مرتجع من الشحن',
+          date: now.toISOString(),
+          by: userId || '',
+          byName: userName || '',
+          note: `${reasonLabel} — خسارة ${lossAmt} ج`,
+        }],
+      });
+
+      // — order update —
       batch.update(order._ref, {
         shipStage: 'returned',
         returnReason: reason,
@@ -641,9 +706,12 @@ export const shippingActions = {
         returnNote: note || '',
         returnedAt: serverTimestamp(),
         returnedBy: userName || '',
+        hasReturn: true,
+        activeReturnId: ticketRef.id,
+        returnTicketNo: ticketNo,
         ...(returnType === 'partial' ? { returnType: 'partial' } : {}),
         timeline: [...(order.timeline || []), _tlEntry(
-          `↩️ تسجيل مرتجع — ${reasonLabel} — خسارة ${lossAmt} ج (${lossParty === 'client' ? 'العميل' : lossParty === 'company' ? 'الشركة' : 'شركة الشحن'})`,
+          `↩️ تسجيل مرتجع — ${reasonLabel} — خسارة ${lossAmt} ج (${lossParty === 'client' ? 'العميل' : lossParty === 'company' ? 'الشركة' : 'شركة الشحن'}) — تذكرة ${ticketNo}`,
           userName, userId
         )],
         updatedAt: serverTimestamp(),
@@ -660,9 +728,9 @@ export const shippingActions = {
       }
 
       await batch.commit();
-      auditEntry({ action: 'shipping.registerReturn', userId, userName, kind: 'op', meta: { orderId, reason, lossParty, cost: lossAmt, returnType } });
+      auditEntry({ action: 'shipping.registerReturn', userId, userName, kind: 'op', meta: { orderId, reason, lossParty, cost: lossAmt, returnType, ticketId: ticketRef.id, ticketNo } });
       persistAuditLog(db);
-      return { ok: true, errors: [], warnings: v.warnings, orderId, action: 'register_return' };
+      return { ok: true, errors: [], warnings: v.warnings, orderId, action: 'register_return', ticketId: ticketRef.id, ticketNo };
     } catch (e) {
       return { ok: false, errors: [e.message || 'فشل تسجيل المرتجع'], warnings: [], orderId };
     }
@@ -851,6 +919,21 @@ export const shippingActions = {
       const reasonLabel = REASON_LABELS[reason] || reason;
       const totalReturnedQty = items.reduce((s, it) => s + (parseFloat(it.qty) || 0), 0);
 
+      const REASON_TO_RT = {
+        damaged: 'damaged', wrong_design: 'wrong_design',
+        wrong_item: 'wrong_product', late: 'late_delivery',
+        refused: 'customer_changed_mind', other: 'other',
+      };
+      const PARTY_TO_BLAMED = {
+        client: RT_BLAMED_PARTY.CUSTOMER,
+        company: RT_BLAMED_PARTY.UNKNOWN,
+        shipper: RT_BLAMED_PARTY.SHIPPING,
+      };
+
+      const ticketRef = doc(collection(db, 'returns_tickets'));
+      const nowDate = new Date();
+      const ticketNo = makeTicketNo(ticketRef.id, nowDate);
+
       const orderFields = {
         shipStage: 'returned_partial',
         salePrice: newSale,
@@ -863,8 +946,11 @@ export const shippingActions = {
         partialReturnedAt: serverTimestamp(),
         partialReturnedBy: userName || '',
         partialReturnedById: userId || '',
+        hasReturn: true,
+        activeReturnId: ticketRef.id,
+        returnTicketNo: ticketNo,
         timeline: [...(order.timeline || []), _tlEntry(
-          `↪️ مرتجع جزئي — ${totalReturnedQty} قطعة — خصم ${delta} ج — خسارة ${loss} ج (${reasonLabel})`,
+          `↪️ مرتجع جزئي — ${totalReturnedQty} قطعة — خصم ${delta} ج — خسارة ${loss} ج (${reasonLabel}) — تذكرة ${ticketNo}`,
           userName, userId
         )],
         updatedAt: serverTimestamp(),
@@ -872,6 +958,51 @@ export const shippingActions = {
 
       try {
         const batch = writeBatch(db);
+
+        batch.set(ticketRef, {
+          ticketNo,
+          tenantId: order.tenantId || 'merchant_001',
+          orderId,
+          orderRef: order.orderNumber || order.orderId || orderId.slice(-6),
+          productIds: items.map(it => it.idx),
+          returnType: RT_RETURN_TYPE.PARTIAL,
+          clientId: order.clientId || '',
+          clientName: order.clientName || '',
+          clientPhone: order.clientPhone || '',
+          reason: REASON_TO_RT[reason] || reason,
+          reasonDetails: note || '',
+          evidenceUrls: [],
+          blamedParty: PARTY_TO_BLAMED[lossParty] || RT_BLAMED_PARTY.UNKNOWN,
+          status: RT_STATUS.REQUESTED,
+          requestedBy: userId || '',
+          requestedByName: userName || '',
+          requestedAt: serverTimestamp(),
+          slaInspectDeadline: calcInspectDeadline(nowDate),
+          slaBreached: false,
+          decision: null,
+          refundAmount: 0,
+          refundDest: null,
+          refundWalletId: null,
+          lossParty: lossParty || '',
+          lossAmount: loss,
+          salePriceDelta: delta,
+          shipCompanyId: order.shipCompanyId || '',
+          shipCompanyName: order.shipCompanyName || '',
+          source: 'shipping_return',
+          createdAt: serverTimestamp(),
+          createdBy: userId || '',
+          updatedAt: serverTimestamp(),
+          isDeleted: false,
+          editHistory: [],
+          timeline: [{
+            action: '↪️ مرتجع جزئي من الشحن',
+            date: nowDate.toISOString(),
+            by: userId || '',
+            byName: userName || '',
+            note: `${totalReturnedQty} قطعة — ${reasonLabel} — خسارة ${loss} ج`,
+          }],
+        });
+
         batch.update(order._ref, orderFields);
         if (loss > 0 && lossParty !== 'client' && walletId) {
           addLedgerToBatch(batch, db, FE.RETURN_LOSS, {
@@ -883,12 +1014,13 @@ export const shippingActions = {
           });
         }
         await batch.commit();
-        auditEntry({ action: 'shipping.markPartialReturn', userId, userName, kind: 'op', meta: { orderId, lossCost: loss, salePriceDelta: delta, reason, lossParty } });
+        auditEntry({ action: 'shipping.markPartialReturn', userId, userName, kind: 'op', meta: { orderId, lossCost: loss, salePriceDelta: delta, reason, lossParty, ticketId: ticketRef.id, ticketNo } });
         persistAuditLog(db);
         return {
           ok: true, errors: [], warnings: v.warnings,
           orderId, action: 'mark_partial_return', operationId,
           newSalePrice: newSale, accumulatedLoss: newLoss,
+          ticketId: ticketRef.id, ticketNo,
         };
       } catch (e) {
         return { ok: false, errors: [e.message || 'فشل تسجيل المرتجع الجزئي'], warnings: [], orderId };
