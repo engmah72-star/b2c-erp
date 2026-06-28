@@ -67,7 +67,7 @@
     // تلقائياً — يتوافق مع canAccessEmployees:false في permissions-matrix.
     // الإعدادات (settings) نُقلت لـ perm عادي في sidebar-config فيراها ops عبر pages:['*'].
     if (cfg.adminOnly) return role === 'admin' || (role === 'operation_manager' && legacyOpsAdminPages());
-    if (isAdmin(role)) return !cfg.guestOnly;
+    if (role === 'admin') return !cfg.guestOnly;
     const perms = userData.permissions || {};
     // Fallback للمستخدمين القدام: لو pages مفقودة تماماً (ليست مصفوفة)، استخدم
     // الصفحات الافتراضية للدور من window.ROLE_PAGES (permissions-matrix). مصفوفة
