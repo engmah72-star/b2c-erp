@@ -54,8 +54,18 @@ if ('serviceWorker' in navigator) {
   const RELOAD_KEY = '__b2c_sw_last_reload';
   const LOOP_WINDOW_MS = 10000;
   const PERIODIC_UPDATE_MS = 300000; // 5 min
+  const RESUME_GRACE_MS = 5000;
+
+  // Track when the page was last hidden (app-switcher / backgrounded).
+  // controllerchange during a warm resume is suppressed — the new SW
+  // will serve future navigations; no need to disrupt the current session.
+  var _lastHiddenAt = 0;
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') _lastHiddenAt = Date.now();
+  });
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // Suppress reload loops (original guard)
     let last = 0;
     try { last = +sessionStorage.getItem(RELOAD_KEY) || 0; } catch (_) {}
     const now = Date.now();
@@ -63,6 +73,16 @@ if ('serviceWorker' in navigator) {
       try { console.warn('[sw-register] suppressing reload loop'); } catch (_) {}
       return;
     }
+
+    // On Android, returning from another app triggers visibilitychange →
+    // reg.update() → if a deploy happened while away, controllerchange fires
+    // and the page reloads mid-session. Suppress reload during warm resume;
+    // the new SW will handle future navigations without disrupting state.
+    if (_lastHiddenAt && (now - _lastHiddenAt) < RESUME_GRACE_MS) {
+      console.info('[sw-register] new SW activated during resume — deferring reload');
+      return;
+    }
+
     try { sessionStorage.setItem(RELOAD_KEY, String(now)); } catch (_) {}
     window.location.reload();
   });
@@ -72,11 +92,13 @@ if ('serviceWorker' in navigator) {
       // Initial update check on page load
       reg.update().catch(() => {});
 
-      // Update check whenever user comes back to the PWA
-      // (handles app-switcher resume on mobile)
+      // Update check whenever user comes back to the PWA.
+      // Debounced — Android can fire multiple visibilitychange on resume.
+      var _resumeTimer = 0;
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-          reg.update().catch(() => {});
+          clearTimeout(_resumeTimer);
+          _resumeTimer = setTimeout(() => reg.update().catch(() => {}), 2000);
         }
       });
 
