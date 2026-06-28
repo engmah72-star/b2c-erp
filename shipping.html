@@ -258,9 +258,26 @@
 
 <!-- RETURN MODAL -->
 <div class="modal" id="m-return">
-  <div class="modal-card">
+  <div class="modal-card" style="max-width:560px">
     <h3>↩️ تسجيل مرتجع</h3>
     <div class="modal-info" id="m-return-info"></div>
+    <div class="row">
+      <label>نوع المرتجع</label>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn btn-sm" id="btn-rt-full" onclick="setReturnType('full')" style="flex:1">📦 كامل</button>
+        <button type="button" class="btn btn-sm" id="btn-rt-partial" onclick="setReturnType('partial')" style="flex:1">📎 جزئي</button>
+      </div>
+    </div>
+    <div id="m-return-items-section" style="display:none">
+      <div class="row">
+        <label>المنتجات المرتجعة</label>
+        <div id="m-return-items-list" style="max-height:180px;overflow-y:auto"></div>
+      </div>
+      <div class="row">
+        <label>خصم من سعر البيع (ج)</label>
+        <input type="number" id="m-return-delta" min="0" step="0.01" placeholder="0">
+      </div>
+    </div>
     <div class="row">
       <label>سبب المرتجع</label>
       <select id="m-return-reason">
@@ -1872,6 +1889,41 @@ window.confirmShipCost = async () => {
 // ══════════════════════════════════════════
 // RETURN
 // ══════════════════════════════════════════
+let _returnType = 'full';
+
+window.setReturnType = (type) => {
+  _returnType = type;
+  $('btn-rt-full').className = `btn btn-sm${type === 'full' ? ' btn-b' : ''}`;
+  $('btn-rt-partial').className = `btn btn-sm${type === 'partial' ? ' btn-b' : ''}`;
+  $('m-return-items-section').style.display = type === 'partial' ? '' : 'none';
+};
+
+function renderReturnItems(order) {
+  const products = order.products || [];
+  if (!products.length) {
+    $('m-return-items-list').innerHTML = '<div style="color:var(--dim2);font-size:var(--fs-sm);padding:6px 0">لا توجد منتجات مسجَّلة</div>';
+    return;
+  }
+  $('m-return-items-list').innerHTML = products.map((p, i) => {
+    const maxQty = parseFloat(p.qty) || 1;
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)">
+        <input type="checkbox" id="ret-item-${i}" data-idx="${i}" class="ret-item-chk">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:var(--fs-base);font-weight:var(--fw-bold)">${escAttr(p.name || 'منتج ' + (i + 1))}</div>
+          <div style="font-size:var(--fs-sm);color:var(--dim2)">الكمية: ${maxQty}${p.salePrice ? ' · ' + fmtMoney(p.salePrice) + ' ج' : ''}</div>
+        </div>
+        <input type="number" id="ret-qty-${i}" min="1" max="${maxQty}" value="${maxQty}" step="1" style="width:60px;text-align:center" disabled>
+      </div>`;
+  }).join('');
+  document.querySelectorAll('.ret-item-chk').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const idx = chk.dataset.idx;
+      $('ret-qty-' + idx).disabled = !chk.checked;
+    });
+  });
+}
+
 window.openReturn = (orderId) => {
   const o = orders.find(x => x._id === orderId);
   if (!o) return;
@@ -1886,6 +1938,9 @@ window.openReturn = (orderId) => {
   $('m-return-cost').value = '';
   $('m-return-wallet').value = '';
   $('m-return-note').value = '';
+  $('m-return-delta') && ($('m-return-delta').value = '');
+  setReturnType('full');
+  renderReturnItems(o);
   openMod('m-return');
 };
 
@@ -1901,12 +1956,35 @@ window.confirmReturn = async () => {
   const btn = $('btn-return-confirm');
   btn.disabled = true; btn.textContent = '⏳ جارٍ...';
 
-  const result = await shippingActions.markFullReturn({
-    db, orderId: pendingOrder._id,
-    reason, lossParty: party, cost, note,
-    walletId, walletName: wallet?.name || '',
-    role: myRole, userId: me.uid, userName: myUserName,
-  });
+  let result;
+  if (_returnType === 'partial') {
+    const items = [];
+    document.querySelectorAll('.ret-item-chk:checked').forEach(chk => {
+      const idx = parseInt(chk.dataset.idx, 10);
+      const qty = parseFloat($('ret-qty-' + idx)?.value) || 1;
+      items.push({ idx, qty });
+    });
+    if (!items.length) {
+      toast('⚠️ اختر منتج واحد على الأقل', 'err');
+      btn.disabled = false; btn.textContent = '✅ تسجيل المرتجع';
+      return;
+    }
+    const salePriceDelta = parseFloat($('m-return-delta')?.value) || 0;
+    result = await shippingActions.markPartialReturn({
+      db, orderId: pendingOrder._id,
+      items, lossCost: cost, salePriceDelta,
+      reason, lossParty: party, note,
+      walletId, walletName: wallet?.name || '',
+      role: myRole, userId: me.uid, userName: myUserName,
+    });
+  } else {
+    result = await shippingActions.markFullReturn({
+      db, orderId: pendingOrder._id,
+      reason, lossParty: party, cost, note,
+      walletId, walletName: wallet?.name || '',
+      role: myRole, userId: me.uid, userName: myUserName,
+    });
+  }
 
   btn.disabled = false; btn.textContent = '✅ تسجيل المرتجع';
   if (!result.ok) { toast(result.errors[0] || 'فشل', 'err'); return; }
