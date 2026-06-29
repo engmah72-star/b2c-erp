@@ -713,7 +713,7 @@ const _stCache=new WeakMap();
 let _stGeneration=0;
 const deriveSt=o=>{const cached=_stCache.get(o);if(cached&&cached.gen===_stGeneration)return cached.v;const ps=o.products||[];let v;if(!ps.length)v=o.prodStatus||'pending';else{const active=ps.filter(p=>p.execStatus!=='cancelled');if(!active.length)v='cancelled';else if(active.every(p=>p.execStatus==='done'))v='done';else if(active.some(p=>p.execStatus==='problem'))v='problem';else v=active.some(p=>(p.execStatus||'pending')!=='pending')?'wip':'pending';}_stCache.set(o,{v,gen:_stGeneration});return v;};
 const orderCost=o=>(o.costItems||[]).reduce((s,c)=>s+(parseFloat(c.total)||0),0);
-const hasNoSup=o=>(o.products||[]).some(p=>!p.supplierId);
+const hasNoSup=o=>(o.products||[]).some(p=>!p.supplierId&&!p.pressId);
 const hasNoCost=o=>!(o.costItems||[]).length;
 const canCost=()=>canSeeField('supplier_cost',me.role,me.perms);
 const isMobile=()=>window.innerWidth<=768;
@@ -1416,7 +1416,7 @@ function renderDetail(){
       <div class="cost-form">
         <div><div class="cf-lbl">نوع التكلفة *</div><select class="cf-inp" id="cf-type">${_buildTypeOptions(editItem?.type||'')}</select></div>
         <div><div class="cf-lbl">المبلغ *</div><input type="number" class="cf-inp" id="cf-total" value="${editItem?parseFloat(editItem.total)||'':''}" placeholder="0" min="0"></div>
-        <div><div class="cf-lbl">المورد</div><select class="cf-inp" id="cf-sup"><option value="">— بدون —</option>${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}" ${editItem?.supplierId===s._id?'selected':''}>${esc(s.name||s._id)}</option>`).join('')}</select></div>
+        <div><div class="cf-lbl">المورد</div><select class="cf-inp" id="cf-sup"><option value="">— بدون —</option>${(()=>{const fp=formProd>=0&&formProd<products.length?products[formProd]:null;const defSup=editItem?.supplierId||(fp&&(fp.supplierId||fp.pressId))||'';return suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}" ${s._id===defSup?'selected':''}>${esc(s.name||s._id)}</option>`).join('');})()}</select></div>
         <div><div class="cf-lbl">المنتج</div><select class="cf-inp" id="cf-prod">${products.map((p,i)=>`<option value="${i}" ${formProd===i?'selected':''}>${esc(p.name||('منتج '+(i+1)))}</option>`).join('')}<option value="-1" ${formProd==-1?'selected':''}>عام</option></select></div>
         ${!isEditing?`<div class="cf-full"><div class="cf-lbl">دفع فوري من محفظة</div><select class="cf-inp" id="cf-wallet"><option value="">— بدون دفع فوري —</option>${wallets.map(w=>`<option value="${esc(w._id)}">${esc(w.name||w._id)} (${fn(w.balance||0)} ج)</option>`).join('')}</select></div>`:''}
         <div class="cf-full"><div class="cf-lbl">ملاحظة</div><input type="text" class="cf-inp" id="cf-note" value="${esc(editItem?.note||'')}" placeholder="اختياري"></div>
@@ -1488,8 +1488,8 @@ function renderDetail(){
   // ══════════════════════════════════════════════════════════════════
 
   // ── Journey Rail ──
-  const allHaveSup=products.length>0&&products.every(p=>p.supplierId);
-  const someSup=products.some(p=>p.supplierId);
+  const allHaveSup=products.length>0&&products.every(p=>p.supplierId||p.pressId);
+  const someSup=products.some(p=>p.supplierId||p.pressId);
   const setupState=o.productionAgent&&allHaveSup?'done':o.productionAgent||someSup?'active':'pending';
   const execState=st==='done'?'done':st==='problem'?'problem':st==='wip'?'active':'pending';
   const costState=costs.length?'done':'pending';
@@ -1512,7 +1512,7 @@ function renderDetail(){
     alerts.push(`<span class="achip achip-r">⏰ متأخر ${daysLate} يوم</span>`);
   }
   if(!o.productionAgent) alerts.push(`<span class="achip achip-b">👷 بدون مندوب تنفيذ</span>`);
-  const noSupCount=products.filter(p=>!p.supplierId).length;
+  const noSupCount=products.filter(p=>!p.supplierId&&!p.pressId).length;
   if(noSupCount) alerts.push(`<span class="achip achip-y">🏭 ${noSupCount} منتج بدون مورد</span>`);
   if(canCost()&&!costs.length){
     const sim=findSimilar(o);
@@ -1531,7 +1531,8 @@ function renderDetail(){
     const ck=deriveChecklist(p);
     const checkKey=o._id+'_'+i;
     if(!prodChecks[checkKey])prodChecks[checkKey]=new Set();
-    const supSt=p.supplierId?getSupStats(p.supplierId):null;
+    const effectiveSupplierId=p.supplierId||p.pressId||'';
+    const supSt=effectiveSupplierId?getSupStats(effectiveSupplierId):null;
     const photos=(o.productionPhotos||[]).filter(ph=>ph.prodIdx===i||ph.prodIdx==null);
     const pDesignImgs=(()=>{const a=Array.isArray(p.designImages)?p.designImages.filter(Boolean):[];if(a.length)return[...a].reverse();return p.designImageUrl?[p.designImageUrl]:[];})();
     const isOffset=(p.printType||'').includes('offset');
@@ -1558,9 +1559,10 @@ function renderDetail(){
         <span class="prd-sup-lbl">🏭</span>
         <select class="prd-sup-sel" data-act="setsup" data-pidx="${i}">
           <option value="">— بدون مورد —</option>
-          ${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}" ${s._id===(p.supplierId||'')?'selected':''}>${esc(s.name||s._id)}</option>`).join('')}
+          ${suppliers.map(s=>`<option value="${esc(s._id)}" data-name="${esc(s.name||'')}" ${s._id===effectiveSupplierId?'selected':''}>${esc(s.name||s._id)}</option>`).join('')}
         </select>
       </div>
+      ${!p.supplierId&&p.pressId?`<div style="font-size:10px;color:var(--dim2);margin:2px 0 4px">📋 من الطباعة — اضغط تأكيد لحفظه</div>`:''}
       ${supSt?`<div class="sup-stats">📊 ${supSt.active} نشط · ✅ ${supSt.done} مكتمل${supSt.prob?' · ⚠️ '+supSt.prob+' مشكلة':''}</div>`:''}
       <div class="prod-cl">${ck.map(s=>`<button type="button" class="cl-item${prodChecks[checkKey].has(s)?' checked':''}" data-act="togglecheck" data-ck="${esc(checkKey)}" data-step="${esc(s)}">${prodChecks[checkKey].has(s)?'✓':''} ${esc(s)}</button>`).join('')}</div>
       <div class="photo-sec">
