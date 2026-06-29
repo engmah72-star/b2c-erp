@@ -2479,6 +2479,7 @@ export const fn = n => (parseFloat(n) || 0).toLocaleString('ar-EG');
  *   1. لو متطابقين في `authUid` (وكلاهما له authUid) → سجل واحد
  *   2. لو متطابقين في `phone` (مع تطبيع: أرقام فقط) → سجل واحد، يفضّل الذي له authUid
  *   3. لو متطابقين في `name + phone` → سجل واحد
+ *   4. لو متطابقين في `name` فقط (fallback — يمسك الحالات اللي فيها سجل بدون phone/authUid)
  *
  * يحل مشكلة التكرار عند وجود سجل employee قديم بدون authUid + سجل جديد مرتبط بـ Firebase Auth.
  * كل سجل canonical يحمل `_mergedIds: [...]` بكل الـ ids الأصلية اللي اندمجت فيه — تُستخدم في
@@ -2489,44 +2490,59 @@ export function dedupEmployees(raw) {
   const normPhone = p => (p || '').toString().replace(/\D/g, '');
   const normName  = n => (n || '').toString().trim().toLowerCase();
   const out = [];
-  const byAuth  = new Map();   // authUid → index in out
-  const byPhone = new Map();   // phone   → index in out
-  const byName  = new Map();   // name|phone → index in out
+  const byAuth     = new Map();   // authUid → index in out
+  const byPhone    = new Map();   // phone   → index in out
+  const byName     = new Map();   // name|phone → index in out
+  const byNameOnly = new Map();   // name → index in out (fallback for missing phone)
+
+  const merge = (existingIdx, e, auth) => {
+    const cur = out[existingIdx];
+    const mergedIds = [...(cur._mergedIds || [cur._id, cur.authUid].filter(Boolean)),
+                       ...[e._id, e.authUid].filter(Boolean)];
+    if (!cur.authUid && auth) {
+      out[existingIdx] = { ...cur, ...e, _mergedIds: [...new Set(mergedIds)] };
+    } else {
+      const merged = { ...cur, _mergedIds: [...new Set(mergedIds)] };
+      if (!cur.phone && e.phone) merged.phone = e.phone;
+      out[existingIdx] = merged;
+    }
+  };
+
   for (const e of raw) {
     if (!e) continue;
     const auth  = e.authUid || '';
     const phone = normPhone(e.phone);
-    const nameKey = normName(e.name) + '|' + phone;
+    const name  = normName(e.name);
+    const nameKey = name + '|' + phone;
     let existingIdx = -1;
     if (auth  && byAuth.has(auth))  existingIdx = byAuth.get(auth);
     if (existingIdx < 0 && phone && byPhone.has(phone)) existingIdx = byPhone.get(phone);
     if (existingIdx < 0 && phone && byName.has(nameKey)) existingIdx = byName.get(nameKey);
+    if (existingIdx < 0 && name  && byNameOnly.has(name)) existingIdx = byNameOnly.get(name);
     if (existingIdx >= 0) {
-      const cur = out[existingIdx];
-      const mergedIds = [...(cur._mergedIds || [cur._id, cur.authUid].filter(Boolean)),
-                         ...[e._id, e.authUid].filter(Boolean)];
-      if (!cur.authUid && auth) {
-        out[existingIdx] = { ...cur, ...e, _mergedIds: [...new Set(mergedIds)] };
-        byAuth.set(auth, existingIdx);
-      } else {
-        out[existingIdx] = { ...cur, _mergedIds: [...new Set(mergedIds)] };
-      }
+      merge(existingIdx, e, auth);
+      if (auth)  byAuth.set(auth, existingIdx);
+      if (phone) { byPhone.set(phone, existingIdx); byName.set(nameKey, existingIdx); }
+      if (name)  byNameOnly.set(name, existingIdx);
       continue;
     }
     const seed = [e._id, e.authUid].filter(Boolean);
     out.push({ ...e, _mergedIds: seed });
     const idx = out.length - 1;
     if (auth)  byAuth.set(auth, idx);
-    if (phone) byPhone.set(phone, idx);
-    if (phone) byName.set(nameKey, idx);
+    if (phone) { byPhone.set(phone, idx); byName.set(nameKey, idx); }
+    if (name)  byNameOnly.set(name, idx);
   }
   return out;
 }
 
 /**
  * resolveDesigner — يأخذ canonical employees list ومعرّف على الأوردر
- * ويرجّع الموظف المطابق (يطابق أي id من `_mergedIds`).
- * يستخدم في تجميع إحصائيات لتوحيد سجلات قديمة على الأوردرات.
+ * ويرجّع الموظف المطابق. استراتيجيات المطابقة (بالترتيب):
+ *   1. _id أو authUid مطابق
+ *   2. أي id في _mergedIds
+ *   3. تطابق تام بالاسم
+ *   4. تطابق بالاسم الأول (fallback — يمسك "محمود" → "محمود حسين")
  */
 export function resolveDesigner(canonicalList, designerId, designerName) {
   if (!Array.isArray(canonicalList)) return null;
@@ -2540,6 +2556,16 @@ export function resolveDesigner(canonicalList, designerId, designerName) {
     const target = (designerName || '').trim().toLowerCase();
     for (const d of canonicalList) {
       if ((d.name || '').trim().toLowerCase() === target) return d;
+    }
+    // Partial: first-name match (single match only to avoid ambiguity)
+    const targetFirst = target.split(/\s+/)[0];
+    if (targetFirst) {
+      let match = null, count = 0;
+      for (const d of canonicalList) {
+        const dFirst = (d.name || '').trim().toLowerCase().split(/\s+/)[0];
+        if (dFirst === targetFirst) { match = d; count++; }
+      }
+      if (count === 1) return match;
     }
   }
   return null;

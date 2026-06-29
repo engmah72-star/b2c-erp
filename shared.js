@@ -8,6 +8,10 @@
 // ويحقن زر التبديل تلقائيًا في .topbar-right لكل الصفحات بدون تعديل HTML.
 import './theme.js';
 
+// ── Lifecycle Manager — Android state restore ──
+import { lifecycle } from './core/lifecycle-manager.js';
+lifecycle.init();
+
 import {
   onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
@@ -151,13 +155,21 @@ export function initAuth(onReady, onUnauth) {
   onAuthStateChanged(auth, async user => {
     if (!user) { onUnauth?.(); return; }
 
+    // Skip Firestore round-trip if AppState already has this user's data
+    // (warm resume — tab survived Android backgrounding).
+    const alreadyLoaded = AppState.currentUser?.uid === user.uid
+                       && AppState.currentRole
+                       && AppState.currentRole !== 'customer_service';
     AppState.currentUser = user;
-    const snap = await getDoc(doc(db, 'users', user.uid));
-    if (snap.exists()) {
-      const d = snap.data();
-      AppState.currentRole = d.role || 'customer_service';
-      AppState.userPerms   = d.permissions || {};
-      AppState.userName    = d.name || user.email;
+
+    if (!alreadyLoaded) {
+      const snap = await getDoc(doc(db, 'users', user.uid));
+      if (snap.exists()) {
+        const d = snap.data();
+        AppState.currentRole = d.role || 'customer_service';
+        AppState.userPerms   = d.permissions || {};
+        AppState.userName    = d.name || user.email;
+      }
     }
 
     // Native shell (Capacitor) — register for APNs/FCM and wire status bar.
@@ -266,9 +278,13 @@ export function startListeners(callbacks = {}, opts = {}) {
 export { dataCache, cachedQuery, prefetch, collectionRegistry, paginatedQuery, prefetchForPage };
 
 // S0-8 PART 2: Auto-cleanup عند navigation/unload لتفادي memory leak.
-// الصفحات SPA-like (التي تستبدل URL بدون reload) ترث listeners قديمة.
+// Use pagehide instead of beforeunload — Android fires beforeunload on
+// app-switch (before potential process kill), which destroys live
+// listeners. With pagehide we only clean up when the page is actually
+// being discarded (e.persisted === false / page navigation).
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
+  window.addEventListener('pagehide', (e) => {
+    if (e.persisted) return;
     try {
       (AppState._unsubs || []).forEach(u => u?.());
       dataCache.unsubscribeAll();

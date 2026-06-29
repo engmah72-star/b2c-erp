@@ -151,6 +151,7 @@ const NETWORK_FIRST_SUFFIXES = [
   '/core/prefetch-map.js',
   '/core/image-cache.js',
   '/core/page-state.js',
+  '/core/lifecycle-manager.js',
   '/core/storage-helpers.js',
   '/core/auth-reset.js',
   '/core/client-orders-index.js',

@@ -1208,8 +1208,13 @@ if (typeof document !== 'undefined') {
 // ═══════════════════════════════════════
 // Cleanup عند إغلاق الصفحة
 // ═══════════════════════════════════════
+// Use pagehide instead of beforeunload — on Android, beforeunload fires
+// when the user merely switches apps, destroying live listeners and
+// forcing a full re-init on resume. pagehide with persisted check only
+// cleans up when the page is actually being discarded.
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
+  window.addEventListener('pagehide', (e) => {
+    if (e.persisted) return;
     dataCache.unsubscribeAll();
     if (_cleanupInterval) clearInterval(_cleanupInterval);
     if (_channel) { try { _channel.close(); } catch (_) {} _channel = null; }

@@ -67,8 +67,14 @@
     var _uiRestored = false;
     var _snapsRestored = false;
 
-    window.addEventListener('beforeunload', function () {
-      _save(storageKey, opts);
+    // Save on beforeunload (desktop), pagehide (mobile bfcache),
+    // and visibilitychange(hidden) (Android app-switcher — fires
+    // before process kill, which beforeunload may not).
+    var _saveFn = function () { _save(storageKey, opts); };
+    window.addEventListener('beforeunload', _saveFn);
+    window.addEventListener('pagehide', _saveFn);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') _saveFn();
     });
 
     return {
@@ -110,6 +116,8 @@
     };
   }
 
+  var LS_PREFIX = 'ps_';
+
   function _save(key, opts) {
     try {
       var state = typeof opts.fields === 'function' ? opts.fields() : {};
@@ -140,15 +148,26 @@
         }
       }
       state._ts = Date.now();
-      sessionStorage.setItem(key, JSON.stringify(state));
+      var json = JSON.stringify(state);
+      sessionStorage.setItem(key, json);
+      // localStorage fallback — survives Android process kill
+      try { localStorage.setItem(LS_PREFIX + key, json); } catch (_) {}
     } catch (_) {}
   }
 
   function _load(key) {
     try {
+      // Try sessionStorage first (same tab session)
       var raw = sessionStorage.getItem(key);
+      if (!raw) {
+        // Fallback to localStorage (process was killed and restarted)
+        raw = localStorage.getItem(LS_PREFIX + key);
+        if (raw) localStorage.removeItem(LS_PREFIX + key);
+      } else {
+        sessionStorage.removeItem(key);
+        try { localStorage.removeItem(LS_PREFIX + key); } catch (_) {}
+      }
       if (!raw) return null;
-      sessionStorage.removeItem(key);
       var st = JSON.parse(raw);
       if (Date.now() - st._ts > TTL) return null;
       return st;
