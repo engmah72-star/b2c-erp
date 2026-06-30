@@ -884,8 +884,9 @@ function fmtTs(ts) {
 const $ = id => document.getElementById(id);
 
 /* ── List state ─────────────────────────────────────────── */
-let allOrders = [];
-let renderTimer = null;
+let allOrders    = [];
+let archiveCache = {};   // { archived: [...], cancelled: [...] }
+let renderTimer  = null;
 
 /* ── User state ─────────────────────────────────────────── */
 let currentUserId   = '';
@@ -1020,15 +1021,18 @@ function buildCard(o) {
 
 /* ── Render list ────────────────────────────────────────── */
 function renderList() {
-  const stageFilter = $('stage-filter')?.value ?? 'active';
-  const q           = ($('q')?.value || '').trim().toLowerCase();
+  const stageFilter  = $('stage-filter')?.value ?? 'active';
+  const q            = ($('q')?.value || '').trim().toLowerCase();
+  const isArchiveFil = stageFilter === 'archived' || stageFilter === 'cancelled';
 
-  let filtered = allOrders;
+  let filtered = isArchiveFil ? (archiveCache[stageFilter] || []) : allOrders;
 
-  if (stageFilter === 'active') {
-    filtered = filtered.filter(o => ACTIVE_STAGES.includes(o.stage || 'design'));
-  } else if (stageFilter) {
-    filtered = filtered.filter(o => (o.stage || 'design') === stageFilter);
+  if (!isArchiveFil) {
+    if (stageFilter === 'active') {
+      filtered = filtered.filter(o => ACTIVE_STAGES.includes(o.stage || 'design'));
+    } else if (stageFilter) {
+      filtered = filtered.filter(o => (o.stage || 'design') === stageFilter);
+    }
   }
 
   if (q) {
@@ -1065,7 +1069,24 @@ window.scheduleRender = () => {
   clearTimeout(renderTimer);
   renderTimer = setTimeout(renderList, 200);
 };
-window.applyFilter = () => renderList();
+window.applyFilter = async () => {
+  const stageFilter = $('stage-filter')?.value ?? 'active';
+  if ((stageFilter === 'archived' || stageFilter === 'cancelled') && !archiveCache[stageFilter]) {
+    $('orders-list').innerHTML = '<div class="reg-empty"><div class="reg-empty-ico">⏳</div><div class="reg-empty-title">جاري تحميل الأرشيف...</div></div>';
+    try {
+      const snap = await getDocs(
+        query(collection(db, 'orders'),
+          where('stage', '==', stageFilter),
+          orderBy('updatedAt', 'desc'),
+          limit(300))
+      );
+      archiveCache[stageFilter] = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    } catch (e) {
+      archiveCache[stageFilter] = [];
+    }
+  }
+  renderList();
+};
 
 /* ══════════════════════════════════════════════════════════
    DRAWER
