@@ -4,8 +4,8 @@ name: Hosting Preview
 # (رابط مؤقت معزول عن الموقع الحيّ `live`). يعلّق الرابط على الـ PR.
 # لا يلمس production — الإنتاج ينشر فقط من deploy.yml على push إلى main.
 #
-# firebase-tools@v15 bug: hosting:channel:deploy يحاول CREATE قناة موجودة → 409.
-# الحل: نحذف القناة القديمة أولاً (|| true لو مش موجودة) ثم ننشئها من صفر.
+# Auth: google-github-actions/auth@v2 يضبط GOOGLE_APPLICATION_CREDENTIALS بشكل صحيح
+# قبل أي استدعاء لـ firebase-tools — هذا الـ ADC المعتمد من Google لأدوات CLI.
 
 on:
   pull_request:
@@ -25,19 +25,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
       - name: Deploy to Firebase Hosting preview channel
         id: deploy
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           CHANNEL_ID="pr${{ github.event.pull_request.number }}"
           echo "Channel: $CHANNEL_ID"
 
-          echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/fb-sa.json
-          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/fb-sa.json
-
-          # v13 handles existing channel gracefully (catches 409 internally during create)
-          # Delete first in case of "already active version" stale state (|| true if not found)
+          # حذف القناة القديمة لتجنب 409 (|| true لو مش موجودة)
           npx firebase-tools@13 hosting:channel:delete "$CHANNEL_ID" \
             --project business2card-c041b --force 2>&1 || true
 
@@ -48,16 +47,14 @@ jobs:
             2>&1 | tee /tmp/deploy-log.txt
           EXIT_CODE=${PIPESTATUS[0]}
 
-          # "already active version" (400) = channel is live, treat as success
+          # "already active version" (400) = المحتوى منشور بالفعل، treat as success
           if [ "$EXIT_CODE" -ne 0 ] && grep -q "current active version" /tmp/deploy-log.txt; then
             echo "ℹ️ Version already active — preview is live ✓"
             EXIT_CODE=0
           fi
 
-          exit $EXIT_CODE
-
-          rm -f /tmp/fb-sa.json
           echo "preview_channel=$CHANNEL_ID" >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE
 
       - name: Comment preview URL on PR
         if: success()
