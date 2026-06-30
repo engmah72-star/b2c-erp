@@ -1,8 +1,12 @@
 name: Hosting Preview
 
 # معاينة قبل النشر: ينشر فرع الـ PR على Firebase Hosting Preview Channel
-# (رابط مؤقت معزول عن الموقع الحيّ `live`). الـ action يعلّق الرابط على الـ PR.
+# (رابط مؤقت معزول عن الموقع الحيّ `live`). يعلّق الرابط على الـ PR.
 # لا يلمس production — الإنتاج ينشر فقط من deploy.yml على push إلى main.
+#
+# استبدلنا FirebaseExtended/action-hosting-deploy@v0 بـ firebase-tools مباشرة
+# لأن الـ action كان يفشل بـ 400 "is the current active version" عند كل re-deploy
+# بدون handling لهذا الـ idempotent case.
 
 on:
   pull_request:
@@ -23,10 +27,75 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Deploy to Firebase Hosting preview channel
-        uses: FirebaseExtended/action-hosting-deploy@v0
+        id: deploy
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          CHANNEL_ID="pr${{ github.event.pull_request.number }}"
+          echo "Channel: $CHANNEL_ID"
+
+          # كتابة Service Account لملف مؤقت
+          echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/fb-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/fb-sa.json
+
+          # Deploy — نلتقط stdout+stderr ونفحص الـ exit code يدويًا
+          npx firebase-tools@latest hosting:channel:deploy "$CHANNEL_ID" \
+            --project business2card-c041b \
+            --expires 7d \
+            --non-interactive \
+            2>&1 | tee /tmp/deploy-log.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+
+          rm -f /tmp/fb-sa.json
+
+          # "already active version" = نجاح idempotent — مش خطأ حقيقي
+          if [ $EXIT_CODE -ne 0 ] && grep -q "current active version" /tmp/deploy-log.txt; then
+            echo "ℹ️  Version already active on channel — preview is live ✓"
+            exit 0
+          fi
+
+          echo "preview_channel=$CHANNEL_ID" >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE
+
+      - name: Comment preview URL on PR
+        if: success()
+        uses: actions/github-script@v7
         with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: business2card-c041b
-          expires: 7d
-          # channelId مُهمَل عمداً → الـ action ينشئ قناة preview تلقائية لكل PR
+          script: |
+            const pr    = context.payload.pull_request.number;
+            const site  = 'business2card-c041b';
+            const chan  = `pr${pr}`;
+            const base  = `https://${site}--${chan}.web.app`;
+            const marker = '<!-- fb-preview-bot -->';
+
+            const body = [
+              marker,
+              `🔥 **Firebase Preview — PR #${pr}**`,
+              '',
+              `🔗 ${base}`,
+              '',
+              `📋 [order-register.html](${base}/order-register.html)`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: pr,
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+            });
+            const prev = comments.find(c => c.body.includes(marker));
+
+            if (prev) {
+              await github.rest.issues.updateComment({
+                comment_id: prev.id,
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: pr,
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                body,
+              });
+            }
