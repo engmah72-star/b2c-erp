@@ -4,8 +4,8 @@ name: Hosting Preview
 # (رابط مؤقت معزول عن الموقع الحيّ `live`). يعلّق الرابط على الـ PR.
 # لا يلمس production — الإنتاج ينشر فقط من deploy.yml على push إلى main.
 #
-# Auth: google-github-actions/auth@v2 يضبط GOOGLE_APPLICATION_CREDENTIALS بشكل صحيح
-# قبل أي استدعاء لـ firebase-tools — هذا الـ ADC المعتمد من Google لأدوات CLI.
+# Auth: firebase-tools يقرأ FIREBASE_TOKEN (Bearer) لا GOOGLE_APPLICATION_CREDENTIALS.
+# نولّد التوكن بأنفسنا من service account JSON عبر Node.js built-ins (بدون npm).
 
 on:
   pull_request:
@@ -25,10 +25,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - name: Generate Firebase auth token from service account
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node - <<'NODEOF'
+          const https  = require('https');
+          const crypto = require('crypto');
+          const fs     = require('fs');
+
+          const sa  = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+          const now = Math.floor(Date.now() / 1000);
+
+          const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+          const claim  = Buffer.from(JSON.stringify({
+            iss:   sa.client_email,
+            scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/firebase',
+            aud:   'https://oauth2.googleapis.com/token',
+            exp:   now + 3600,
+            iat:   now,
+          })).toString('base64url');
+
+          const toSign = `${header}.${claim}`;
+          const sig    = crypto.createSign('RSA-SHA256').update(toSign).sign(sa.private_key, 'base64url');
+          const jwt    = `${toSign}.${sig}`;
+
+          const body = `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`;
+          const req  = https.request(
+            { hostname: 'oauth2.googleapis.com', path: '/token', method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+            res => {
+              let d = '';
+              res.on('data', c => d += c);
+              res.on('end', () => {
+                const parsed = JSON.parse(d);
+                if (!parsed.access_token) {
+                  console.error('Token exchange failed:', d);
+                  process.exit(1);
+                }
+                fs.appendFileSync(process.env.GITHUB_ENV, `FIREBASE_TOKEN=${parsed.access_token}\n`);
+                console.log('✓ FIREBASE_TOKEN written to env');
+              });
+            }
+          );
+          req.on('error', e => { console.error(e); process.exit(1); });
+          req.write(body);
+          req.end();
+          NODEOF
 
       - name: Deploy to Firebase Hosting preview channel
         id: deploy
