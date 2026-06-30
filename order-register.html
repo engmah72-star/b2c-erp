@@ -459,6 +459,62 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* Finance tab */
+.fin-summary-card {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 16px 14px;
+  margin-bottom: 2px;
+}
+.fin-summary-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.fin-summary-label { font-size: 11px; font-weight: 700; color: var(--dim2); text-transform: uppercase; letter-spacing: .04em; }
+.fin-summary-amount { font-size: 22px; font-weight: 900; color: var(--snow); }
+.fin-currency { font-size: 13px; font-weight: 600; color: var(--dim2); }
+.fin-progress-wrap {
+  height: 6px;
+  background: rgba(255,255,255,.08);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.fin-progress-bar { height: 100%; background: var(--g,#22c55e); border-radius: 4px; transition: width .4s ease; }
+.fin-summary-row { display: flex; gap: 0; }
+.fin-summary-col { flex: 1; text-align: center; }
+.fin-summary-sep { width: 1px; background: var(--line); margin: 0 8px; flex-shrink: 0; }
+.fin-col-lbl { font-size: 11px; color: var(--dim2); font-weight: 600; margin-bottom: 4px; }
+.fin-col-val { font-size: 15px; font-weight: 800; }
+.fin-col-paid .fin-col-val { color: var(--g,#22c55e); }
+.fin-col-rem .fin-col-val  { color: var(--r,#ef4444); }
+.fin-extras { margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+.fin-extra-tag { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; }
+.fin-tag-disc { background: rgba(251,191,36,.12); color: var(--y,#fbbf24); }
+.fin-tag-ship { background: rgba(167,139,250,.12); color: var(--b,#a78bfa); }
+.fin-pay-item {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.fin-pay-main { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+.fin-pay-type { font-size: var(--fs-sm); font-weight: 700; color: var(--snow); }
+.fin-pay-amt  { font-size: var(--fs-sm); font-weight: 900; color: var(--snow); }
+.fin-pay-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fin-pay-status { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 5px; }
+.fin-pay-approved { background: rgba(34,197,94,.15); color: var(--g,#22c55e); }
+.fin-pay-rejected, .fin-pay-cancelled { background: rgba(239,68,68,.12); color: var(--r,#ef4444); }
+.fin-pay-pending  { background: rgba(251,191,36,.12); color: var(--y,#fbbf24); }
+.fin-pay-date { font-size: 11px; color: var(--dim2); }
+.fin-pay-receipt { font-size: 11px; color: var(--b,#a78bfa); text-decoration: none; margin-inline-start: auto; }
+.fin-pay-receipt:hover { text-decoration: underline; }
+.fin-empty { text-align: center; color: var(--dim2); font-size: var(--fs-sm); padding: 24px 0; font-style: italic; }
+
 .dr-fin-row {
   display: flex;
   justify-content: space-between;
@@ -743,6 +799,7 @@
   <div class="dr-tabs">
     <button class="dr-tab active" id="tab-details" onclick="switchTab('details')">📋 تفاصيل</button>
     <button class="dr-tab" id="tab-actions" onclick="switchTab('actions')">⚡ إجراءات</button>
+    <button class="dr-tab" id="tab-finance" onclick="switchTab('finance')">💰 الحسابات</button>
   </div>
   <div class="dr-body" id="dr-body">
     <div class="dr-loading">⏳ جاري التحميل...</div>
@@ -1069,6 +1126,7 @@ window.switchTab = function switchTab(tab) {
   activeTab = tab;
   $('tab-details').classList.toggle('active', tab === 'details');
   $('tab-actions').classList.toggle('active', tab === 'actions');
+  $('tab-finance').classList.toggle('active', tab === 'finance');
 
   if (tab === 'actions' && drawerOrder) {
     loadStageEmployees(drawerOrder.stage).then(() => renderDrawerTab());
@@ -1079,7 +1137,8 @@ window.switchTab = function switchTab(tab) {
 
 function renderDrawerTab() {
   if (!drawerOrder) return;
-  if (activeTab === 'details') renderDetailsTab(drawerOrder);
+  if (activeTab === 'details')  renderDetailsTab(drawerOrder);
+  else if (activeTab === 'finance') renderFinanceTab(drawerOrder);
   else                          renderActionsTab(drawerOrder);
 }
 
@@ -1182,6 +1241,92 @@ function renderDetailsTab(o) {
     </div>` : ''}
   </div>
   ${timelineHtml}`;
+}
+
+/* ── Finance tab ────────────────────────────────────────── */
+async function renderFinanceTab(o) {
+  const salePrice = Number(o.salePrice || 0);
+  const custShip  = Number(o.customerShipFee || o.customerShippingFee || 0);
+  const disc      = Number(o.discount || 0);
+  const paid      = Number(o.totalPaid || 0);
+  const gross     = Math.max(0, salePrice + custShip - disc);
+  const remaining = Math.max(0, gross - paid);
+  const pct       = gross > 0 ? Math.min(100, Math.round((paid / gross) * 100)) : 0;
+
+  $('dr-body').innerHTML = `
+  <div class="fin-summary-card">
+    <div class="fin-summary-total">
+      <span class="fin-summary-label">إجمالي الأوردر</span>
+      <span class="fin-summary-amount">${gross.toLocaleString('ar-EG')} <span class="fin-currency">ج.م</span></span>
+    </div>
+    <div class="fin-progress-wrap">
+      <div class="fin-progress-bar" style="width:${pct}%"></div>
+    </div>
+    <div class="fin-summary-row">
+      <div class="fin-summary-col fin-col-paid">
+        <div class="fin-col-lbl">المدفوع</div>
+        <div class="fin-col-val">${paid.toLocaleString('ar-EG')} ج.م</div>
+      </div>
+      <div class="fin-summary-sep"></div>
+      <div class="fin-summary-col fin-col-rem">
+        <div class="fin-col-lbl">المتبقي</div>
+        <div class="fin-col-val">${remaining.toLocaleString('ar-EG')} ج.م</div>
+      </div>
+    </div>
+    ${disc > 0 || custShip > 0 ? `<div class="fin-extras">
+      ${disc > 0 ? `<span class="fin-extra-tag fin-tag-disc">خصم −${disc.toLocaleString('ar-EG')} ج.م</span>` : ''}
+      ${custShip > 0 ? `<span class="fin-extra-tag fin-tag-ship">شحن +${custShip.toLocaleString('ar-EG')} ج.م</span>` : ''}
+    </div>` : ''}
+  </div>
+  <div class="dr-section-title" style="margin:16px 0 10px">سجل المدفوعات</div>
+  <div id="fin-payments-list"><div class="dr-loading">⏳ جاري التحميل...</div></div>`;
+
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'payment_requests'),
+        where('orderId', '==', o.id || o._id),
+        orderBy('requestedAt', 'desc'),
+        limit(20))
+    );
+    const payments = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const el = document.getElementById('fin-payments-list');
+    if (!el) return;
+    if (!payments.length) {
+      el.innerHTML = '<div class="fin-empty">لا توجد مدفوعات مسجّلة</div>';
+      return;
+    }
+    const STATUS_LABELS = { requested:'مطلوب', awaiting_receipt:'ينتظر إيصال',
+      pending:'قيد المراجعة', approved:'معتمد', rejected:'مرفوض', cancelled:'ملغي' };
+    const STATUS_CLASS  = { approved:'fin-pay-approved', rejected:'fin-pay-rejected',
+      cancelled:'fin-pay-cancelled', requested:'fin-pay-pending',
+      awaiting_receipt:'fin-pay-pending', pending:'fin-pay-pending' };
+    const TYPE_LABELS   = { client_payment:'دفعة عميل', client_refund:'استرداد',
+      supplier_payment:'مورد', salary_payment:'مرتب' };
+    el.innerHTML = payments.map(p => {
+      const amt    = Number(p.amount || 0).toLocaleString('ar-EG');
+      const status = STATUS_LABELS[p.status] || p.status || '—';
+      const cls    = STATUS_CLASS[p.status]  || 'fin-pay-pending';
+      const type   = TYPE_LABELS[p.type] || p.type || '—';
+      const ts     = fmtTs(p.requestedAt || p.createdAt);
+      const rcpt   = p.receiptImageUrl
+        ? `<a class="fin-pay-receipt" href="${esc(p.receiptImageUrl)}" target="_blank" rel="noopener">📎 إيصال</a>`
+        : '';
+      return `<div class="fin-pay-item">
+        <div class="fin-pay-main">
+          <span class="fin-pay-type">${esc(type)}</span>
+          <span class="fin-pay-amt">${esc(amt)} ج.م</span>
+        </div>
+        <div class="fin-pay-meta">
+          <span class="fin-pay-status ${cls}">${esc(status)}</span>
+          <span class="fin-pay-date">${esc(ts)}</span>
+          ${rcpt}
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    const el = document.getElementById('fin-payments-list');
+    if (el) el.innerHTML = '<div class="fin-empty">تعذّر تحميل المدفوعات</div>';
+  }
 }
 
 /* ── Actions tab ────────────────────────────────────────── */
