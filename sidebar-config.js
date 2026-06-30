@@ -79,6 +79,7 @@ import('./error-reporter-init.js').catch(function(){});
     { file:'inbox.html',             label:'مساحة التواصل',     ico:'💬', group:'main',   public:true },
 
     // ─── الأوردرات (orders) ───
+    { file:'order-register.html',    label:'الأوردرات',         ico:'📋', group:'orders', perm:'order-rail' },
     { file:'order-rail.html',        label:'سجل الأوردرات',    ico:'🚂', group:'orders', perm:'order-rail' },
     { file:'order-log.html',         label:'سجل النشاط',       ico:'📋', group:'orders', perm:'order-rail' },
     { file:'portal-orders.html',     label:'أوردرات البوابة',  ico:'🌐', group:'orders', perm:'clients' },
