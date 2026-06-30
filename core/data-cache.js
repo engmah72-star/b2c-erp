@@ -63,7 +63,7 @@ const _tabId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 let _channel = null;
 const _crossTabStats = { sent: 0, received: 0, syncsApplied: 0 };
 
-if (typeof BroadcastChannel !== 'undefined') {
+if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
   try { _channel = new BroadcastChannel('b2c-data-cache'); } catch (_) {}
 }
 

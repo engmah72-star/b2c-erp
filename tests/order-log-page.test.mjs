@@ -136,19 +136,19 @@ test('operation_manager يرى order-log.html في السايدبار (pages:["*
   assert(pages.includes('order-log.html'), 'operation_manager لا يرى order-log.html');
 });
 
-test('graphic_designer لا يرى order-log.html (لا perm order-rail)', () => {
+test('graphic_designer يرى order-log.html (لديه perm order-rail)', () => {
   const pages = pagesFor('graphic_designer');
-  assert(!pages.includes('order-log.html'), 'graphic_designer يجب ألا يرى order-log.html');
+  assert(pages.includes('order-log.html'), 'graphic_designer يجب أن يرى order-log.html');
 });
 
-test('production_agent لا يرى order-log.html (لا perm order-rail)', () => {
+test('production_agent يرى order-log.html (لديه perm order-rail)', () => {
   const pages = pagesFor('production_agent');
-  assert(!pages.includes('order-log.html'), 'production_agent يجب ألا يرى order-log.html');
+  assert(pages.includes('order-log.html'), 'production_agent يجب أن يرى order-log.html');
 });
 
-test('shipping_officer لا يرى order-log.html (لا perm order-rail)', () => {
+test('shipping_officer يرى order-log.html (لديه perm order-rail)', () => {
   const pages = pagesFor('shipping_officer');
-  assert(!pages.includes('order-log.html'), 'shipping_officer يجب ألا يرى order-log.html');
+  assert(pages.includes('order-log.html'), 'shipping_officer يجب أن يرى order-log.html');
 });
 
 // ── order-log يظهر بعد order-rail في السايدبار (ترتيب مقصود) ──

@@ -140,35 +140,35 @@ test('build: customer_service sees clients/design, NOT admin pages', () => {
   const pages = pagesFor('customer_service');
   ['clients.html', 'design.html', 'designer-hub.html'].forEach(p => assertHas(pages, p));
   ['employees.html', 'settings.html', 'accounts.html', 'reports.html',
-    'suppliers.html', 'production.html', 'shipping.html'].forEach(p => assertHasNot(pages, p));
+    'suppliers.html', 'exec-workspace.html', 'shipping.html'].forEach(p => assertHasNot(pages, p));
 });
 
-test('build: graphic_designer sees design only (no clients/accounts/production)', () => {
+test('build: graphic_designer sees design only (no clients/accounts/exec-workspace)', () => {
   const pages = pagesFor('graphic_designer');
   ['design.html', 'designer-hub.html'].forEach(p => assertHas(pages, p));
-  ['clients.html', 'accounts.html', 'production.html'].forEach(p => assertHasNot(pages, p));
+  ['clients.html', 'accounts.html', 'exec-workspace.html'].forEach(p => assertHasNot(pages, p));
 });
 
 test('build: design_operator mirrors graphic_designer page set', () => {
   assertEq(JSON.stringify(pagesFor('design_operator')), JSON.stringify(pagesFor('graphic_designer')));
 });
 
-test('build: production_agent sees production + supplier-requests only', () => {
+test('build: production_agent sees exec-workspace + supplier-requests only', () => {
   const pages = pagesFor('production_agent');
-  ['production.html', 'supplier-requests.html'].forEach(p => assertHas(pages, p));
+  ['exec-workspace.html', 'supplier-requests.html'].forEach(p => assertHas(pages, p));
   ['clients.html', 'design.html', 'accounts.html', 'shipping.html'].forEach(p => assertHasNot(pages, p));
 });
 
 test('build: shipping_officer sees shipping + clients (via canViewClients)', () => {
   const pages = pagesFor('shipping_officer');
   ['shipping.html', 'shipping-accounts.html', 'clients.html'].forEach(p => assertHas(pages, p));
-  ['design.html', 'accounts.html', 'production.html'].forEach(p => assertHasNot(pages, p));
+  ['design.html', 'accounts.html', 'exec-workspace.html'].forEach(p => assertHasNot(pages, p));
 });
 
 test('build: wallet_manager sees accounts/reports + clients (via canViewClients)', () => {
   const pages = pagesFor('wallet_manager');
   ['accounts.html', 'reports.html', 'clients.html'].forEach(p => assertHas(pages, p));
-  ['design.html', 'production.html', 'shipping.html', 'employees.html'].forEach(p => assertHasNot(pages, p));
+  ['design.html', 'exec-workspace.html', 'shipping.html', 'employees.html'].forEach(p => assertHasNot(pages, p));
 });
 
 // ══ guard() — page access redirect logic ═════════════════════════
