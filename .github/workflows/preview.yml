@@ -4,9 +4,8 @@ name: Hosting Preview
 # (رابط مؤقت معزول عن الموقع الحيّ `live`). يعلّق الرابط على الـ PR.
 # لا يلمس production — الإنتاج ينشر فقط من deploy.yml على push إلى main.
 #
-# استبدلنا FirebaseExtended/action-hosting-deploy@v0 بـ firebase-tools مباشرة
-# لأن الـ action كان يفشل بـ 400 "is the current active version" عند كل re-deploy
-# بدون handling لهذا الـ idempotent case.
+# firebase-tools@v15 bug: hosting:channel:deploy يحاول CREATE قناة موجودة → 409.
+# الحل: نحذف القناة القديمة أولاً (|| true لو مش موجودة) ثم ننشئها من صفر.
 
 on:
   pull_request:
@@ -34,38 +33,32 @@ jobs:
           CHANNEL_ID="pr${{ github.event.pull_request.number }}"
           echo "Channel: $CHANNEL_ID"
 
-          # كتابة Service Account لملف مؤقت
           echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/fb-sa.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/fb-sa.json
 
-          # Deploy — نلتقط stdout+stderr ونفحص الـ exit code يدويًا
+          # حذف القناة القديمة لتجنب 409 + "already active version"
+          # (|| true لو القناة مش موجودة أصلاً)
+          npx firebase-tools@latest hosting:channel:delete "$CHANNEL_ID" \
+            --project business2card-c041b --force 2>&1 || true
+
+          # Deploy من صفر — بدون قناة موجودة، لا توجد أخطاء idempotency
           npx firebase-tools@latest hosting:channel:deploy "$CHANNEL_ID" \
             --project business2card-c041b \
             --expires 7d \
-            --non-interactive \
-            2>&1 | tee /tmp/deploy-log.txt
-          EXIT_CODE=${PIPESTATUS[0]}
+            --non-interactive
 
           rm -f /tmp/fb-sa.json
-
-          # "already active version" = نجاح idempotent — مش خطأ حقيقي
-          if [ $EXIT_CODE -ne 0 ] && grep -q "current active version" /tmp/deploy-log.txt; then
-            echo "ℹ️  Version already active on channel — preview is live ✓"
-            exit 0
-          fi
-
           echo "preview_channel=$CHANNEL_ID" >> "$GITHUB_OUTPUT"
-          exit $EXIT_CODE
 
       - name: Comment preview URL on PR
         if: success()
         uses: actions/github-script@v7
         with:
           script: |
-            const pr    = context.payload.pull_request.number;
-            const site  = 'business2card-c041b';
-            const chan  = `pr${pr}`;
-            const base  = `https://${site}--${chan}.web.app`;
+            const pr     = context.payload.pull_request.number;
+            const site   = 'business2card-c041b';
+            const chan   = `pr${pr}`;
+            const base   = `https://${site}--${chan}.web.app`;
             const marker = '<!-- fb-preview-bot -->';
 
             const body = [
@@ -83,7 +76,6 @@ jobs:
               repo:  context.repo.repo,
             });
             const prev = comments.find(c => c.body.includes(marker));
-
             if (prev) {
               await github.rest.issues.updateComment({
                 comment_id: prev.id,
