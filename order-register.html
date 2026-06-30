@@ -404,6 +404,41 @@
 }
 .dr-open-link:hover { border-color: var(--line2); color: var(--snow); }
 
+.dr-fin-strip {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 10px 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.dr-fin-strip-col {
+  flex: 1;
+  text-align: center;
+}
+.dr-fin-strip-lbl {
+  font-size: 10px;
+  color: var(--dim2);
+  font-weight: 600;
+  margin-bottom: 2px;
+  letter-spacing: .02em;
+}
+.dr-fin-strip-val {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--fg);
+  direction: ltr;
+}
+.dr-fin-strip-rem { color: var(--r, #ef4444); }
+.dr-fin-strip-rem.paid { color: var(--g, #22c55e); }
+.dr-fin-strip-cost { color: var(--dim2); }
+.dr-fin-strip-sep {
+  width: 1px;
+  height: 28px;
+  background: var(--line);
+  flex-shrink: 0;
+}
 .dr-tabs {
   display: flex;
   border-bottom: 1px solid var(--line);
@@ -796,6 +831,22 @@
       <button class="dr-close" onclick="closeDrawer()" aria-label="إغلاق">✕</button>
     </div>
   </div>
+  <div class="dr-fin-strip" id="dr-fin-strip">
+    <div class="dr-fin-strip-col">
+      <div class="dr-fin-strip-lbl">سعر البيع</div>
+      <div class="dr-fin-strip-val" id="dfs-sale">—</div>
+    </div>
+    <div class="dr-fin-strip-sep"></div>
+    <div class="dr-fin-strip-col">
+      <div class="dr-fin-strip-lbl">المتبقي</div>
+      <div class="dr-fin-strip-val dr-fin-strip-rem" id="dfs-rem">—</div>
+    </div>
+    <div class="dr-fin-strip-sep" id="dfs-cost-sep" style="display:none"></div>
+    <div class="dr-fin-strip-col" id="dfs-cost-col" style="display:none">
+      <div class="dr-fin-strip-lbl">التكلفة</div>
+      <div class="dr-fin-strip-val dr-fin-strip-cost" id="dfs-cost">—</div>
+    </div>
+  </div>
   <div class="dr-tabs">
     <button class="dr-tab active" id="tab-details" onclick="switchTab('details')">📋 تفاصيل</button>
     <button class="dr-tab" id="tab-actions" onclick="switchTab('actions')">⚡ إجراءات</button>
@@ -1124,6 +1175,7 @@ window.openDrawer = async function openDrawer(orderId) {
     $('dr-title').textContent = drawerOrder.clientName || '—';
     $('dr-sub').textContent   = `#${displayId} · ${stageDef.label || drawerOrder.stage}`;
 
+    updateFinStrip(drawerOrder);
     renderDrawerTab();
   });
 
@@ -1131,6 +1183,30 @@ window.openDrawer = async function openDrawer(orderId) {
   if (!walletsLoaded) loadWallets();
   if (drawerOrder) loadStageEmployees(drawerOrder.stage);
 };
+
+/* ── Financial strip (above tabs) ──────────────────────── */
+const COST_ROLES = ['admin', 'operation_manager', 'wallet_manager'];
+function updateFinStrip(o) {
+  const salePrice = Number(o.salePrice || 0);
+  const custShip  = Number(o.customerShipFee || o.customerShippingFee || 0);
+  const disc      = Number(o.discount || 0);
+  const paid      = Number(o.totalPaid || 0);
+  const gross     = Math.max(0, salePrice + custShip - disc);
+  const remaining = Math.max(0, gross - paid);
+  const priceCost = Number(o.priceCost || 0);
+  const fmt = n => n.toLocaleString('ar-EG') + ' ج.م';
+
+  $('dfs-sale').textContent = fmt(salePrice);
+
+  const remEl = $('dfs-rem');
+  remEl.textContent = fmt(remaining);
+  remEl.classList.toggle('paid', remaining === 0);
+
+  const canSeeCost = COST_ROLES.includes(currentUserRole);
+  $('dfs-cost-sep').style.display  = canSeeCost ? '' : 'none';
+  $('dfs-cost-col').style.display  = canSeeCost ? '' : 'none';
+  if (canSeeCost) $('dfs-cost').textContent = fmt(priceCost);
+}
 
 /* ── Close drawer ───────────────────────────────────────── */
 window.closeDrawer = function closeDrawer() {
