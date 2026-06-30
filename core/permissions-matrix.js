@@ -337,7 +337,7 @@ export const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
     canViewCosts: false, canAccessAccounts: false, canAccessEmployees: false,
   },
   wallet_manager: {
-    pages: ['accounts', 'reports', 'order-rail'],
+    pages: ['accounts', 'reports', 'order-rail', 'supplier-payments'],
     canSeePrices: true, canSeeAllOrders: true, canAddOrders: false,
     canViewClients: true, canAddClients: false,
     canAssignDesigner: false, canAssignTasks: false,
