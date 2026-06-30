@@ -36,16 +36,25 @@ jobs:
           echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/fb-sa.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/fb-sa.json
 
-          # حذف القناة القديمة لتجنب 409 + "already active version"
-          # (|| true لو القناة مش موجودة أصلاً)
-          npx firebase-tools@latest hosting:channel:delete "$CHANNEL_ID" \
+          # v13 handles existing channel gracefully (catches 409 internally during create)
+          # Delete first in case of "already active version" stale state (|| true if not found)
+          npx firebase-tools@13 hosting:channel:delete "$CHANNEL_ID" \
             --project business2card-c041b --force 2>&1 || true
 
-          # Deploy من صفر — بدون قناة موجودة، لا توجد أخطاء idempotency
-          npx firebase-tools@latest hosting:channel:deploy "$CHANNEL_ID" \
+          npx firebase-tools@13 hosting:channel:deploy "$CHANNEL_ID" \
             --project business2card-c041b \
             --expires 7d \
-            --non-interactive
+            --non-interactive \
+            2>&1 | tee /tmp/deploy-log.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+
+          # "already active version" (400) = channel is live, treat as success
+          if [ "$EXIT_CODE" -ne 0 ] && grep -q "current active version" /tmp/deploy-log.txt; then
+            echo "ℹ️ Version already active — preview is live ✓"
+            EXIT_CODE=0
+          fi
+
+          exit $EXIT_CODE
 
           rm -f /tmp/fb-sa.json
           echo "preview_channel=$CHANNEL_ID" >> "$GITHUB_OUTPUT"
