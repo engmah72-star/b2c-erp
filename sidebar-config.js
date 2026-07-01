@@ -101,6 +101,7 @@ import('./error-reporter-init.js').catch(function(){});
     { file:'accounts.html',          label:'الحسابات',         ico:'💰', group:'admin',  perm:'accounts' },
     { file:'approvals.html',         label:'الاعتمادات',       ico:'🔐', group:'admin',  perm:'approvals' },
     { file:'suppliers.html',         label:'الموردين',         ico:'▣',  group:'admin',  perm:'suppliers' },
+    { file:'supplier-payments.html', label:'مدفوعات الموردين', ico:'💳', group:'admin',  perm:'supplier-payments' },
     { file:'products.html',          label:'المنتجات',         ico:'◈',  group:'admin',  perm:'products' },
     { file:'reports.html',           label:'التقارير',         ico:'📊', group:'admin',  perm:'reports' },
     { file:'employees.html',         label:'الموظفين',         ico:'👥', group:'admin',  adminOnly:true },
