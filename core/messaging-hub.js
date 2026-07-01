@@ -50,6 +50,27 @@ export const DELIVERY_STATUS = Object.freeze({
   FAILED: 'failed',
 });
 
+// ── قنوات الفرق (C2: مصدر واحد — كانت inline في inbox.html) ──
+// roles:'*' = كل الموظفين. كل دور لازم يكون له قناة فريق واحدة على الأقل
+// غير #عام (يفرضه tests/core-messaging-hub.test.mjs).
+export const TEAM_CHANNELS = Object.freeze([
+  Object.freeze({ key: 'general',    name: '#عام',           ico: '📢', roles: '*' }),
+  Object.freeze({ key: 'design',     name: '#التصميم',       ico: '🎨', roles: Object.freeze(['graphic_designer', 'design_operator', 'admin', 'operation_manager']) }),
+  Object.freeze({ key: 'production', name: '#التنفيذ',       ico: '🏭', roles: Object.freeze(['production_agent', 'admin', 'operation_manager']) }),
+  Object.freeze({ key: 'shipping',   name: '#الشحن',         ico: '🚚', roles: Object.freeze(['shipping_officer', 'admin', 'operation_manager']) }),
+  Object.freeze({ key: 'cs',         name: '#خدمة-العملاء',  ico: '💬', roles: Object.freeze(['customer_service', 'admin', 'operation_manager']) }),
+  Object.freeze({ key: 'finance',    name: '#الحسابات',      ico: '💰', roles: Object.freeze(['wallet_manager', 'admin', 'operation_manager']) }),
+]);
+
+/**
+ * قنوات الفريق المتاحة لدور معيّن.
+ * @param {string} role
+ * @returns {Array} subset of TEAM_CHANNELS
+ */
+export function channelsForRole(role) {
+  return TEAM_CHANNELS.filter(c => c.roles === '*' || c.roles.includes(role));
+}
+
 export const MESSAGE_TEMPLATES = Object.freeze([
   { id: 'order_update', label: 'تحديث أوردر', text: '📦 تحديث على الأوردر #{code}: {detail}' },
   { id: 'design_ready', label: 'التصميم جاهز', text: '🎨 التصميم جاهز للمراجعة — الأوردر #{code}' },
