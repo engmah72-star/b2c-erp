@@ -353,7 +353,7 @@ const cM = id => document.getElementById('ov-'+id)?.classList.remove('open');
 window.cM = cM;
 
 // ══ State ══
-let suppliers = [], supplierOrders = [], payments = [], wallets = [];
+let suppliers = [], supplierOrders = [], payments = [], wallets = [], allOrders = [];
 let activeId = null;
 let currentFilter = 'due';
 let currentSort = 'due';
@@ -406,6 +406,10 @@ onAuthStateChanged(auth, async u => {
     cachedQuery('wallets').limit(QL.WALLETS).build(),
     docs => { wallets = docs; fillWallets(); }
   );
+  dataCache.subscribe(
+    cachedQuery('orders').orderBy('createdAt', 'desc').limit(QL.ORDERS_FULL).build(),
+    docs => { allOrders = docs; schedule(); }
+  );
 });
 
 // ══ Wallets ══
@@ -421,10 +425,12 @@ function fillWallets() {
 
 // ══ Balance helpers ══
 function getSupBalance(supId) {
-  // مصدر الحقيقة: supplier_orders (للمشتريات) + supplier_payments (للمدفوعات)
-  const purchases = supplierOrders
-    .filter(so => so.supplierId === supId)
-    .reduce((s, so) => s + (parseFloat(so.total) || 0), 0);
+  // مصدر الحقيقة: orders.costItems (للمشتريات) — يطابق accounts-render.js
+  // supplier_orders تُستخدم فقط في modal الدفع (FIFO) لا في حساب الرصيد
+  const purchases = allOrders
+    .flatMap(o => o.costItems || [])
+    .filter(ci => ci.supplierId === supId)
+    .reduce((s, ci) => s + (parseFloat(ci.total) || 0), 0);
   const paid = payments
     .filter(p => p.supplierId === supId)
     .reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
@@ -444,12 +450,15 @@ function getOutstandingOrders(supId) {
 function getAgingDays(supId) {
   const { due } = getSupBalance(supId);
   if (due <= 0) return 0;
-  const oldest = supplierOrders
-    .filter(so => so.supplierId === supId)
-    .reduce((min, so) => {
-      const t = so.createdAt?.seconds || 0;
-      return t && t < min ? t : min;
-    }, Infinity);
+  // أقدم costItem لهذا المورد عبر الأوردرات
+  let oldest = Infinity;
+  for (const o of allOrders) {
+    for (const ci of (o.costItems || [])) {
+      if (ci.supplierId !== supId) continue;
+      const t = ci.createdAt?.seconds || o.createdAt?.seconds || 0;
+      if (t && t < oldest) oldest = t;
+    }
+  }
   return oldest === Infinity ? 0 : Math.floor((Date.now() / 1000 - oldest) / 86400);
 }
 
