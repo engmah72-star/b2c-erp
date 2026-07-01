@@ -132,12 +132,46 @@ export function calcTotalPrinting(allOrders = []) {
 }
 
 /**
- * Supplier due = total cost items - sum of supplier_payments (clamped at 0).
+ * تفصيل استحقاقات الموردين — المصدر الوحيد للرقم في كل الشاشات (RULE 1).
+ *
+ * لكل supplierId: due = max(0, تكاليفه − مدفوعاته). البنود الملغاة
+ * (status==='voided') مستبعدة. البنود بلا supplierId تتجمّع في bucket
+ * منفصل (key='') بدل ما تختفي من العرض التفصيلي وتظهر في الإجمالي فقط —
+ * ده كان سبب اختلاف الـ KPI عن تبويب الموردين.
+ * الـ clamp لكل مورد على حدة: زيادة مدفوعة لمورد لا تُخصم من مستحق مورد آخر.
+ *
+ * @returns {{ total:number, assigned:number, unassigned:number,
+ *             entries: Array<{supplierId:string, cost:number, paid:number, due:number}> }}
+ */
+export function calcSupplierDueBreakdown(allOrders = [], supplierPays = []) {
+  const byKey = {};
+  const bucket = (key) => (byKey[key] ||= { supplierId: key, cost: 0, paid: 0, due: 0 });
+  for (const o of allOrders) {
+    for (const ci of (o.costItems || [])) {
+      if (ci.status === 'voided') continue;
+      bucket(ci.supplierId || '').cost += parseFloat(ci.total) || 0;
+    }
+  }
+  for (const p of supplierPays) {
+    bucket(p.supplierId || '').paid += parseFloat(p.amount) || 0;
+  }
+  let total = 0, unassigned = 0;
+  const entries = Object.values(byKey);
+  for (const e of entries) {
+    e.due = Math.max(0, e.cost - e.paid);
+    total += e.due;
+    if (!e.supplierId) unassigned = e.due;
+  }
+  entries.sort((a, b) => b.due - a.due);
+  return { total, assigned: total - unassigned, unassigned, entries };
+}
+
+/**
+ * Supplier due — Σ استحقاقات per-supplier (مقفولة عند 0 لكل مورد) شاملة
+ * بنود «بدون مورد». نفس الرقم الذي يجمعه تبويب الموردين + drill التفاصيل.
  */
 export function calcSupplierDue(allOrders = [], supplierPays = []) {
-  const totalCosts = calcTotalOrderCosts(allOrders);
-  const totalPaid = supplierPays.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-  return Math.max(0, totalCosts - totalPaid);
+  return calcSupplierDueBreakdown(allOrders, supplierPays).total;
 }
 
 /**

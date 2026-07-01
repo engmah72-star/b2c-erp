@@ -6,7 +6,7 @@ import {
   calcWalletBalanceTotal, calcPeriodFlow,
   calcPendingRevenue, calcEarnedRevenue,
   calcShippingDebt, calcClientDebt,
-  calcTotalOrderCosts, calcSupplierDue, calcShippingCollected,
+  calcTotalOrderCosts, calcSupplierDue, calcSupplierDueBreakdown, calcShippingCollected,
   calcTotalPrinting,
   auditWalletBalances,
 } from '../core/accounts-kpis.js';
@@ -171,6 +171,56 @@ test('calcSupplierDue: clamps at 0 when overpaid', () => {
   const orders = [{ costItems: [{ total: 100 }] }];
   const payments = [{ amount: 500 }];
   assertEq(calcSupplierDue(orders, payments), 0);
+});
+
+// ── calcSupplierDueBreakdown (مصدر واحد لكل شاشات مستحق الموردين) ────
+test('breakdown: clamp لكل مورد على حدة — زيادة مورد لا تُخصم من مستحق آخر', () => {
+  const orders = [{ costItems: [
+    { supplierId: 's1', total: 500 },
+    { supplierId: 's2', total: 200 },
+  ] }];
+  const payments = [
+    { supplierId: 's1', amount: 100 },
+    { supplierId: 's2', amount: 900 }, // زيادة 700 لمورد s2
+  ];
+  const bd = calcSupplierDueBreakdown(orders, payments);
+  // النمط القديم (netting إجمالي): 700-1000 → 0. الصحيح: s1 لسه له 400.
+  assertEq(bd.total, 400);
+});
+
+test('breakdown: البنود الملغاة (voided) مستبعدة', () => {
+  const orders = [{ costItems: [
+    { supplierId: 's1', total: 300 },
+    { supplierId: 's1', total: 999, status: 'voided' },
+  ] }];
+  const bd = calcSupplierDueBreakdown(orders, []);
+  assertEq(bd.total, 300);
+});
+
+test('breakdown: بنود بلا مورد تتجمّع في bucket منفصل وتدخل الإجمالي', () => {
+  const orders = [{ costItems: [
+    { supplierId: 's1', total: 500 },
+    { total: 250 },                    // بدون مورد
+    { supplierId: '', total: 50 },     // بدون مورد
+  ] }];
+  const payments = [{ supplierId: 's1', amount: 200 }];
+  const bd = calcSupplierDueBreakdown(orders, payments);
+  assertEq(bd.assigned, 300);
+  assertEq(bd.unassigned, 300);
+  assertEq(bd.total, 600);
+  // الإجمالي = مجموع صفوف التفصيل بالضبط (سبب بلاغ 60 ألف مقابل 39 ألف)
+  assertEq(bd.total, bd.entries.reduce((s, e) => s + e.due, 0));
+});
+
+test('breakdown: calcSupplierDue = breakdown.total (نفس الرقم في كل الشاشات)', () => {
+  const orders = [{ costItems: [
+    { supplierId: 's1', total: 500 },
+    { total: 100 },
+    { supplierId: 's2', total: 80, status: 'voided' },
+  ] }];
+  const payments = [{ supplierId: 's1', amount: 150 }];
+  assertEq(calcSupplierDue(orders, payments), calcSupplierDueBreakdown(orders, payments).total);
+  assertEq(calcSupplierDue(orders, payments), 450);
 });
 
 // ── calcShippingCollected ───────────────────────────────────────────
