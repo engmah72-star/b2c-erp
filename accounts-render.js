@@ -5,6 +5,8 @@
 // Pure view module — receives state + helpers, returns HTML strings.
 // No Firebase writes. No business logic. Actions wired in accounts.html.
 
+import { calcSupplierDueBreakdown } from './core/accounts-kpis.js';
+
 const _esc = s => (s || '').replace(/'/g, "\\'");
 
 // ── Urgency scoring ────────────────────────────────────────
@@ -129,14 +131,13 @@ function _actionQueue({ allOrders, suppliers, supplierPays, calcRem, fn, ORDER_S
     });
 
   // --- Supplier payment items ---
+  // نفس مصدر KPI «مستحق للموردين» (RULE 1) — voided مستبعدة
+  const supBd = calcSupplierDueBreakdown(allOrders, supplierPays);
   const supItems = suppliers.map(s => {
-    const cost = allOrders.flatMap(o => o.costItems||[])
-      .filter(ci => ci.supplierId === s._id)
-      .reduce((sum, ci) => sum + (parseFloat(ci.total)||0), 0);
-    const paid = supplierPays
-      .filter(p => p.supplierId === s._id)
-      .reduce((sum, p) => sum + (parseFloat(p.amount)||0), 0);
-    const due = Math.max(0, cost - paid);
+    const be = supBd.entries.find(e => e.supplierId === s._id);
+    const cost = be?.cost || 0;
+    const paid = be?.paid || 0;
+    const due = be?.due || 0;
     if (!due) return null;
     const col = SPCOL[s.specialty] || 'var(--b)';
     return {

@@ -9,6 +9,7 @@
 // Usage:
 //   import { renderKpiDrill } from './accounts-kpi-panel.js';
 import { costTypesMatch } from './core/cost-type-normalize.js';
+import { calcSupplierDueBreakdown } from './core/accounts-kpis.js';
 //   const { title, html } = renderKpiDrill({
 //     drillType: 'in',
 //     walletFilter: '',
@@ -154,29 +155,36 @@ export function renderKpiDrill({ drillType, walletFilter = '', state, helpers, c
 
   } else if (drillType === 'sup_due') {
     title = '🏭 استحقاقات الموردين';
-    const supList = suppliers.map(s => {
-      const totalCost = allOrders.flatMap(o => o.costItems || []).filter(ci => ci.supplierId === s._id).reduce((sum, ci) => sum + (parseFloat(ci.total) || 0), 0);
-      const totalPaid = supplierPays.filter(p => p.supplierId === s._id).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-      return { ...s, totalCost, totalPaid, due: Math.max(0, totalCost - totalPaid) };
-    }).filter(s => s.totalCost > 0).sort((a, b) => b.due - a.due);
-    const totalDue = supList.reduce((s, x) => s + x.due, 0);
-    const totalCostAll = supList.reduce((s, x) => s + x.totalCost, 0);
-    const totalPaidAll = supList.reduce((s, x) => s + x.totalPaid, 0);
+    // نفس مصدر رقم الـ KPI (RULE 1) — الصفوف هنا تجمع بالضبط للرقم في الكارت
+    const bd = calcSupplierDueBreakdown(allOrders, supplierPays);
+    const supList = bd.entries
+      .filter(e => e.cost > 0 || e.paid > 0)
+      .map(e => {
+        const s = suppliers.find(x => x._id === e.supplierId);
+        return {
+          ...e,
+          name: e.supplierId ? (s?.name || '⚠️ مورد محذوف من القائمة') : '⚠️ بنود بدون مورد',
+          payable: !!s, // زر الدفع فقط لمورد موجود فعلاً في القائمة
+        };
+      });
+    const totalCostAll = supList.reduce((s, x) => s + x.cost, 0);
+    const totalPaidAll = supList.reduce((s, x) => s + x.paid, 0);
     html = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-sm);margin-bottom:12px">
       <div class="acc-sumcard acc-tint-r"><div class="sc-lbl">إجمالي التكاليف</div><div class="sc-val">${fn(totalCostAll)} ج</div></div>
       <div class="acc-sumcard acc-tint-g"><div class="sc-lbl">المدفوع</div><div class="sc-val">${fn(totalPaidAll)} ج</div></div>
-      <div class="acc-sumcard acc-tint-r"><div class="sc-lbl">المستحق</div><div class="sc-val">${fn(totalDue)} ج</div></div>
+      <div class="acc-sumcard acc-tint-r"><div class="sc-lbl">المستحق</div><div class="sc-val">${fn(bd.total)} ج</div></div>
     </div>
     ${supList.map(s => `<div style="background:var(--bg3);border-radius:var(--rad);padding:10px 12px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
         <span class="txt-bold-md">${s.name}</span>
         <span style="font-size:var(--fs-md);font-weight:var(--fw-heavy);color:${s.due > 0 ? 'var(--r)' : 'var(--g)'}">${s.due > 0 ? fn(s.due) + ' ج' : '✅ مسدد'}</span>
       </div>
-      <div style="display:flex;gap:var(--space-md);font-size:var(--fs-xs);color:var(--dim2);margin-bottom:${s.due > 0 ? '8' : '0'}px">
-        <span>تكاليف: ${fn(s.totalCost)} ج</span>
-        <span style="color:var(--g)">مدفوع: ${fn(s.totalPaid)} ج</span>
+      <div style="display:flex;gap:var(--space-md);font-size:var(--fs-xs);color:var(--dim2);margin-bottom:${s.due > 0 && s.payable ? '8' : '0'}px">
+        <span>تكاليف: ${fn(s.cost)} ج</span>
+        <span style="color:var(--g)">مدفوع: ${fn(s.paid)} ج</span>
       </div>
-      ${s.due > 0 ? `<button type="button" onclick="quickPaySup('${s._id}','${(s.name || '').replace(/'/g, "\\'")}',${s.due});closePanel();" style="width:100%;padding:7px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer">💸 دفع ${fn(s.due)} ج</button>` : ''}
+      ${s.due > 0 && s.payable ? `<button type="button" onclick="quickPaySup('${s.supplierId}','${(s.name || '').replace(/'/g, "\\'")}',${s.due});closePanel();" style="width:100%;padding:7px;border-radius:8px;border:none;background:var(--r);color:#fff;font-size:var(--fs-base);font-weight:var(--fw-extra);cursor:pointer">💸 دفع ${fn(s.due)} ج</button>` : ''}
+      ${s.due > 0 && !s.payable ? `<div style="font-size:var(--fs-xs);color:var(--y);margin-top:4px">${s.supplierId ? 'أعد إضافة المورد أو صحّح بنود التكلفة لربطها بمورد موجود' : 'اربط بنود التكلفة دي بمورد من شاشة إدخال التكاليف عشان تقدر تدفعها'}</div>` : ''}
     </div>`).join('') || `<div style="text-align:center;padding:var(--space-xl);color:var(--dim2)">لا توجد تكاليف مسجّلة</div>`}`;
 
   } else if (drillType === 'bal') {

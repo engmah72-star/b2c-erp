@@ -9,6 +9,8 @@
  * Caller passes in the date range computed by core/reports-date-filters.js.
  */
 
+import { calcSupplierDueBreakdown } from './accounts-kpis.js';
+
 const _inRangeTx = (t, range) => {
   if (!range) return false;
   const sec = t?.createdAt?.seconds || 0;
@@ -89,20 +91,13 @@ export function calcTargetProgress({
 
 /**
  * Total outstanding due to suppliers across all orders.
- * For each supplier: due = sum(orders.costItems where supplierId matches) - sum(payments)
+ * يفوّض لـ calcSupplierDueBreakdown (core/accounts-kpis.js) — نفس الرقم
+ * الذي تعرضه صفحة الحسابات (RULE 1: مصدر واحد). البنود الملغاة مستبعدة،
+ * والبنود بلا مورد/بمورد محذوف محسوبة في bucket «بدون مورد».
+ * (بارامتر suppliers باقٍ للتوافق مع الاستدعاءات القائمة — لم يعد مستخدماً.)
  */
 export function calcSupplierDue(suppliers = [], orders = [], payments = []) {
-  return suppliers.reduce((s, sup) => {
-    const paid = payments
-      .filter(p => p.supplierId === sup._id)
-      .reduce((ps, p) => ps + (parseFloat(p.amount) || 0), 0);
-    const cost = orders.reduce((cs, o) =>
-      cs + (o.costItems || [])
-        .filter(ci => ci.supplierId === sup._id)
-        .reduce((is, ci) => is + (parseFloat(ci.total) || 0), 0)
-    , 0);
-    return s + Math.max(0, cost - paid);
-  }, 0);
+  return calcSupplierDueBreakdown(orders, payments).total;
 }
 
 /**
