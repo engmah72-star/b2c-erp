@@ -1238,19 +1238,21 @@ window.saveEmployeePassword=async function(btn){
   if(msg)msg.innerHTML='<span class="text-muted">⏳ جاري تطبيق كلمة السر على Firebase Auth…</span>';
 
   try{
-  // 1) Try direct Auth update via secondary app — most reliable, no Cloud Function dependency.
+  // 1) Try direct Auth update via secondary app — only when we have a known old password.
+  // Skipping blind guesses avoids noisy 400 errors in the console and unnecessary Auth
+  // lockout risk; the Cloud Function path (step 2) handles the unknown-password case via
+  // Admin SDK without needing the old credential at all.
   const candidates=[
     adminProvidedOldPw,
     empUserDoc?.displayPassword,
-    pw,            // إذا الكلمة الجديدة هي نفسها المخزّنة في Auth (تكرار آمن)
-    '123456',
-    'b2c@123',
   ].filter((v,i,a)=>v && a.indexOf(v)===i); // dedupe + drop empties
 
   let applied=false, applyErr='', method='';
-  const direct=await applyAuthPasswordViaSecondaryApp(email,pw,candidates);
-  if(direct.ok){applied=true;method='direct';}
-  else applyErr=direct.error;
+  if(candidates.length>0){
+    const direct=await applyAuthPasswordViaSecondaryApp(email,pw,candidates);
+    if(direct.ok){applied=true;method='direct';}
+    else applyErr=direct.error;
+  }
 
   // 2) Fallback: Cloud Function (if deployed)
   if(!applied){
@@ -1270,10 +1272,18 @@ window.saveEmployeePassword=async function(btn){
 
   if(!applied){
     btn.disabled=false;btn.textContent=orig;
-    if(msg)msg.innerHTML=`<span class="text-r">❌ تعذّر تطبيق كلمة السر تلقائياً</span>`
-      +`<br><span class="txt-meta-xs">السبب: ${applyErr||'unknown'}</span>`
-      +`<br><span class="txt-meta-xs">لو الموظف نسي كلمته: استخدم «إعادة بناء حساب الدخول» (لا تحتاج الكلمة القديمة)، أو اكتب الكلمة الحالية بالأعلى لو يعرفها.</span>`
-      +`<br><button type="button" class="btn btn-b btn-sm ep-mt-12" onclick="this.closest('.overlay')?.remove();openRebuildAuthModal()">🔄 إعادة بناء حساب الدخول</button>`;
+    // حساب الموظف غير موجود في Firebase Auth → إعادة الإنشاء هي الحل الوحيد
+    const accountMissing=applyErr.includes('not-found')||applyErr.includes('غير موجود');
+    if(accountMissing){
+      if(msg)msg.innerHTML=`<span class="text-r">❌ حساب الدخول غير موجود في Firebase Auth</span>`
+        +`<br><span class="txt-meta-xs">الحل: اضغط «إعادة إنشاء حساب الدخول» لإنشاء حساب جديد بكلمة سر تختارها (لا تحتاج الكلمة القديمة).</span>`
+        +`<br><button type="button" class="btn btn-b btn-sm ep-mt-12" onclick="this.closest('.overlay')?.remove();openRebuildAuthModal()">🔄 إعادة إنشاء حساب الدخول</button>`;
+    } else {
+      if(msg)msg.innerHTML=`<span class="text-r">❌ تعذّر تطبيق كلمة السر تلقائياً</span>`
+        +`<br><span class="txt-meta-xs">السبب: ${applyErr||'unknown'}</span>`
+        +`<br><span class="txt-meta-xs">لو الموظف غيّر كلمته بنفسه: اكتب الكلمة الحالية في الحقل أعلاه ثم أعد المحاولة، أو استخدم «إعادة بناء حساب الدخول».</span>`
+        +`<br><button type="button" class="btn btn-b btn-sm ep-mt-12" onclick="this.closest('.overlay')?.remove();openRebuildAuthModal()">🔄 إعادة بناء حساب الدخول</button>`;
+    }
     return;
   }
 
