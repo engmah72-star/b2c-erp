@@ -257,11 +257,23 @@ service cloud.firestore {
           'passwordResetByName'
         ]);
     }
+    // حقول تغييرها يعني ترقية صلاحيات (role escalation) — محمية حتى من operation_manager.
+    // permissions مش هنا: operation_manager يقدر يحدّث صلاحيات موظف تاني (manage_employees).
+    function isRoleEscalationField() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny([
+          'role', 'tenantId', 'designerTenantId', 'partnerTenantId',
+          'isPartner', 'authUid', 'employeeId',
+          'passwordResetAt', 'passwordResetBy', 'passwordResetByName'
+        ]);
+    }
     match /users/{userId} {
       allow read: if isAuth();
       allow create: if isAdminOnly();
       allow update: if isAuth() && (
         isAdminOnly()
+        // operation_manager يعدّل موظف تاني (مش نفسه) بدون تغيير role/tenantId
+        || (isAdmin() && request.auth.uid != userId && !isRoleEscalationField())
         || (request.auth.uid == userId && !isProtectedUserField())
       );
       allow delete: if isAdminOnly();
