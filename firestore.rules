@@ -1020,6 +1020,25 @@ service cloud.firestore {
       }
     }
 
+    // ══ Action items — مهام من المحادثات (inbox) ══
+    // كانت بلا قواعد = fail-closed → «إنشاء مهمة» ولوحة المهام معطّلة لكل
+    // الموظفين. موظفون فقط (users doc موجود) — العملاء (clients/) لا يصلون.
+    match /action_items/{itemId} {
+      allow read: if isAuth() && userExists();
+      // الإنشاء: الموظف نفسه هو createdBy
+      allow create: if isAuth() && userExists()
+        && request.resource.data.get('createdBy','') == request.auth.uid;
+      // التحديث: المنشئ/المكلَّف/الأدمن بحرية، وأي موظف يقدر يقفل/يرفض
+      // المهمة (status + completedAt فقط — toggle/dismiss من لوحة المحادثة).
+      allow update: if isAuth() && userExists() && (
+        isAdmin()
+        || resource.data.get('createdBy','') == request.auth.uid
+        || resource.data.get('assigneeId','') == request.auth.uid
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','completedAt'])
+      );
+      allow delete: if isAdminOnly();
+    }
+
     // Presence — every auth user can read/write only their own doc.
     match /presence/{uid} {
       allow read: if isAuth();

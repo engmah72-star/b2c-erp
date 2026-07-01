@@ -256,7 +256,8 @@ import { buildChatShellHTML, buildMessagesHTML, buildChatHeaderSub } from "./fea
 import { buildForwardListHTML, buildShareListHTML, buildUserListHTML, buildOrderPickerHTML } from "./features/inbox/views/picker-views.js";
 import {
   CONV_CATEGORIES, PRIORITY_LEVELS, ACTIVITY_TYPES, ACTION_ITEM_STATUS,
-  WORKSPACE_TABS, categorizeConversation, filterByCategory, countByCategory,
+  WORKSPACE_TABS, channelsForRole,
+  categorizeConversation, filterByCategory, countByCategory,
   sortByPriority, computePriorityScore, resolveContext, computeWorkspaceStats,
   buildActivityItem, mergeActivityFeeds, detectActionItem, buildActionItem,
   sortActionItems, stageLabel, stageColor, fmtPrice,
@@ -272,13 +273,7 @@ import { createSearchController } from "./features/inbox/controllers/search-cont
 // ── Constants ──
 const ROLE_LABEL={admin:'Admin',operation_manager:'مدير عمليات',customer_service:'خدمة عملاء',graphic_designer:'مصمم',design_operator:'مشغل تصميم',production_agent:'تنفيذ',shipping_officer:'شحن',wallet_manager:'محاسب'};
 const ROLE_COLOR={admin:'var(--r)',operation_manager:'var(--b-bright)',customer_service:'var(--c-bright)',graphic_designer:'var(--p)',design_operator:'var(--p)',production_agent:'var(--y)',shipping_officer:'var(--g)',wallet_manager:'var(--y)'};
-const CHANNELS=[
-  {key:'general',name:'#عام',ico:'📢',roles:'*'},
-  {key:'design',name:'#التصميم',ico:'🎨',roles:['graphic_designer','design_operator','admin','operation_manager']},
-  {key:'production',name:'#التنفيذ',ico:'🏭',roles:['production_agent','admin','operation_manager']},
-  {key:'shipping',name:'#الشحن',ico:'🚚',roles:['shipping_officer','admin','operation_manager']},
-  {key:'cs',name:'#خدمة-العملاء',ico:'💬',roles:['customer_service','admin','operation_manager']},
-];
+// قنوات الفرق — المصدر الواحد core/messaging-hub.js (TEAM_CHANNELS)
 const EMOJIS=['😀','😂','🤣','😊','😍','🤩','😘','😗','🙂','🤔','😐','😴','🤤','😎','🤓','🥳','😢','😭','😱','😡','🤬','🤯','😨','🤗','🙏','👍','👎','✌️','🤝','👏','🙌','💪','🔥','💯','✨','🎉','🎊','💖','💕','❤️','💔','💯','✅','❌','⚠️','📌','📎','📷','🎤','🖼️','📦','📞','💬','📅','🕐','⏰','🟢','🟡','🔴'];
 
 // ── State ──
@@ -411,23 +406,27 @@ async function ensureChannels(){
   // إذا role غير محدد في users doc، اعتبره customer_service كافتراضي
   // (يضمن أن الموظف على الأقل ينضم إلى #عام + #خدمة-العملاء)
   const role=currentRole||'customer_service';
-  const myChannels=CHANNELS.filter(c=>c.roles==='*'||c.roles.includes(role));
+  const myChannels=channelsForRole(role);
   console.log('[inbox] ensureChannels start — uid:',currentUid,'role:',role||'(empty)','channels:',myChannels.map(c=>c.key));
   let okCount=0,failCount=0;
+  // اقرأ users مرة واحدة لكل القنوات (كانت قراءة منفصلة داخل الحلقة لكل قناة)
+  let allUsersDocs=[];
+  try{
+    const all=await getDocs(query(collection(db,'users'),limit(500)));
+    allUsersDocs=all.docs;
+  }catch(e){
+    console.error('[inbox] ensureChannels: users read failed:',e.code||e.message);
+  }
   // For each channel, ensure a conversation doc with stable id `channel_${key}` exists
   for(const ch of myChannels){
     try{
-      // pre-compute participants only when we need to create the conversation —
+      // participants تُستخدم فقط عند إنشاء القناة لأول مرة —
       // ensureChannelConversation does its own get first.
-      let participants=[];
-      if(ch.roles==='*'||ch.roles.length){
-        const all=await getDocs(query(collection(db,'users'),limit(500)));
-        participants=all.docs.filter(d=>{
-          const ud=d.data();if(!ud.isActive&&ud.isActive!==undefined)return false;
-          if(ch.roles==='*')return true;
-          return ch.roles.includes(ud.role);
-        }).map(d=>d.id);
-      }
+      const participants=allUsersDocs.filter(d=>{
+        const ud=d.data();if(!ud.isActive&&ud.isActive!==undefined)return false;
+        if(ch.roles==='*')return true;
+        return ch.roles.includes(ud.role);
+      }).map(d=>d.id);
       const r=await inboxActions.ensureChannelConversation({
         db,channelKey:ch.key,name:ch.name,ico:ch.ico,
         participants,currentUserId:currentUid,
