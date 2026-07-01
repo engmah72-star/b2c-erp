@@ -11,7 +11,11 @@
  *   - إنشاء/تعديل metadata المحافظ
  *
  * كل action atomic عبر writeBatch + addLedgerToBatch (FSE) + RULE 2/3/5.
- * النتيجة الموحَّدة: { ok, errors[], warnings[], ... }
+ * كل action مالي مُغلَّف بـ withIdempotency (H1.2 — window 60s) ضد
+ * double-click / retry storm / stale modal.
+ * الأرصدة تُقرأ fresh من wallets وقت التنفيذ — لا اعتماد على أرقام الـ UI
+ * في فحص كفاية الرصيد أو في balanceBefore/After المسجَّلة.
+ * النتيجة الموحَّدة: { ok, errors[], warnings[], operationId?, idempotent? }
  */
 
 import {
@@ -36,6 +40,7 @@ import {
   approvalFields,
 } from './financial-sync-engine.js';
 import { auditEntry, persistAuditLog } from './core/audit.js';
+import { withIdempotency } from './core/idempotency.js';
 
 // ══════════════════════════════════════════
 // HELPERS
@@ -46,6 +51,18 @@ function _nowStr() {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit',
   });
+}
+
+/**
+ * قراءة رصيد المحفظة fresh وقت التنفيذ — مصدر الحقيقة `wallets` (RULE 1)
+ * وليس الرقم القادم من الـ UI (قد يكون stale بين فتح المودال والحفظ).
+ * @returns {Promise<{ok:boolean, balance:number, name:string, error?:string}>}
+ */
+async function _freshWallet(db, walletId) {
+  const snap = await getDoc(doc(db, 'wallets', walletId));
+  if (!snap.exists()) return { ok: false, balance: 0, name: '', error: '⚠️ المحفظة غير موجودة' };
+  const d = snap.data();
+  return { ok: true, balance: parseFloat(d.balance) || 0, name: d.name || '' };
 }
 
 // ══════════════════════════════════════════
@@ -90,6 +107,12 @@ export async function createWallet({
   if (!userId) return { ok: false, errors: ['⚠️ userId مطلوب'], warnings: [] };
   if (!name || !name.trim()) return { ok: false, errors: ['⚠️ أدخل اسم الحساب'], warnings: [] };
   const bal = parseFloat(openingBalance) || 0;
+  return withIdempotency(db, {
+    actionType: 'wallet_create',
+    entityId: name.trim(),
+    actorId: userId,
+    payload: { name: name.trim(), type: type || '', openingBalance: bal },
+  }, async () => {
   try {
     const batch = writeBatch(db);
     const walletRef = doc(collection(db, 'wallets'));
@@ -129,6 +152,7 @@ export async function createWallet({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الإنشاء'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -147,8 +171,17 @@ export async function saveReconciliation({
 }) {
   if (!walletId) return { ok: false, errors: ['⚠️ walletId مطلوب'], warnings: [] };
   if (isNaN(parseFloat(actualBalance))) return { ok: false, errors: ['⚠️ رقم غير صحيح'], warnings: [] };
-  const sysBal = parseFloat(systemBalance) || 0;
   const actual = parseFloat(actualBalance);
+  return withIdempotency(db, {
+    actionType: 'wallet_reconcile',
+    entityId: walletId,
+    actorId: userId || '',
+    payload: { actualBalance: actual },
+  }, async () => {
+  // الرصيد الدفتري fresh وقت التنفيذ — لا نثق برقم الـ UI (قد يكون stale)
+  const fresh = await _freshWallet(db, walletId);
+  if (!fresh.ok) return { ok: false, errors: [fresh.error], warnings: [] };
+  const sysBal = fresh.balance;
   const diff = actual - sysBal;
   const dateStr = _nowStr();
   try {
@@ -194,6 +227,7 @@ export async function saveReconciliation({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسوية'], warnings: [] };
   }
+  });
 }
 
 /**
@@ -208,7 +242,16 @@ export async function setOpeningBalance({
   if (!walletId) return { ok: false, errors: ['⚠️ walletId مطلوب'], warnings: [] };
   if (isNaN(parseFloat(newBalance))) return { ok: false, errors: ['⚠️ أدخل الرصيد'], warnings: [] };
   const newBal = parseFloat(newBalance);
-  const oldBal = parseFloat(oldBalance) || 0;
+  return withIdempotency(db, {
+    actionType: 'wallet_set_opening_balance',
+    entityId: walletId,
+    actorId: userId || '',
+    payload: { newBalance: newBal },
+  }, async () => {
+  // الرصيد القديم fresh من wallets — لا نثق برقم الـ UI
+  const fresh = await _freshWallet(db, walletId);
+  if (!fresh.ok) return { ok: false, errors: [fresh.error], warnings: [] };
+  const oldBal = fresh.balance;
   const diff = newBal - oldBal;
   const displayDate = dateStr ? new Date(dateStr).toLocaleDateString('ar-EG') : _nowStr();
   try {
@@ -254,6 +297,7 @@ export async function setOpeningBalance({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التعيين'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -271,19 +315,33 @@ export async function deleteTransaction({
 }) {
   if (!transactionId) return { ok: false, errors: ['⚠️ transactionId مطلوب'], warnings: [] };
   if (!walletId) return { ok: false, errors: ['⚠️ walletId مطلوب'], warnings: [] };
+  return withIdempotency(db, {
+    actionType: 'wallet_delete_tx',
+    entityId: transactionId,
+    actorId: userId || '',
+    payload: { walletId },
+  }, async () => {
   try {
     const txSnap = await getDoc(doc(db, 'transactions_v2', transactionId));
-    const txData = txSnap.exists() ? txSnap.data() : {};
+    // حذف حركة محذوفة بالفعل = عكس الرصيد مرتين — نرفض بدل ما نفسد الرصيد
+    if (!txSnap.exists()) {
+      return { ok: false, errors: ['⚠️ الحركة غير موجودة — ربما حُذفت بالفعل'], warnings: [] };
+    }
+    const txData = txSnap.data();
+    // مصدر الحقيقة = مستند الحركة نفسه، لا أرقام الـ UI الممرَّرة
+    const effAmount = parseFloat(txData.amount) || parseFloat(amount) || 0;
+    const effType = txData.type || type || 'in';
+    const effWalletId = txData.walletId || walletId;
     const orderId = txData.orderId || '';
     const batch = writeBatch(db);
-    batch.update(doc(db, 'wallets', walletId), {
-      balance: increment(type === 'in' ? -amount : amount),
+    batch.update(doc(db, 'wallets', effWalletId), {
+      balance: increment(effType === 'in' ? -effAmount : effAmount),
     });
     if (orderId) {
       const ordSnap = await getDoc(doc(db, 'orders', orderId));
       if (ordSnap.exists()) {
         const ord = ordSnap.data();
-        const { totalPaid: newPaid, remaining: newRem, paymentStatus } = calcOrderPayment(ord, -amount);
+        const { totalPaid: newPaid, remaining: newRem, paymentStatus } = calcOrderPayment(ord, -effAmount);
         batch.update(doc(db, 'orders', orderId), {
           totalPaid: newPaid, remaining: newRem, paymentStatus,
         });
@@ -292,19 +350,20 @@ export async function deleteTransaction({
     if (txData.spId) batch.delete(doc(db, 'supplier_payments', txData.spId));
     if (txData.epId) batch.delete(doc(db, 'employee_payments', txData.epId));
     batch.delete(doc(db, 'transactions_v2', transactionId));
-    addLedgerToBatch(batch, db, getReversal(inferEventType(type, txData.category || '')), {
-      amount, walletId, walletName,
+    addLedgerToBatch(batch, db, getReversal(inferEventType(effType, txData.category || '')), {
+      amount: effAmount, walletId: effWalletId, walletName,
       orderId: orderId || null,
       notes: `حذف دفعة — ${txData.description || txData.category || ''}`,
       userId, userName: userName || '',
     });
     await batch.commit();
-    auditEntry({ action: 'wallet.deleteTransaction', userId, userName, kind: 'op', meta: { transactionId, walletId, amount, type } });
+    auditEntry({ action: 'wallet.deleteTransaction', userId, userName, kind: 'op', meta: { transactionId, walletId: effWalletId, amount: effAmount, type: effType } });
     persistAuditLog(db);
     return { ok: true, errors: [], warnings: [] };
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل الحذف'], warnings: [] };
   }
+  });
 }
 
 /**
@@ -333,7 +392,21 @@ export async function recordTransaction({
   if (type === 'out' && balanceAfter < 0) {
     return { ok: false, errors: ['⚠️ الرصيد غير كافٍ'], warnings: [] };
   }
+  return withIdempotency(db, {
+    actionType: 'wallet_record_tx',
+    entityId: walletId,
+    actorId: userId,
+    payload: { type, amount: amt, category: category || '', orderId: orderId || '', supplierId: supplierId || '', employeeId: employeeId || '' },
+  }, async () => {
   try {
+    // فحص كفاية الرصيد + balanceBefore/After من قراءة حيّة، لا من الـ UI
+    const fresh = await _freshWallet(db, walletId);
+    if (!fresh.ok) return { ok: false, errors: [fresh.error], warnings: [] };
+    const bBefore = fresh.balance;
+    const bAfter = type === 'in' ? bBefore + amt : bBefore - amt;
+    if (type === 'out' && bAfter < 0) {
+      return { ok: false, errors: [`⚠️ الرصيد غير كافٍ — الرصيد الفعلي ${bBefore.toLocaleString('ar-EG')} ج`], warnings: [] };
+    }
     const batch = writeBatch(db);
     batch.update(doc(db, 'wallets', walletId), {
       balance: increment(type === 'in' ? amt : -amt),
@@ -366,7 +439,7 @@ export async function recordTransaction({
       description, category,
       clientName, supplierId, supplierName, employeeId, employeeName,
       orderId: orderId || '',
-      balanceBefore, balanceAfter,
+      balanceBefore: bBefore, balanceAfter: bAfter,
       paymentMethod,
       ...(empCats.includes(category) && employeeId ? {
         month: curMonthKey,
@@ -418,6 +491,7 @@ export async function recordTransaction({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
   }
+  });
 }
 
 /**
@@ -442,6 +516,12 @@ export async function editTransaction({
   const { walletId, type, amount, description, category,
           supplierId, supplierName, employeeId, employeeName,
           orderId = '', clientName = '', paymentMethod = '' } = newData;
+  return withIdempotency(db, {
+    actionType: 'wallet_edit_tx',
+    entityId: transactionId,
+    actorId: userId || '',
+    payload: { walletId, type, amount: parseFloat(amount) || 0, category: category || '' },
+  }, async () => {
   try {
     const batch = writeBatch(db);
     // wallet adjustments
@@ -532,6 +612,7 @@ export async function editTransaction({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التعديل'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -552,7 +633,21 @@ export async function recordSupplierPayment({
   const amt = parseFloat(amount) || 0;
   if (amt <= 0) return { ok: false, errors: ['⚠️ أدخل المبلغ'], warnings: [] };
   if (balanceAfter < 0) return { ok: false, errors: ['⚠️ الرصيد غير كافٍ'], warnings: [] };
+  return withIdempotency(db, {
+    actionType: 'wallet_supplier_payment',
+    entityId: supplierId,
+    actorId: userId,
+    payload: { amount: amt, walletId },
+  }, async () => {
   try {
+    // فحص كفاية الرصيد + balanceBefore/After من قراءة حيّة، لا من الـ UI
+    const fresh = await _freshWallet(db, walletId);
+    if (!fresh.ok) return { ok: false, errors: [fresh.error], warnings: [] };
+    const bBefore = fresh.balance;
+    const bAfter = bBefore - amt;
+    if (bAfter < 0) {
+      return { ok: false, errors: [`⚠️ الرصيد غير كافٍ — الرصيد الفعلي ${bBefore.toLocaleString('ar-EG')} ج`], warnings: [] };
+    }
     const batch = writeBatch(db);
     batch.update(doc(db, 'wallets', walletId), { balance: increment(-amt) });
     const spRef = doc(collection(db, 'supplier_payments'));
@@ -571,7 +666,7 @@ export async function recordSupplierPayment({
       category: supplierType === 'shipper' ? 'shipper_payment' : 'printer_payment',
       supplierId, supplierName,
       spId: spRef.id,
-      balanceBefore, balanceAfter,
+      balanceBefore: bBefore, balanceAfter: bAfter,
       date: _nowStr(),
       createdBy: userId,
       createdByName: userName || '',
@@ -591,6 +686,7 @@ export async function recordSupplierPayment({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التسجيل'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
@@ -617,14 +713,30 @@ export async function walletTransfer({
   const amt = parseFloat(amount) || 0;
   if (amt <= 0) return { ok: false, errors: ['⚠️ أدخل المبلغ'], warnings: [] };
   const totalDeducted = amt + (parseFloat(fee) || 0);
-  const fromBal = parseFloat(fromBalance) || 0;
-  const toBal = parseFloat(toBalance) || 0;
-  if (fromBal < totalDeducted) {
+  if ((parseFloat(fromBalance) || 0) < totalDeducted) {
     return { ok: false, errors: [`⚠️ الرصيد غير كافٍ — تحتاج ${totalDeducted.toLocaleString('ar-EG')} ج`], warnings: [] };
   }
   const isWithdrawal = kind === 'withdrawal';
+  return withIdempotency(db, {
+    actionType: 'wallet_transfer',
+    entityId: `${fromWalletId}_${toWalletId}`,
+    actorId: userId,
+    payload: { amount: amt, fee: parseFloat(fee) || 0, kind },
+  }, async () => {
   const dateStr = _nowStr();
   try {
+    // أرصدة الطرفين fresh وقت التنفيذ — الفحص والقيود على الحقيقة لا الـ UI
+    const [fromFresh, toFresh] = await Promise.all([
+      _freshWallet(db, fromWalletId),
+      _freshWallet(db, toWalletId),
+    ]);
+    if (!fromFresh.ok) return { ok: false, errors: [fromFresh.error], warnings: [] };
+    if (!toFresh.ok) return { ok: false, errors: [toFresh.error], warnings: [] };
+    const fromBal = fromFresh.balance;
+    const toBal = toFresh.balance;
+    if (fromBal < totalDeducted) {
+      return { ok: false, errors: [`⚠️ الرصيد غير كافٍ — الرصيد الفعلي ${fromBal.toLocaleString('ar-EG')} ج وتحتاج ${totalDeducted.toLocaleString('ar-EG')} ج`], warnings: [] };
+    }
     const batch = writeBatch(db);
     batch.update(doc(db, 'wallets', fromWalletId), { balance: increment(-totalDeducted) });
     batch.update(doc(db, 'wallets', toWalletId), { balance: increment(amt) });
@@ -690,6 +802,7 @@ export async function walletTransfer({
   } catch (e) {
     return { ok: false, errors: [e.message || 'فشل التحويل'], warnings: [] };
   }
+  });
 }
 
 // ══════════════════════════════════════════
