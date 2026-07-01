@@ -233,7 +233,10 @@ select.sph-filter-btn{appearance:none;-webkit-appearance:none}
       <div class="modal-balance-strip" id="pay-balance-strip"></div>
       <!-- outstanding orders -->
       <div id="pay-orders-section">
-        <div style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2);margin-bottom:6px">الأوردرات المرتبطة (اختر ما تريد الدفع عليه)</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--dim2)">الأوردرات المرتبطة</span>
+          <span id="pay-mode-badge" style="font-size:10px;font-weight:var(--fw-bold);color:var(--b)">⟳ توزيع تلقائي</span>
+        </div>
         <div class="select-all-row">
           <button onclick="selectAllOrders(true)">تحديد الكل</button>
           <button onclick="selectAllOrders(false)">إلغاء الكل</button>
@@ -315,6 +318,7 @@ let currentFilter = 'due';
 let currentSort = 'due';
 let role = '', userName = '', userId = '', userPerms = {};
 let selectedOrderIds = new Set();
+let autoMode = true; // true = FIFO auto-select, false = manual selection
 
 // ══ Auth ══
 let __started = false;
@@ -393,7 +397,7 @@ function getOutstandingOrders(supId) {
       ...so,
       remaining: Math.max(0, (parseFloat(so.total) || 0) - (parseFloat(so.paidAmount) || 0)),
     }))
-    .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0)); // oldest first (FIFO)
 }
 
 function getAgingDays(supId) {
@@ -620,13 +624,11 @@ window.openPay = function(supId) {
   const pendingOrders = orders.filter(so => so.remaining > 0);
 
   if (pendingOrders.length) {
-    // pre-select all outstanding orders
-    pendingOrders.forEach(so => selectedOrderIds.add(so._id));
     ordersEl.innerHTML = pendingOrders.map(so => {
       const orderRef = so.orderRef || so.orderId?.slice(-6) || '—';
       const paidAmt = parseFloat(so.paidAmount) || 0;
-      return `<div class="so-item so-selected" id="so-row-${so._id}" onclick="toggleOrderSelection('${so._id}',${so.remaining})">
-        <input type="checkbox" class="so-check" id="so-cb-${so._id}" checked onclick="event.stopPropagation();toggleOrderSelection('${so._id}',${so.remaining})">
+      return `<div class="so-item" id="so-row-${so._id}" onclick="toggleOrderSelection('${so._id}',${so.remaining})">
+        <input type="checkbox" class="so-check" id="so-cb-${so._id}" onclick="event.stopPropagation();toggleOrderSelection('${so._id}',${so.remaining})">
         <div class="so-info">
           <div class="so-type">${so.type || 'خدمة'}</div>
           <div class="so-meta">أوردر #${orderRef} · ${so.clientName||'—'}</div>
@@ -644,16 +646,19 @@ window.openPay = function(supId) {
 
   document.getElementById('pay-orders-section').style.display = pendingOrders.length ? 'block' : 'none';
 
-  // calculate initial amount from selected
-  const initialAmount = pendingOrders.reduce((s, so) => s + so.remaining, 0);
-  updateSelectedTotal();
-  document.getElementById('pay-amount').value = initialAmount > 0 ? initialAmount.toFixed(2) : '';
+  // FIFO default: pre-fill with total due, auto-select oldest→newest
+  autoMode = true;
+  const amtEl = document.getElementById('pay-amount');
+  amtEl.value = due > 0 ? due.toFixed(2) : '';
+  amtEl.oninput = window.onAmountInput;
+  if (pendingOrders.length) applyFIFO(due);
   document.getElementById('pay-note').value = '';
   fillWallets();
   oM('pay');
 };
 
 window.toggleOrderSelection = function(soId, remaining) {
+  autoMode = false; // switch to manual when user touches a checkbox
   const cb = document.getElementById('so-cb-' + soId);
   const row = document.getElementById('so-row-' + soId);
   if (selectedOrderIds.has(soId)) {
@@ -666,9 +671,11 @@ window.toggleOrderSelection = function(soId, remaining) {
     if (row) row.classList.add('so-selected');
   }
   updateSelectedTotal();
+  updateModeIndicator();
 };
 
 window.selectAllOrders = function(select) {
+  autoMode = false;
   const orders = getOutstandingOrders(activeId).filter(so => so.remaining > 0);
   orders.forEach(so => {
     const cb = document.getElementById('so-cb-' + so._id);
@@ -692,11 +699,48 @@ function updateSelectedTotal() {
     .filter(so => selectedOrderIds.has(so._id))
     .reduce((s, so) => s + so.remaining, 0);
   setText('pay-selected-total', fmtNum(selectedTotal) + ' ج');
-  // auto-fill amount if user hasn't changed it
-  const amtEl = document.getElementById('pay-amount');
-  if (amtEl && (!amtEl.dataset.manuallyEdited)) {
-    amtEl.value = selectedTotal > 0 ? selectedTotal.toFixed(2) : '';
+  // in manual mode: drive the amount from selected orders
+  if (!autoMode) {
+    const amtEl = document.getElementById('pay-amount');
+    if (amtEl) amtEl.value = selectedTotal > 0 ? selectedTotal.toFixed(2) : '';
   }
+}
+
+// FIFO: select orders oldest→newest until budget is covered
+function applyFIFO(amount) {
+  const orders = getOutstandingOrders(activeId).filter(so => so.remaining > 0);
+  selectedOrderIds.clear();
+  let budget = amount;
+  for (const so of orders) {
+    if (budget <= 0.009) break; // floating-point tolerance
+    selectedOrderIds.add(so._id);
+    budget -= so.remaining;
+  }
+  orders.forEach(so => {
+    const cb  = document.getElementById('so-cb-'  + so._id);
+    const row = document.getElementById('so-row-' + so._id);
+    const sel = selectedOrderIds.has(so._id);
+    if (cb)  cb.checked = sel;
+    if (row) row.classList.toggle('so-selected', sel);
+  });
+  const selectedTotal = orders
+    .filter(so => selectedOrderIds.has(so._id))
+    .reduce((s, so) => s + so.remaining, 0);
+  setText('pay-selected-total', fmtNum(selectedTotal) + ' ج');
+  updateModeIndicator();
+}
+
+window.onAmountInput = function() {
+  const amount = parseFloat(document.getElementById('pay-amount')?.value) || 0;
+  autoMode = true;
+  applyFIFO(amount);
+};
+
+function updateModeIndicator() {
+  const el = document.getElementById('pay-mode-badge');
+  if (!el) return;
+  el.textContent  = autoMode ? '⟳ توزيع تلقائي' : '✏️ تحديد يدوي';
+  el.style.color  = autoMode ? 'var(--b)' : 'var(--y)';
 }
 
 // ══ Quick pay (no supplier selected) ══
