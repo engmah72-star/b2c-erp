@@ -22,7 +22,7 @@
 
 import {
   doc, getDoc, addDoc, updateDoc, deleteDoc, collection,
-  query, where, getDocs, limit, serverTimestamp, increment,
+  query, where, getDocs, limit, serverTimestamp, increment, writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { canDo } from './core/permissions-matrix.js';
 import { dispatchFinancialEvent, FE } from './financial-sync-engine.js';
@@ -462,6 +462,50 @@ export const supplierActions = {
       return { ok: false, errors: [e.message || 'فشل عكس الدفعة'], warnings: [] };
     }
     }); // end withIdempotency
+  },
+
+  /**
+   * تسوية supplier_orders.paidAmount (self-heal — RULE H3).
+   * الرصيد الإجمالي (orders.costItems مقابل supplier_payments) هو مصدر
+   * الحقيقة ودايماً صحيح؛ هنا بس بنصحّح تفصيل كل أوردر ليتوافق معاه —
+   * غير مالي (لا FSE، لا ledger)، فقط عرض متّسق في supplier_orders.
+   * الحساب (FIFO) بيتم في الصفحة اللي عندها البيانات المُحمَّلة بالفعل؛
+   * هنا فقط الكتابة الذرّية + الـ audit.
+   *
+   * @param {Array<{supplierOrderId:string, paidAmount:number}>} args.changes
+   */
+  async reconcileOrders({ db, role, userId, userName, userPerms, changes = [] }) {
+    const permErr = _checkPaymentPermission(role, userPerms);
+    if (permErr) return { ok: false, errors: [permErr], warnings: [] };
+
+    if (!changes.length) return { ok: true, errors: [], warnings: ['لا توجد تعديلات مطلوبة'], updated: 0 };
+    if (!userId) return { ok: false, errors: ['userId مطلوب'], warnings: [] };
+
+    try {
+      for (let i = 0; i < changes.length; i += 400) {
+        const batch = writeBatch(db);
+        for (const c of changes.slice(i, i + 400)) {
+          batch.update(doc(db, 'supplier_orders', c.supplierOrderId), {
+            paidAmount: c.paidAmount,
+            updatedAt: serverTimestamp(),
+            reconciledAt: serverTimestamp(),
+            reconciledBy: userName || userId,
+          });
+        }
+        await batch.commit();
+      }
+
+      auditEntry({
+        action: `🔧 تسوية أوردرات الموردين: ${changes.length} أوردر`,
+        userId, userName, kind: 'self-heal',
+        meta: { count: changes.length },
+      });
+      persistAuditLog(db);
+
+      return { ok: true, errors: [], warnings: [], updated: changes.length };
+    } catch (e) {
+      return { ok: false, errors: [e.message || 'فشلت التسوية'], warnings: [] };
+    }
   },
 };
 

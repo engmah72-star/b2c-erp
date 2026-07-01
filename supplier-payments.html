@@ -236,6 +236,7 @@ select.sph-filter-btn{appearance:none;-webkit-appearance:none;padding-left:28px;
       <div class="module-identity"><h1>💳 مدفوعات الموردين</h1><p id="sub" class="module-context">جاري التحميل...</p></div>
     </div>
     <div class="topbar-right">
+      <button type="button" class="btn btn-ghost" id="btn-reconcile" onclick="reconcileAllOrders()" style="display:none" title="تصحيح الأوردرات القديمة اللي بتظهر معلقة بالغلط رغم إن المستحق الفعلي أقل">🔧 تسوية الأوردرات القديمة</button>
       <button type="button" class="btn btn-r" onclick="openQuickPay()">+ دفعة سريعة</button>
     </div>
   </div>
@@ -431,6 +432,9 @@ onAuthStateChanged(auth, async u => {
     setText('nav-name', userName);
     document.getElementById('nav-av').textContent = userName[0]?.toUpperCase() || 'U';
     buildSidebar(d);
+
+    const reconcileBtn = document.getElementById('btn-reconcile');
+    if (reconcileBtn) reconcileBtn.style.display = canDo('manage_supplier_payments', role, d.permissions) ? '' : 'none';
   }
 
   // ── Data subscriptions (RULE G3) ──
@@ -980,6 +984,52 @@ window.delPay = async function(payId, amount, walletId, walletName) {
 
   if (!r.ok) return toast('⛔ ' + r.errors.join(' · '), 'err');
   toast('✅ تم إلغاء الدفعة', 'ok');
+};
+
+// ══ Reconcile old orders (self-heal) ══
+// المستحق الإجمالي (orders.costItems مقابل supplier_payments) دايماً صحيح.
+// المشكلة: paidAmount على كل أوردر فردي فضل صفر لأن الدفعات القديمة اتسجلت
+// كمبلغ إجمالي على المورد مش على أوردر بعينه. هنا بنوزّع "مدفوع" على أوردرات
+// كل مورد من الأقدم للأحدث (FIFO) لحد ما يفضل بس المبلغ اللي بيساوي المستحق
+// الحقيقي — نفس منطق scripts/reconcile-supplier-orders.mjs بالظبط.
+function buildReconciliationPlan() {
+  const changes = [];
+  for (const s of suppliers) {
+    const { due } = getSupBalance(s._id);
+    const orders = getOutstandingOrders(s._id); // كل أوردرات المورد، الأقدم أولاً
+    if (!orders.length) continue;
+    const totalOfOrders = orders.reduce((sum, so) => sum + (parseFloat(so.total) || 0), 0);
+    let budget = Math.max(0, totalOfOrders - due);
+    for (const so of orders) {
+      const total = parseFloat(so.total) || 0;
+      const existingPaid = parseFloat(so.paidAmount) || 0;
+      let target;
+      if (budget <= 0.009) target = 0;
+      else if (budget >= total) { target = total; budget -= total; }
+      else { target = Math.round(budget * 100) / 100; budget = 0; }
+      if (Math.abs(target - existingPaid) > 0.009) {
+        changes.push({ supplierOrderId: so._id, paidAmount: target });
+      }
+    }
+  }
+  return changes;
+}
+
+window.reconcileAllOrders = async function() {
+  const changes = buildReconciliationPlan();
+  if (!changes.length) return toast('✅ كل الأوردرات متوافقة بالفعل مع المستحق الحقيقي', 'ok');
+
+  const affectedSuppliers = new Set();
+  for (const s of suppliers) {
+    const orderIds = new Set(getOutstandingOrders(s._id).map(so => so._id));
+    if (changes.some(c => orderIds.has(c.supplierOrderId))) affectedSuppliers.add(s._id);
+  }
+
+  if (!confirm(`هيتم تصحيح ${changes.length} أوردر عبر ${affectedSuppliers.size} مورد (تعليم الأقدم كمدفوع لحد ما يطابق المستحق الحقيقي لكل مورد). العملية آمنة على الرصيد الإجمالي — بتظبط بس شكل الأوردرات الفردية. متابعة؟`)) return;
+
+  const r = await supplierActions.reconcileOrders({ db, role, userId, userName, userPerms, changes });
+  if (!r.ok) return toast('⛔ ' + r.errors.join(' · '), 'err');
+  toast(`✅ تم تصحيح ${r.updated} أوردر عبر ${affectedSuppliers.size} مورد`, 'ok');
 };
 
 // ══ Render all ══
