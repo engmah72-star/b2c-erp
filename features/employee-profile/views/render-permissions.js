@@ -4,8 +4,8 @@
  * ━━━ PERMISSIONS MATRIX VIEW (Phase-2D · god-page decomp) ━━━
  *
  * Pure HTML builders for the admin tab → permissions matrix block.
- *   - ALL_PAGES / ALL_PERMS  — UI catalogs (label + key)
- *   - buildPermsUI(current)  — the checkboxes grid (pages + data permissions)
+ *   - ALL_PAGES / ALL_PERMS / ALL_CAPS — UI catalogs
+ *   - buildPermsUI(current)  — checkboxes grid (pages + data perms + capabilities)
  *   - buildAdminLockedHTML() — locked card shown when emp.role === 'admin'
  *
  * Pure: no DOM access, no Firestore. The page fetches the user's current
@@ -44,6 +44,21 @@ export const ALL_PERMS = [
   { key: 'canViewCosts',       label: '🏭 يشوف التكاليف والأرباح' },
 ];
 
+// Capabilities — saved under permissions.capabilities, read by canDo()
+export const ALL_CAPS = [
+  { key: 'create_orders',    label: '➕ يضيف أوردرات جديدة' },
+  { key: 'edit_orders',      label: '✏️ يعدّل الأوردرات' },
+  { key: 'archive_orders',   label: '📁 يأرشف الأوردرات' },
+  { key: 'approve_designs',  label: '✅ يعتمد التصاميم' },
+  { key: 'manage_printing',  label: '🖨️ يدير الطباعة' },
+  { key: 'manage_products',  label: '◈ يضيف/يعدّل المنتجات' },
+  { key: 'manage_shipping',  label: '🚚 يدير الشحن' },
+  { key: 'manage_payments',  label: '💳 يدير المدفوعات' },
+  { key: 'manage_returns',   label: '↩️ يدير المرتجعات' },
+  { key: 'manage_suppliers', label: '▣ يدير الموردين' },
+  { key: 'view_financials',  label: '📊 يشوف الحسابات/المالية' },
+];
+
 function escAttr(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -61,12 +76,13 @@ export function buildAdminLockedHTML() {
  * Build the permissions checkboxes UI.
  *
  * @param {Object} args
- * @param {Object} args.current        — merged permissions { pages:[...], canSeePrices, ... }
+ * @param {Object} args.current — merged permissions { pages:[...], canSeePrices, ..., capabilities:{...} }
  * @returns {string} HTML
  */
 export function buildPermsUI({ current }) {
   const currentPages = current?.pages || [];
   const isAllPages = currentPages.includes('*');
+  const caps = current?.capabilities || {};
   return `
     <div style="margin-bottom:14px">
       <div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📄 الصفحات المتاحة</div>
@@ -80,12 +96,23 @@ export function buildPermsUI({ current }) {
         }).join('')}
       </div>
     </div>
-    <div>
+    <div style="margin-bottom:14px">
       <div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🔐 صلاحيات البيانات</div>
       <div style="display:grid;gap:6px">
         ${ALL_PERMS.map(p =>
           `<label style="display:flex;align-items:center;gap:var(--space-sm);padding:10px 12px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
             <input type="checkbox" class="perm-data" value="${escAttr(p.key)}" ${current?.[p.key] ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--b);cursor:pointer">
+            <span style="font-size:var(--fs-md);font-weight:var(--fw-semi)">${p.label}</span>
+          </label>`
+        ).join('')}
+      </div>
+    </div>
+    <div>
+      <div style="font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--dim2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">⚡ القدرات (Capabilities)</div>
+      <div style="display:grid;gap:6px">
+        ${ALL_CAPS.map(p =>
+          `<label style="display:flex;align-items:center;gap:var(--space-sm);padding:10px 12px;background:var(--bg3);border-radius:var(--rad);cursor:pointer">
+            <input type="checkbox" class="perm-cap" value="${escAttr(p.key)}" ${caps[p.key] ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--b);cursor:pointer">
             <span style="font-size:var(--fs-md);font-weight:var(--fw-semi)">${p.label}</span>
           </label>`
         ).join('')}
