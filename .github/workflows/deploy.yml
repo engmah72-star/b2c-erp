@@ -210,6 +210,13 @@ jobs:
       # FAILED_PRECONDITION ("supplied version ... is the current active
       # version"). Every other target in this workflow already deploys via
       # the plain Firebase CLI; do the same for hosting for reliability.
+      #
+      # Even the plain CLI hits the same error occasionally: the version
+      # upload + finalize succeeds (content genuinely changes, new version
+      # id each time), but the immediate follow-up "release to channels/live"
+      # call can 400 with the same FAILED_PRECONDITION — consistent with the
+      # freshly-finalized version not having fully propagated yet on
+      # Firebase's side before the release call fires. Retry with backoff.
       - name: Deploy to Firebase Hosting
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
@@ -217,7 +224,20 @@ jobs:
           echo "$FIREBASE_SA" > /tmp/sa.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json
           npm install -g firebase-tools
-          firebase deploy --only hosting --project business2card-c041b --non-interactive
+          for attempt in 1 2 3 4; do
+            if firebase deploy --only hosting --project business2card-c041b --non-interactive; then
+              echo "✓ hosting deploy succeeded (attempt $attempt)"
+              break
+            fi
+            if [ "$attempt" = "4" ]; then
+              echo "::error::hosting deploy failed after 4 attempts"
+              rm -f /tmp/sa.json
+              exit 1
+            fi
+            wait=$((attempt * 15))
+            echo "hosting deploy failed (attempt $attempt) — retrying in ${wait}s..."
+            sleep "$wait"
+          done
           rm -f /tmp/sa.json
 
       # ─────────── Firestore Indexes ───────────
